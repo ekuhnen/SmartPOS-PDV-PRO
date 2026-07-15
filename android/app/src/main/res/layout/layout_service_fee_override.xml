@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Alterar Taxa de Serviço"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <RadioGroup
+        android:id="@+id/rgFeeKind"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <RadioButton
+            android:id="@+id/rbFixed"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Taxa Padrão" />
+
+        <RadioButton
+            android:id="@+id/rbManualPercent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Percentual (%)" />
+
+        <RadioButton
+            android:id="@+id/rbManualValue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Valor Fixo ($)" />
+
+        <RadioButton
+            android:id="@+id/rbWaived"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Isentar (0%)" />
+    </RadioGroup>
+
+    <EditText
+        android:id="@+id/etManualValue"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal"
+        android:hint="Valor/Percentual"
+        android:visibility="gone"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/btnApply"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Aplicar"
+        android:layout_marginTop="16dp" />
+
+</LinearLayout>

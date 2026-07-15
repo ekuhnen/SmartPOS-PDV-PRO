@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    
+    <!-- Printer Permissions (Sunmi, Kozen, Urovo, iMin) -->
+    <uses-permission android:name="com.sunmi.permission.PRINTER" />
+    <uses-permission android:name="com.sunmi.permission.INNER_PRINTER" />
+    <uses-permission android:name="com.pos.permission.PRINTER" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="com.sunmi.permission.SCANNER" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CP_VERIFY_PAY_DEVICE" />
+    
+    <queries>
+        <package android:name="com.dspread.sdkservice" />
+        <package android:name="woyou.aidlservice.jiuiv5" />
+        <package android:name="com.br.plugpay" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="payment-app" android:host="checkout" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="plugpay" android:host="pay" />
+        </intent>
+    </queries>
+
+
+    <application
+        android:name=".PlugPdvApplication"
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
+        android:theme="@style/Theme.SmartPosPdvPro"
+        tools:replace="android:theme"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+
+        <activity
+            android:name=".ui.auth.LoginActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.sale.DirectSaleActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.cashier.CashierActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.sale.CheckoutActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.dashboard.OperatorDashboardActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.sale.TableOrderActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="stateHidden"
+            android:label="@string/tab_mesa" />
+
+        <activity
+            android:name=".ui.sale.CommandOrderActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan"
+            android:screenOrientation="portrait"
+            android:label="@string/tab_comanda" />
+
+        <activity
+            android:name=".utils.CrashReportActivity"
+            android:exported="false"
+            android:process=":crash"
+            android:theme="@style/Theme.AppCompat.Light.Dialog"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.sale.PaymentHandlerActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.SmartPosPdvPro.Transparent"> <!-- transparent theme -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="plugpdv" android:host="payment_callback" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.MyFirebaseMessagingService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Configurações padrão de notificação para quando o app está em background -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_push" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/black" /> <!-- Você pode ajustar para a cor tema do app no futuro -->
+    </application>
+
+</manifest>

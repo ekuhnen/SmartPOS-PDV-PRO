@@ -1,0 +1,7 @@
+{
+  "name": "SmartPOS PDV Pro",
+  "description": "Sistema de Ponto de Venda (PDV) otimizado para terminais SmartPOS, com modos Varejo e Restaurante, gestão de caixa e integração de impressão.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

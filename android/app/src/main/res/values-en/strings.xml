@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PlugPDV</string>
+    <string name="login_title">LOGIN TO SYSTEM</string>
+    <string name="email">E-mail</string>
+    <string name="password">Password</string>
+    <string name="fill_all_fields">Fill all fields</string>
+    <string name="welcome">Welcome, %s</string>
+    <string name="invalid_credentials">Error: Invalid credentials</string>
+    <string name="network_error">Network error: %s</string>
+    <string name="cashier_closed_msg">Cashier closed. Opening required.</string>
+    <string name="exchange_updated">Exchange updated: %s</string>
+    
+    <string name="search_product">Search product...</string>
+    <string name="total">Total</string>
+    <string name="finish_sale">FINISH SALE</string>
+    <string name="cart_empty">Cart empty</string>
+    <string name="product_added">%s added</string>
+    <string name="all_categories">All</string>
+    
+    <string name="cashier_ops">Cashier Operations</string>
+    <string name="amount_label">Amount ($)</string>
+    <string name="open_cashier">OPEN CASHIER</string>
+    <string name="sangria">WITHDRAWAL (SANGRIA)</string>
+    <string name="close_cashier">CLOSE CASHIER</string>
+    <string name="cashier_already_open">CASHIER ALREADY OPEN</string>
+    <string name="session_not_found">Error: Session not found. Retrying...</string>
+    <string name="operation_success">Operation completed successfully!</string>
+    <string name="cashier_sync_open">Syncing: Cashier was already open.</string>
+    <string name="receipt_title">%s RECEIPT</string>
+    <string name="receipt_value">VALUE: $ %s</string>
+    <string name="receipt_date">DATE: %s</string>
+    <string name="confirm_op_title_open">Open Cashier</string>
+    <string name="confirm_op_title_sangria">Make Withdrawal</string>
+    <string name="confirm_op_title_close">Close Cashier</string>
+    <string name="confirm_op_msg">Confirm this operation for the amount of $ %s?</string>
+    <string name="confirm">Confirm</string>
+    <string name="cancel">Cancel</string>
+    
+    <string name="checkout">Checkout</string>
+    <string name="total_to_pay">Total to Pay</string>
+    <string name="order_summary">Order Summary</string>
+    <string name="go_to_payment">GO TO PAYMENT</string>
+    <string name="product_label">Product</string>
+    <string name="stock_label">Stock: %d</string>
+    <string name="select_payment">Select Payment Method</string>
+    <string name="credit">Credit</string>
+    <string name="debit">Debit</string>
+    <string name="pix">PIX</string>
+    <string name="cash">Cash</string>
+    <string name="sale_completed">SALE COMPLETED</string>
+    <string name="payment_method_label">METHOD:</string>
+    <string name="sale_finished_toast">Sale finished with %s</string>
+    <string name="dashboard_title">Sales Dashboard</string>
+    <string name="total_sold">TOTAL SOLD</string>
+    <string name="cash_label">Cash:</string>
+    <string name="digital_label">Digital/Pix:</string>
+    <string name="withdrawal_label">Withdrawals:</string>
+    <string name="item_history">Item History</string>
+    <string name="no_open_cashier">No open cashier found</string>
+    <string name="dashboard_btn">OPERATIONS DASHBOARD</string>
+    <string name="subtotal">Subtotal</string>
+    <string name="tax">Tax</string>
+</resources>

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "458491705297",
+    "project_id": "plug-85c11",
+    "storage_bucket": "plug-85c11.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:458491705297:android:4f145b95eb51c5798292f0",
+        "android_client_info": {
+          "package_name": "com.plugpdv.pdv"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiUoW7YXlqILf0r1zoqPoIFh2-kkoMq3Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

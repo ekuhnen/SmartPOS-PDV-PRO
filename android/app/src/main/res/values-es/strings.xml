@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PlugPDV</string>
+    <string name="login_title">INGRESAR AL SISTEMA</string>
+    <string name="email">Correo electrónico</string>
+    <string name="password">Contraseña</string>
+    <string name="fill_all_fields">Complete todos los campos</string>
+    <string name="welcome">Bienvenido, %s</string>
+    <string name="invalid_credentials">Error: Credenciales inválidas</string>
+    <string name="network_error">Error de red: %s</string>
+    <string name="cashier_closed_msg">Caja cerrada. Se requiere apertura.</string>
+    <string name="exchange_updated">Cambio actualizado: %s</string>
+    
+    <string name="search_product">Buscar producto...</string>
+    <string name="total">Total</string>
+    <string name="finish_sale">FINALIZAR VENTA</string>
+    <string name="cart_empty">Carrito vacío</string>
+    <string name="product_added">%s añadido</string>
+    <string name="all_categories">Todos</string>
+    
+    <string name="cashier_ops">Operaciones de Caja</string>
+    <string name="amount_label">Valor ($)</string>
+    <string name="open_cashier">ABRIR CAJA</string>
+    <string name="sangria">RETIRO (SANGRIA)</string>
+    <string name="close_cashier">CERRAR CAJA</string>
+    <string name="cashier_already_open">CAJA YA ABIERTA</string>
+    <string name="session_not_found">Error: Sesión no encontrada. Reintentando...</string>
+    <string name="operation_success">¡Operación realizada con éxito!</string>
+    <string name="cashier_sync_open">Sincronizando: La caja ya estaba abierta.</string>
+    <string name="receipt_title">COMPROBANTE DE %s</string>
+    <string name="receipt_value">VALOR: $ %s</string>
+    <string name="receipt_date">FECHA: %s</string>
+    <string name="confirm_op_title_open">Abrir Caja</string>
+    <string name="confirm_op_title_sangria">Realizar Retiro</string>
+    <string name="confirm_op_title_close">Cerrar Caja</string>
+    <string name="confirm_op_msg">¿Confirmar esta operación por un valor de $ %s?</string>
+    <string name="confirm">Confirmar</string>
+    <string name="cancel">Cancelar</string>
+    
+    <string name="checkout">Revisar</string>
+    <string name="total_to_pay">Total a Pagar</string>
+    <string name="order_summary">Resumen del Pedido</string>
+    <string name="go_to_payment">IR AL PAGO</string>
+    <string name="product_label">Producto</string>
+    <string name="stock_label">Existencias: %d</string>
+    <string name="select_payment">Seleccione el Método de Pago</string>
+    <string name="credit">Crédito</string>
+    <string name="debit">Débito</string>
+    <string name="pix">PIX</string>
+    <string name="cash">Efectivo</string>
+    <string name="sale_completed">VENTA REALIZADA</string>
+    <string name="payment_method_label">FORMA DE PAGO:</string>
+    <string name="sale_finished_toast">Venta finalizada con %s</string>
+    <string name="dashboard_title">Panel de Ventas</string>
+    <string name="total_sold">TOTAL VENDIDO</string>
+    <string name="cash_label">Efectivo:</string>
+    <string name="digital_label">Tarjeta/Pix:</string>
+    <string name="withdrawal_label">Retiros (Sangrias):</string>
+    <string name="item_history">Historial de Ítems</string>
+    <string name="no_open_cashier">No se encontró caja abierta</string>
+    <string name="dashboard_btn">PANEL DE OPERACIONES</string>
+    <string name="subtotal">Subtotal</string>
+    <string name="tax">Impuesto</string>
+</resources>

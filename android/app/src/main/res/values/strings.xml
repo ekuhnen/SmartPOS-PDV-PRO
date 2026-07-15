@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PlugPDV</string>
+    <string name="login_title">ENTRAR NO SISTEMA</string>
+    <string name="email">E-mail</string>
+    <string name="password">Senha</string>
+    <string name="fill_all_fields">Preencha todos os campos</string>
+    <string name="welcome">Bem-vindo, %s</string>
+    <string name="invalid_credentials">Erro: Credenciais inválidas</string>
+    <string name="network_error">Erro de rede: %s</string>
+    <string name="cashier_closed_msg">Caixa fechado. É necessário abrir o caixa.</string>
+    <string name="exchange_updated">Câmbio atualizado: %s</string>
+    
+    <string name="search_product">Buscar produto...</string>
+    <string name="total">Total</string>
+    <string name="finish_sale">FINALIZAR VENDA</string>
+    <string name="cart_empty">Carrinho vazio</string>
+    <string name="product_added">%s adicionado</string>
+    <string name="all_categories">Todos</string>
+    
+    <string name="cashier_ops">Operações de Caixa</string>
+    <string name="amount_label">Valor (R$)</string>
+    <string name="open_cashier">ABRIR CAIXA</string>
+    <string name="sangria">SANGRIA (RETIRADA)</string>
+    <string name="close_cashier">FECHAR CAIXA</string>
+    <string name="cashier_already_open">CAIXA JÁ ABERTO</string>
+    <string name="session_not_found">Erro: Sessão não encontrada. Tentando recuperar...</string>
+    <string name="operation_success">Operação realizada com sucesso!</string>
+    <string name="cashier_sync_open">Sincronizando: Caixa já estava aberto.</string>
+    <string name="receipt_title">COMPROVANTE DE %s</string>
+    <string name="receipt_value">VALOR: R$ %s</string>
+    <string name="receipt_date">DATA: %s</string>
+    <string name="confirm_op_title_open">Abrir Caixa</string>
+    <string name="confirm_op_title_sangria">Realizar Sangria</string>
+    <string name="confirm_op_title_close">Fechar Caixa</string>
+    <string name="confirm_op_msg">Deseja confirmar esta operação no valor de R$ %s?</string>
+    <string name="confirm">Confirmar</string>
+    <string name="cancel">Cancelar</string>
+    
+    <string name="checkout">Checkout</string>
+    <string name="total_to_pay">Total a Pagar</string>
+    <string name="order_summary">Resumo do Pedido</string>
+    <string name="go_to_payment">IR PARA O PAGAMENTO</string>
+    <string name="product_label">Produto</string>
+    <string name="stock_label">Estoque: %d</string>
+    <string name="select_payment">Selecione a Forma de Pagamento</string>
+    <string name="credit">Crédito</string>
+    <string name="debit">Débito</string>
+    <string name="pix">PIX</string>
+    <string name="cash">Dinheiro</string>
+    <string name="sale_completed">VENDA REALIZADA</string>
+    <string name="payment_method_label">FORMA PGT:</string>
+    <string name="sale_finished_toast">Venda finalizada com %s</string>
+    <string name="dashboard_title">Dashboard de Vendas</string>
+    <string name="total_sold">TOTAL VENDIDO</string>
+    <string name="cash_label">Dinheiro:</string>
+    <string name="digital_label">Cartão/Pix:</string>
+    <string name="withdrawal_label">Sangrias:</string>
+    <string name="item_history">Histórico de Itens</string>
+    <string name="no_open_cashier">Nenhum caixa aberto encontrado</string>
+    <string name="dashboard_btn">DASHBOARD DE OPERAÇÕES</string>
+    
+    <string name="tab_mesa">Mesa</string>
+    <string name="tab_venda_rapida">Venda Rápida</string>
+    <string name="tab_comanda">Comanda</string>
+    
+    <string name="open_table">Abrir Mesa</string>
+    <string name="table_number">Mesa %d</string>
+    <string name="customer_name">Nome do Cliente</string>
+    <string name="table_occupied">Ocupada</string>
+    <string name="table_reserved">Reservada</string>
+    <string name="table_available">Livre</string>
+    <string name="add_to_table">Adicionar Itens</string>
+    <string name="close_table">Fechar Conta</string>
+    <string name="table_error">Erro ao operar mesa</string>
+    <string name="add_observation">Adicionar Observação</string>
+    <string name="observation_label">Observação</string>
+    <string name="removal_reason">Motivo da Remoção</string>
+    <string name="reason_required">Motivo obrigatório</string>
+    <string name="current_order">Itens da Mesa</string>
+    <string name="update_table">ATUALIZAR MESA</string>
+    <string name="item_removed">Item removido</string>
+    <string name="subtotal">Subtotal</string>
+    <string name="tax">Imposto</string>
+    <string name="transfer_table">Transferir Mesa</string>
+    <string name="select_destination">Selecionar Mesa de Destino</string>
+    <string name="transfer_success">Mesa transferida com sucesso</string>
+</resources>

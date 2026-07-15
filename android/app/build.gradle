@@ -1,0 +1,138 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.google.dagger.hilt.android'
+    id 'kotlin-kapt'
+    id 'com.google.gms.google-services'
+}
+
+
+android {
+    namespace 'com.plugpdv.pdv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.plugpdv.pdv"
+        minSdk 24
+        targetSdk 35
+        versionCode 5
+        versionName "1.5.1"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+        }
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(project.findProperty('RELEASE_STORE_FILE') ?: '../../plugpdv-release-key.jks')
+            storePassword project.findProperty('RELEASE_STORE_PASSWORD') ?: ''
+            keyAlias project.findProperty('RELEASE_KEY_ALIAS') ?: ''
+            keyPassword project.findProperty('RELEASE_KEY_PASSWORD') ?: ''
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    buildFeatures {
+        viewBinding true
+        aidl true
+    }
+    
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            excludes += ['**/riscv64/**']
+        }
+    }
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    
+    // Retrofit para APIs
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+
+    // Hilt
+    implementation 'com.google.dagger:hilt-android:2.51.1'
+    kapt 'com.google.dagger:hilt-compiler:2.51.1'
+
+    // Coroutines
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // Lifecycle & ViewModel KTX
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.7.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    implementation 'androidx.fragment:fragment-ktx:1.6.2'
+
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+
+    // QR Code Scanner
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+
+    // Sunmi Printer SDK
+    implementation 'com.sunmi:printerlibrary:1.0.13'
+
+    // Multi-Printer SDKs (Kozen, Urovo, iMin, Gertec)
+    compileOnly files('libs/platform_sdk_v4.1.0326.jar')
+    implementation files('libs/classes-2.1.17.jar')
+    // Kozen Financial SDK (P8 / P8 Neo) - IPrinterManager via FinancialEngine
+    implementation(name: 'FinancialLib_1.5.0_release', ext: 'aar')
+
+    // implementation(name: 'dspread_print_sdk_fixed', ext: 'aar')
+    // implementation(name: 'dspread_print_sdk_fixed', ext: 'aar')
+    implementation(name: 'dspread_print_sdk-1.9.4', ext: 'aar')
+    implementation(name: 'dspread_pos_sdk_8.4.4', ext: 'aar')
+    implementation 'com.google.zxing:core:3.5.3'
+
+    // Room Database
+    def room_version = "2.6.1"
+    implementation "androidx.room:room-runtime:$room_version"
+    kapt "androidx.room:room-compiler:$room_version"
+    implementation "androidx.room:room-ktx:$room_version"
+
+    // Glide for Images
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+
+    // Firebase
+    implementation platform('com.google.firebase:firebase-bom:32.8.0')
+    implementation 'com.google.firebase:firebase-messaging-ktx'
+    implementation 'com.google.firebase:firebase-analytics-ktx'
+
+    // Supabase & Ktor (Kill-Switch Realtime)
+    implementation "io.github.jan-tennert.supabase:postgrest-kt:2.4.3"
+    implementation "io.github.jan-tennert.supabase:realtime-kt:2.4.3"
+    implementation "io.github.jan-tennert.supabase:functions-kt:2.4.3"
+    implementation "io.github.jan-tennert.supabase:gotrue-kt:2.4.3"
+    implementation "io.ktor:ktor-client-okhttp:2.3.9"
+    implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3"
+}
+

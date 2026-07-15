@@ -1,0 +1,32 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Android specific
+android/build/
+android/.gradle/
+android/app/build/
+android/local.properties
+android/.idea/
+android/**/*.iml
+
+
+# Temp folders and SDKs
+dspread_android_demo/
+temp_dspread_demo/
+temp_dspread_sdk_classes/
+DevDocForAIAgent_260507@latest/
+Fin_260507_1.5.0@latest/
+TermMgr_260507_1.3.0@latest/
+*.zip
+*.pepk
+*.jks
+
+
+*.hprof
+
