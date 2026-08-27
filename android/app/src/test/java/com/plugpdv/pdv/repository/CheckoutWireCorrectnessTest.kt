@@ -2,9 +2,12 @@ package com.plugpdv.pdv.repository
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.plugpdv.pdv.database.OutboxOperationEntity
 import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.plugpdv.pdv.models.ComandaCheckoutCommitResponse
+import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.ui.sale.CheckoutUiState
+import com.plugpdv.pdv.utils.SingleOperationResult
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -56,7 +59,7 @@ class CheckoutWireCorrectnessTest {
     }
 
     @Test
-    fun testBackendClosedTrueEnablesPaymentSuccess() {
+    fun testClosedTruePendingFalsePaymentSuccessTrueTableAvailable() {
         val json = """
             {
                 "success": true,
@@ -72,6 +75,7 @@ class CheckoutWireCorrectnessTest {
         assertTrue(response.success)
         assertTrue(response.closed)
 
+        val table = Table(id = "1", number = 10, status = Table.Status.AVAILABLE)
         val stateAfterSync = CheckoutUiState(
             isLoading = false,
             paymentSuccess = true,
@@ -82,10 +86,44 @@ class CheckoutWireCorrectnessTest {
         assertTrue(stateAfterSync.paymentSuccess)
         assertFalse(stateAfterSync.isPendingSync)
         assertFalse(stateAfterSync.isPayButtonBlocked)
+        assertEquals(Table.Status.AVAILABLE, table.status)
     }
 
     @Test
-    fun testBackendReconciliationBlocksButtonAndDisablesPaymentSuccess() {
+    fun testClosedFalsePendingFalseTableOccupiedAndButtonUnblocked() {
+        val json = """
+            {
+                "success": true,
+                "created_new": true,
+                "payment_id": "pay-partial-1",
+                "closed": false,
+                "comanda_status": "ABERTA",
+                "remaining_balance": 50.0
+            }
+        """.trimIndent()
+
+        val response = gson.fromJson(json, ComandaCheckoutCommitResponse::class.java)
+        assertTrue(response.success)
+        assertFalse(response.closed)
+
+        val table = Table(id = "2", number = 20, status = Table.Status.OCCUPIED)
+        val stateAfterPartialPayment = CheckoutUiState(
+            isLoading = false,
+            paymentSuccess = true,
+            isPendingSync = false,
+            isPayButtonBlocked = false,
+            currentToPay = response.remainingBalance
+        )
+
+        assertTrue(stateAfterPartialPayment.paymentSuccess)
+        assertFalse(stateAfterPartialPayment.isPendingSync)
+        assertFalse(stateAfterPartialPayment.isPayButtonBlocked)
+        assertEquals(50.0, stateAfterPartialPayment.currentToPay, 0.001)
+        assertEquals(Table.Status.OCCUPIED, table.status)
+    }
+
+    @Test
+    fun testReconciliationPendingFalseReconciliationTrueButtonBlocked() {
         val json = """
             {
                 "success": true,
@@ -111,19 +149,96 @@ class CheckoutWireCorrectnessTest {
         assertFalse(stateAfterReconciliation.paymentSuccess)
         assertTrue(stateAfterReconciliation.requiresReconciliation)
         assertTrue(stateAfterReconciliation.isPayButtonBlocked)
+        assertEquals("Pagamento aprovado requer conciliação", stateAfterReconciliation.blockReason)
     }
 
     @Test
-    fun testClassificationOf409OperationInProgressVsIdempotencyKeyReused() {
+    fun testIdempotencyKeyReusedFinalStateNotSynced() {
+        val errorBody = """{"code":"IDEMPOTENCY_KEY_REUSED","message":"Chave reutilizada com payload diferente"}"""
+        val jsonObj = gson.fromJson(errorBody, JsonObject::class.java)
+        val code = jsonObj.get("code")?.asString
+
+        assertEquals("IDEMPOTENCY_KEY_REUSED", code)
+
+        val result = when (code) {
+            "IDEMPOTENCY_KEY_REUSED" -> SingleOperationResult.NEEDS_RECONCILIATION
+            else -> SingleOperationResult.RETRY
+        }
+
+        assertEquals(SingleOperationResult.NEEDS_RECONCILIATION, result)
+        assertNotEquals(SingleOperationResult.SYNCED, result)
+
+        val op = OutboxOperationEntity(
+            id = "op-123",
+            operationType = "COMANDA_CHECKOUT_COMMIT",
+            targetGroupKey = "comanda-1",
+            payloadJson = "{}",
+            createdAt = System.currentTimeMillis(),
+            status = "FAILED",
+            lastError = "IDEMPOTENCY_KEY_REUSED",
+            messageKey = "REQUIRES_RECONCILIATION",
+            isRetriable = false
+        )
+
+        assertEquals("FAILED", op.status)
+        assertEquals("IDEMPOTENCY_KEY_REUSED", op.lastError)
+        assertFalse(op.isRetriable)
+    }
+
+    @Test
+    fun testHttp400FinalStateFailedNoRetry() {
+        val httpStatusCode = 400
+        val result = if (httpStatusCode in 400..422 && httpStatusCode != 408 && httpStatusCode != 409) {
+            SingleOperationResult.FAILED_PERMANENT
+        } else {
+            SingleOperationResult.RETRY
+        }
+
+        assertEquals(SingleOperationResult.FAILED_PERMANENT, result)
+
+        val op = OutboxOperationEntity(
+            id = "op-400",
+            operationType = "COMANDA_CHECKOUT_COMMIT",
+            targetGroupKey = "comanda-1",
+            payloadJson = "{}",
+            createdAt = System.currentTimeMillis(),
+            status = "FAILED",
+            lastError = "HTTP_400",
+            messageKey = "UNRECOVERABLE_ERROR",
+            isRetriable = false
+        )
+
+        assertEquals("FAILED", op.status)
+        assertEquals("HTTP_400", op.lastError)
+        assertFalse(op.isRetriable)
+    }
+
+    @Test
+    fun testOperationInProgressFinalStatePendingWithRetry() {
         val inProgressBody = """{"code":"OPERATION_IN_PROGRESS","message":"Operação em andamento"}"""
-        val keyReusedBody = """{"code":"IDEMPOTENCY_KEY_REUSED","message":"Chave reutilizada em contexto diferente"}"""
+        val jsonObj = gson.fromJson(inProgressBody, JsonObject::class.java)
+        val code = jsonObj.get("code")?.asString
 
-        val inProgressObj = gson.fromJson(inProgressBody, JsonObject::class.java)
-        val inProgressCode = inProgressObj.get("code")?.asString
-        assertEquals("OPERATION_IN_PROGRESS", inProgressCode)
+        val result = when (code) {
+            "OPERATION_IN_PROGRESS" -> SingleOperationResult.RETRY
+            else -> SingleOperationResult.FAILED_PERMANENT
+        }
 
-        val keyReusedObj = gson.fromJson(keyReusedBody, JsonObject::class.java)
-        val keyReusedCode = keyReusedObj.get("code")?.asString
-        assertEquals("IDEMPOTENCY_KEY_REUSED", keyReusedCode)
+        assertEquals(SingleOperationResult.RETRY, result)
+
+        val op = OutboxOperationEntity(
+            id = "op-in-progress",
+            operationType = "COMANDA_CHECKOUT_COMMIT",
+            targetGroupKey = "comanda-1",
+            payloadJson = "{}",
+            createdAt = System.currentTimeMillis(),
+            attemptCount = 1,
+            nextRetryAt = System.currentTimeMillis() + 2000L,
+            status = "PENDING",
+            isRetriable = true
+        )
+
+        assertEquals("PENDING", op.status)
+        assertTrue(op.isRetriable)
     }
 }

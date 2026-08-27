@@ -86,6 +86,42 @@ class CheckoutViewModel @Inject constructor(
         fetchComandaPayments()
 
         viewModelScope.launch {
+            outboxSyncManager.checkoutResultEvents.collect { event ->
+                if (event.comandaId == table.comandaId) {
+                    if (event.requiresReconciliation) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            isPendingSync = false,
+                            isPayButtonBlocked = true,
+                            paymentSuccess = false,
+                            requiresReconciliation = true,
+                            blockReason = "Pagamento aprovado requer conciliação"
+                        )
+                    } else if (event.closed) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            isPendingSync = false,
+                            isPayButtonBlocked = false,
+                            paymentSuccess = true,
+                            requiresReconciliation = false,
+                            blockReason = null
+                        )
+                    } else {
+                        fetchComandaPayments()
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            isPendingSync = false,
+                            isPayButtonBlocked = false,
+                            paymentSuccess = true,
+                            requiresReconciliation = false,
+                            blockReason = null
+                        )
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
             taxRepository.getActiveTaxesLiveData().observeForever { taxes ->
                 _uiState.value = _uiState.value.copy(activeTaxes = taxes)
                 calculateFinalAmount()

@@ -21,6 +21,22 @@ import javax.inject.Singleton
 import kotlin.math.min
 import kotlin.math.pow
 
+enum class SingleOperationResult {
+    SYNCED,
+    RETRY,
+    FAILED_PERMANENT,
+    NEEDS_RECONCILIATION
+}
+
+data class CheckoutResultEvent(
+    val operationId: String,
+    val comandaId: String,
+    val mesaId: String?,
+    val closed: Boolean,
+    val requiresReconciliation: Boolean,
+    val remainingBalance: Double = 0.0
+)
+
 data class OutboxQueueStatus(
     val pendingCount: Int = 0,
     val oldestPendingAgeMs: Long = 0L,
@@ -49,6 +65,9 @@ class OutboxSyncManager @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val groupMutexes = ConcurrentHashMap<String, Mutex>()
     private var syncJob: Job? = null
+
+    private val _checkoutResultEvents = MutableSharedFlow<CheckoutResultEvent>(replay = 1, extraBufferCapacity = 64)
+    val checkoutResultEvents: SharedFlow<CheckoutResultEvent> = _checkoutResultEvents.asSharedFlow()
 
     private val _queueStatus = MutableStateFlow(OutboxQueueStatus())
     val queueStatus: StateFlow<OutboxQueueStatus> = _queueStatus.asStateFlow()
@@ -210,26 +229,35 @@ class OutboxSyncManager @Inject constructor(
 
         // Processar operações de checkout atômico individualmente
         for (op in checkoutOps) {
-            val success = executeSingleOperation(op, token)
-            if (success) {
-                outboxDao.markAsSynced(op.id)
-                syncMetricsTracker.recordSyncFlush(
-                    groupOrSaleId = op.targetGroupKey,
-                    createdAt = op.createdAt
-                )
-                Log.d(TAG, "Operação de checkout K=${op.idempotencyKey} sincronizada com sucesso.")
-            } else {
-                val nextAttempt = op.attemptCount + 1
-                val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
-                val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
-                outboxDao.update(op.copy(
-                    attemptCount = nextAttempt,
-                    lastAttemptAt = System.currentTimeMillis(),
-                    nextRetryAt = nextRetry,
-                    status = "PENDING"
-                ))
-                saleSyncScheduler.scheduleRetry(context, backoffSec * 1000L)
-                Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} falhou no envio (tentativa $nextAttempt). Reagendando em ${backoffSec}s.")
+            val result = executeSingleOperation(op, token)
+            when (result) {
+                SingleOperationResult.SYNCED -> {
+                    outboxDao.markAsSynced(op.id)
+                    syncMetricsTracker.recordSyncFlush(
+                        groupOrSaleId = op.targetGroupKey,
+                        createdAt = op.createdAt
+                    )
+                    Log.d(TAG, "Operação de checkout K=${op.idempotencyKey} sincronizada com sucesso.")
+                }
+                SingleOperationResult.RETRY -> {
+                    val nextAttempt = op.attemptCount + 1
+                    val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                    val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                    outboxDao.update(op.copy(
+                        attemptCount = nextAttempt,
+                        lastAttemptAt = System.currentTimeMillis(),
+                        nextRetryAt = nextRetry,
+                        status = "PENDING"
+                    ))
+                    saleSyncScheduler.scheduleRetry(context, backoffSec * 1000L)
+                    Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} falhou no envio (tentativa $nextAttempt). Reagendando em ${backoffSec}s.")
+                }
+                SingleOperationResult.FAILED_PERMANENT -> {
+                    Log.e(TAG, "Operação de checkout K=${op.idempotencyKey} falhou permanentemente.")
+                }
+                SingleOperationResult.NEEDS_RECONCILIATION -> {
+                    Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} em estado de reconciliação.")
+                }
             }
         }
 
@@ -291,37 +319,51 @@ class OutboxSyncManager @Inject constructor(
 
             if (!batchSynced) {
                 for (op in batchOps) {
-                    val success = executeSingleOperation(op, token)
-                    if (success) {
-                        outboxDao.markAsSynced(op.id)
-                        syncMetricsTracker.recordSyncFlush(
-                            groupOrSaleId = op.targetGroupKey,
-                            createdAt = op.createdAt
-                        )
-                    } else {
-                        val nextAttempt = op.attemptCount + 1
-                        val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
-                        val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
-                        outboxDao.update(op.copy(
-                            attemptCount = nextAttempt,
-                            lastAttemptAt = System.currentTimeMillis(),
-                            nextRetryAt = nextRetry,
-                            status = "PENDING"
-                        ))
-                        break
+                    val result = executeSingleOperation(op, token)
+                    when (result) {
+                        SingleOperationResult.SYNCED -> {
+                            outboxDao.markAsSynced(op.id)
+                            syncMetricsTracker.recordSyncFlush(
+                                groupOrSaleId = op.targetGroupKey,
+                                createdAt = op.createdAt
+                            )
+                        }
+                        SingleOperationResult.RETRY -> {
+                            val nextAttempt = op.attemptCount + 1
+                            val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                            val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                            outboxDao.update(op.copy(
+                                attemptCount = nextAttempt,
+                                lastAttemptAt = System.currentTimeMillis(),
+                                nextRetryAt = nextRetry,
+                                status = "PENDING"
+                            ))
+                            saleSyncScheduler.scheduleRetry(context, backoffSec * 1000L)
+                            break
+                        }
+                        SingleOperationResult.FAILED_PERMANENT, SingleOperationResult.NEEDS_RECONCILIATION -> {
+                            // Status já registrado no DAO
+                        }
                     }
                 }
             }
         }
     }
 
-    private suspend fun executeSingleOperation(op: OutboxOperationEntity, token: String): Boolean {
+    private suspend fun executeSingleOperation(op: OutboxOperationEntity, token: String): SingleOperationResult {
         return try {
             when (op.operationType) {
                 "COMMAND_ACTION" -> {
                     val request = gson.fromJson(op.payloadJson, CommandActionRequest::class.java)
                     val response = apiService.manageComanda("Bearer $token", request, op.idempotencyKey)
-                    response.isSuccessful
+                    if (response.isSuccessful) {
+                        SingleOperationResult.SYNCED
+                    } else if (response.code() in 400..422 && response.code() != 408 && response.code() != 409) {
+                        outboxDao.markAsFailedWithKey(op.id, "HTTP_${response.code()}", "UNRECOVERABLE_ERROR", false)
+                        SingleOperationResult.FAILED_PERMANENT
+                    } else {
+                        SingleOperationResult.RETRY
+                    }
                 }
                 "COMANDA_CHECKOUT_COMMIT" -> {
                     val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
@@ -332,14 +374,37 @@ class OutboxSyncManager @Inject constructor(
                         val commitRes = response.body()
                         if (commitRes?.requiresReconciliation == true) {
                             Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} requer conciliação financeira.")
-                        }
-                        if (commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)) {
-                            val mesaId = commitRes?.mesaId ?: request.mesaId
-                            if (!mesaId.isNullOrEmpty()) {
-                                com.plugpdv.pdv.utils.TableManager.markTableAvailable(mesaId)
+                            outboxDao.markAsFailedWithKey(op.id, "REQUIRES_RECONCILIATION", "REQUIRES_RECONCILIATION", false)
+                            _checkoutResultEvents.emit(
+                                CheckoutResultEvent(
+                                    operationId = op.id,
+                                    comandaId = op.targetGroupKey,
+                                    mesaId = commitRes.mesaId ?: request.mesaId,
+                                    closed = commitRes.closed,
+                                    requiresReconciliation = true,
+                                    remainingBalance = commitRes.remainingBalance
+                                )
+                            )
+                            SingleOperationResult.NEEDS_RECONCILIATION
+                        } else {
+                            if (commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)) {
+                                val mesaId = commitRes?.mesaId ?: request.mesaId
+                                if (!mesaId.isNullOrEmpty()) {
+                                    com.plugpdv.pdv.utils.TableManager.markTableAvailable(mesaId)
+                                }
                             }
+                            _checkoutResultEvents.emit(
+                                CheckoutResultEvent(
+                                    operationId = op.id,
+                                    comandaId = op.targetGroupKey,
+                                    mesaId = commitRes?.mesaId ?: request.mesaId,
+                                    closed = commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true),
+                                    requiresReconciliation = false,
+                                    remainingBalance = commitRes?.remainingBalance ?: 0.0
+                                )
+                            )
+                            SingleOperationResult.SYNCED
                         }
-                        true
                     } else if (statusCode == 409) {
                         val errorBodyStr = response.errorBody()?.string() ?: ""
                         val errorCode = try {
@@ -350,45 +415,62 @@ class OutboxSyncManager @Inject constructor(
                         when (errorCode) {
                             "OPERATION_IN_PROGRESS" -> {
                                 Log.w(TAG, "Operação K=${op.idempotencyKey} em progresso no servidor (OPERATION_IN_PROGRESS). Reagendando backoff.")
-                                false
+                                SingleOperationResult.RETRY
                             }
                             "IDEMPOTENCY_KEY_REUSED", "IDEMPOTENCY_SCOPE_MISMATCH" -> {
                                 Log.e(TAG, "Operação K=${op.idempotencyKey} conflito de chave ($errorCode). Marcando NEEDS_RECONCILIATION sem retry.")
                                 outboxDao.markAsFailedWithKey(op.id, errorCode, "REQUIRES_RECONCILIATION", false)
-                                true
+                                _checkoutResultEvents.emit(
+                                    CheckoutResultEvent(
+                                        operationId = op.id,
+                                        comandaId = op.targetGroupKey,
+                                        mesaId = request.mesaId,
+                                        closed = false,
+                                        requiresReconciliation = true
+                                    )
+                                )
+                                SingleOperationResult.NEEDS_RECONCILIATION
                             }
                             "INSUFFICIENT_STOCK", "COMANDA_ALREADY_CLOSED" -> {
                                 Log.e(TAG, "Operação K=${op.idempotencyKey} falhou por regra de negócio ($errorCode). Cancelando retries.")
                                 outboxDao.markAsFailedWithKey(op.id, errorCode, "BUSINESS_RULE_ERROR", false)
-                                true
+                                SingleOperationResult.FAILED_PERMANENT
                             }
                             else -> {
                                 Log.e(TAG, "Operação K=${op.idempotencyKey} HTTP 409 não classificado ($errorCode). Cancelando retries.")
                                 outboxDao.markAsFailedWithKey(op.id, if (errorCode.isNotEmpty()) errorCode else "HTTP_409", "UNRECOVERABLE_ERROR", false)
-                                true
+                                SingleOperationResult.FAILED_PERMANENT
                             }
                         }
                     } else if (statusCode == 400 || statusCode == 422) {
                         Log.e(TAG, "Operação K=${op.idempotencyKey} falhou com erro permanente (HTTP $statusCode). Cancelando retries.")
                         outboxDao.markAsFailedWithKey(op.id, "HTTP_$statusCode", "UNRECOVERABLE_ERROR", false)
-                        true
+                        SingleOperationResult.FAILED_PERMANENT
+                    } else if (statusCode == 401 || statusCode == 403) {
+                        Log.w(TAG, "Operação K=${op.idempotencyKey} aguardando re-autenticação (HTTP $statusCode).")
+                        SingleOperationResult.RETRY
                     } else {
-                        false
+                        SingleOperationResult.RETRY
                     }
                 }
                 "SALE_DIRECT" -> {
                     val request = gson.fromJson(op.payloadJson, SaleRequest::class.java)
                     val response = apiService.registerSale("Bearer $token", op.idempotencyKey, request)
-                    response.id != null
+                    if (response.id != null) {
+                        SingleOperationResult.SYNCED
+                    } else {
+                        SingleOperationResult.RETRY
+                    }
                 }
                 else -> {
                     Log.e(TAG, "Tipo de operação desconhecido na outbox: ${op.operationType}")
-                    false
+                    outboxDao.markAsFailedWithKey(op.id, "UNKNOWN_OPERATION", "UNRECOVERABLE_ERROR", false)
+                    SingleOperationResult.FAILED_PERMANENT
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exceção ao sincronizar operação ${op.id}: ${e.message}")
-            false
+            SingleOperationResult.RETRY
         }
     }
 }
