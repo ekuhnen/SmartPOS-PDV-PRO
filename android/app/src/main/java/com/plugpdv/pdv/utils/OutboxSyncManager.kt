@@ -180,33 +180,49 @@ class OutboxSyncManager @Inject constructor(
             val approvedAttempts = paymentAttemptDao.getApprovedAttempts()
             val waitingOps = outboxDao.getWaitingPaymentOperations()
 
-            // 2. Promover WAITING_PAYMENT com PaymentAttempt APPROVED para PENDING
+            // Caso A & F: Promover WAITING_PAYMENT com PaymentAttempt APPROVED para PENDING / Terminalizar CANCELLED/REJECTED
             for (op in waitingOps) {
-                val matchingAttempt = approvedAttempts.find { it.reference == op.idempotencyKey || it.idempotencyKey == op.idempotencyKey }
+                val matchingAttempt = paymentAttemptDao.getByReference(op.idempotencyKey)
+                    ?: approvedAttempts.find { it.reference == op.idempotencyKey || it.idempotencyKey == op.idempotencyKey }
+
                 if (matchingAttempt != null) {
-                    val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
-                    val updatedRequest = request.copy(
-                        referenciaExterna = matchingAttempt.paymentAppPaymentId ?: request.referenciaExterna,
-                        forma = matchingAttempt.paymentMethod ?: request.forma
-                    )
+                    when (matchingAttempt.status) {
+                        "APPROVED" -> {
+                            val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
+                            val updatedRequest = request.copy(
+                                referenciaExterna = matchingAttempt.paymentAppPaymentId ?: request.referenciaExterna,
+                                forma = matchingAttempt.paymentMethod ?: request.forma
+                            )
 
-                    val updatedOp = op.copy(
-                        payloadJson = gson.toJson(updatedRequest),
-                        status = "PENDING"
-                    )
+                            val updatedOp = op.copy(
+                                payloadJson = gson.toJson(updatedRequest),
+                                status = "PENDING"
+                            )
 
-                    outboxDao.update(updatedOp)
-                    Log.i(TAG, "Process Death Recovery: Operação K=${op.idempotencyKey} promovida de WAITING_PAYMENT para PENDING (PaymentAttempt APPROVED)")
-                } else if (now - op.createdAt > fiveMinutesMs) {
-                    // 3. Tratamento de órfãos WAITING_PAYMENT antigos
-                    val attempt = paymentAttemptDao.getByReference(op.idempotencyKey)
-                    if (attempt == null) {
-                        outboxDao.markAsFailedWithKey(op.id, "ORPHAN_WAITING_TIMEOUT", "ORPHAN_WAITING", false)
-                        Log.w(TAG, "Outbox K=${op.idempotencyKey} WAITING_PAYMENT sem PaymentAttempt (>5min) -> FAILED.")
-                    } else if (attempt.status == "CANCELLED" || attempt.status == "REJECTED") {
-                        outboxDao.markAsFailedWithKey(op.id, attempt.status, "CANCELLED_PAYMENT", false)
-                        Log.i(TAG, "Outbox K=${op.idempotencyKey} sincronizada com attempt terminal (${attempt.status}) -> CANCELLED_PAYMENT.")
+                            outboxDao.update(updatedOp)
+                            Log.i(TAG, "Process Death Recovery (Caso A): Operação K=${op.idempotencyKey} promovida para PENDING (PaymentAttempt APPROVED)")
+                        }
+                        "CANCELLED", "REJECTED" -> {
+                            outboxDao.markAsFailedWithKey(op.id, matchingAttempt.status, "CANCELLED_PAYMENT", false)
+                            Log.i(TAG, "Process Death Recovery (Caso F): Outbox K=${op.idempotencyKey} terminalizada como FAILED/CANCELLED_PAYMENT.")
+                        }
+                        "UNKNOWN" -> {
+                            // Caso C: PaymentAttempt UNKNOWN + Outbox WAITING -> NEEDS_VERIFICATION (não faz checkout backend, não apaga)
+                            Log.w(TAG, "Caso C: Outbox K=${op.idempotencyKey} vinculada a PaymentAttempt UNKNOWN. Mantida para verificação do operador.")
+                        }
                     }
+                } else if (now - op.createdAt > fiveMinutesMs) {
+                    // Caso D: Outbox WAITING_PAYMENT sem PaymentAttempt (>5min) -> FAILED sem apagar
+                    outboxDao.markAsFailedWithKey(op.id, "ORPHAN_WAITING_TIMEOUT", "ORPHAN_WAITING", false)
+                    Log.w(TAG, "Caso D: Outbox K=${op.idempotencyKey} WAITING_PAYMENT sem PaymentAttempt (>5min) -> FAILED.")
+                }
+            }
+
+            // Caso B: PaymentAttempt APPROVED sem Outbox correspondente
+            for (attempt in approvedAttempts) {
+                val op = outboxDao.getById(attempt.reference)
+                if (op == null && attempt.orderId != null && attempt.orderId != "0") {
+                    Log.w(TAG, "Caso B: PaymentAttempt APPROVED sem Outbox. Reference: ${attempt.reference}. Preservado no Room.")
                 }
             }
         } catch (e: Exception) {

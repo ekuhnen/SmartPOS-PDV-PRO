@@ -53,6 +53,7 @@ class CheckoutViewModel @Inject constructor(
     private val apiService: PosApiService,
     private val taxRepository: TaxRepository,
     private val outboxDao: com.plugpdv.pdv.database.OutboxDao,
+    private val paymentAttemptDao: com.plugpdv.pdv.database.PaymentAttemptDao,
     private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager,
     private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
 ) : ViewModel() {
@@ -83,6 +84,7 @@ class CheckoutViewModel @Inject constructor(
             serviceFeeKind = if (serviceFeeConfig?.fixedEnabled == true) "fixed" else null
         )
         
+        restoreDurableStateFromRoom()
         fetchComandaPayments()
 
         viewModelScope.launch {
@@ -129,6 +131,72 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
+    fun restoreDurableStateFromRoom() {
+        val currentTable = table ?: return
+        val cId = currentTable.comandaId ?: return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val activeOps = outboxDao.getActiveOperationsForGroup(cId)
+                .filter { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
+
+            val waitingOp = activeOps.find { it.status == "WAITING_PAYMENT" }
+            val pendingOrProcessingOp = activeOps.find { it.status == "PENDING" || it.status == "PROCESSING" }
+
+            var blocked = false
+            var pendingSync = false
+            var reconciliation = false
+            var reason: String? = null
+
+            if (waitingOp != null) {
+                val attempt = paymentAttemptDao.getByReference(waitingOp.idempotencyKey)
+                when (attempt?.status) {
+                    "PENDING" -> {
+                        blocked = true
+                        pendingSync = true
+                        reason = "Pagamento aguardando confirmação da maquininha"
+                    }
+                    "UNKNOWN" -> {
+                        blocked = true
+                        pendingSync = false
+                        reconciliation = true
+                        reason = "Pagamento com status indeterminado"
+                    }
+                    "APPROVED" -> {
+                        blocked = true
+                        pendingSync = true
+                        reason = "Pagamento aprovado aguardando sincronização com o servidor"
+                    }
+                    "CANCELLED", "REJECTED", "FAILED_TO_START" -> {
+                        blocked = false
+                        pendingSync = false
+                        reason = null
+                    }
+                    else -> {
+                        blocked = true
+                        pendingSync = false
+                        reconciliation = true
+                        reason = "Pagamento necessita verificação"
+                    }
+                }
+            } else if (pendingOrProcessingOp != null) {
+                blocked = true
+                pendingSync = true
+                reason = "Pagamento aprovado aguardando sincronização com o servidor"
+            }
+
+            withContext(Dispatchers.Main) {
+                if (blocked || reconciliation) {
+                    _uiState.value = _uiState.value.copy(
+                        isPayButtonBlocked = blocked,
+                        isPendingSync = pendingSync,
+                        requiresReconciliation = reconciliation,
+                        blockReason = reason
+                    )
+                }
+            }
+        }
+    }
+
     fun fetchComandaPayments() {
         val currentTable = table ?: return
         val currentToken = token ?: return
@@ -139,16 +207,31 @@ class CheckoutViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
                 val serverPaidInCurrency = if (detail.totalPago > 0) detail.totalPago else detail.pagamentos.sumOf { it.valor }
                 val serverPaidBrl = cm.toBrl(serverPaidInCurrency, currentCurrency)
+
                 if (serverPaidBrl > 0) {
                     currentTable.paidAmount = serverPaidBrl
                     TableManager.updateTable(currentTable)
                 }
-                _uiState.value = _uiState.value.copy(
-                    paymentsHistory = detail.pagamentos,
-                    currentToPay = currentTable.getPendingBalance()
-                )
+
+                if (isComandaClosed) {
+                    currentTable.id?.let { TableManager.markTableAvailable(it) }
+                    _uiState.value = _uiState.value.copy(
+                        paymentsHistory = detail.pagamentos,
+                        currentToPay = 0.0,
+                        isPendingSync = false,
+                        isPayButtonBlocked = false,
+                        paymentSuccess = true,
+                        blockReason = null
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        paymentsHistory = detail.pagamentos,
+                        currentToPay = currentTable.getPendingBalance()
+                    )
+                }
                 calculateFinalAmount()
             } catch (e: Exception) {
                 Log.e("CheckoutViewModel", "Falha ao buscar pagamentos da comanda: ${e.message}")
