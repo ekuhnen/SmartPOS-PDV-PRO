@@ -144,4 +144,52 @@ class DurableRoomRecoveryAndroidTest {
             assertFalse(terminalOp.isRetriable)
         }
     }
+
+    @Test
+    fun testA_MONEY_09_realRoomByteForBytePersistenceAndHashRecovery() {
+        runBlocking {
+            val req = CommandCheckoutCommitRequest(
+                comandaId = "c-100",
+                forma = "CARD",
+                valor = java.math.BigDecimal("350000"),
+                moeda = "PYG",
+                valorBase = java.math.BigDecimal("50.00"),
+                baseCurrency = "BRL",
+                fxRate = java.math.BigDecimal("7000"),
+                exchangeRatesSnapshot = mapOf("PYG" to "7000", "BRL" to "1")
+            )
+
+            val payloadJson = gson.toJson(req)
+            val originalHash = sha256(payloadJson)
+
+            val op = OutboxOperationEntity(
+                id = "k-room-money-09",
+                operationType = "COMANDA_CHECKOUT_COMMIT",
+                targetGroupKey = "c-100",
+                payloadJson = payloadJson,
+                createdAt = System.currentTimeMillis(),
+                status = "WAITING_PAYMENT"
+            )
+
+            db.outboxDao().insert(op)
+
+            val recovered = db.outboxDao().getById("k-room-money-09")
+            assertNotNull(recovered)
+            assertEquals("Byte-for-byte Room payloadJson must match exactly", payloadJson, recovered!!.payloadJson)
+            assertEquals("Room hash must match exactly", originalHash, sha256(recovered.payloadJson))
+
+            val deserialized = gson.fromJson(recovered.payloadJson, CommandCheckoutCommitRequest::class.java)
+            assertEquals("PYG", deserialized.moeda)
+            assertEquals("BRL", deserialized.baseCurrency)
+            assertEquals(0, deserialized.valor.compareTo(java.math.BigDecimal("350000")))
+            assertEquals(0, deserialized.valorBase!!.compareTo(java.math.BigDecimal("50.00")))
+            assertEquals(0, deserialized.fxRate!!.compareTo(java.math.BigDecimal("7000")))
+            assertEquals("7000", deserialized.exchangeRatesSnapshot?.get("PYG"))
+        }
+    }
+
+    private fun sha256(input: String): String {
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
 }

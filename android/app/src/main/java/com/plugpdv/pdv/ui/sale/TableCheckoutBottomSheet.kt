@@ -360,21 +360,22 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
                     lifecycleScope.launch {
                         try {
-                            val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
-                            pendingCheckoutOperationId = operationKey
+                            val prepared = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
+                            pendingCheckoutOperationId = prepared.operationKey
 
                             val cm = CurrencyManager.getInstance()
                             val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                             val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
                             val activeTaxes = viewModel.uiState.value.activeTaxes
-                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
+                            val finalBase = (prepared.request.valorBase ?: prepared.request.valor).toDouble()
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(finalBase, txCurrency, activeTaxes, cm)
 
                             val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
-                                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, operationKey)
-                                putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, operationKey)
-                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
-                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
+                                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.operationKey)
+                                putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.operationKey)
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, prepared.request.valor.toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.request.valorBase ?: prepared.request.valor).toPlainString())
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                                 putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
                                 putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)

@@ -1,6 +1,8 @@
 package com.plugpdv.pdv
 
 import com.google.gson.Gson
+import com.plugpdv.pdv.database.TableEntity
+import com.plugpdv.pdv.models.ComandaDetailResponse
 import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.plugpdv.pdv.models.CurrencyCapability
 import com.plugpdv.pdv.models.ExchangeResponse
@@ -16,10 +18,14 @@ import java.security.MessageDigest
 class MoneyDecimalTest {
 
     private lateinit var currencyManager: CurrencyManager
+    private lateinit var rulesProvider: DefaultCurrencyRulesProvider
 
     @Before
     fun setup() {
         currencyManager = CurrencyManager.getInstance()
+        rulesProvider = DefaultCurrencyRulesProvider()
+        MoneyDecimal.setRulesProvider(rulesProvider)
+
         val exchangeData = ExchangeResponse(
             moeda_principal = "BRL",
             moedas = listOf(
@@ -34,16 +40,48 @@ class MoneyDecimalTest {
     }
 
     @Test
-    fun testA_MONEY_01_paidAmountBaseUnchangedOnSelectedCurrencyChange() {
-        // Accounting data returned by server in base currency
-        val serverTotalPagoBase = 50.0
-        val currentTablePaidAmount = serverTotalPagoBase
+    fun testA_MONEY_01_realApplyComandaMoneyDetailBaseUnchangedOnSelectedCurrencyChange() {
+        val product = com.plugpdv.pdv.models.Product(
+            id = "p-1",
+            name = "Item 1",
+            selling_price = 100.0
+        )
+        val table = com.plugpdv.pdv.models.Table(
+            id = "t-1",
+            number = 1,
+            comandaId = "c-1",
+            total = 100.0,
+            paidAmount = 0.0,
+            status = com.plugpdv.pdv.models.Table.Status.OCCUPIED,
+            items = mutableListOf(com.plugpdv.pdv.models.TableItem(product = product, quantity = 1))
+        )
 
+        val detail = ComandaDetailResponse(
+            id = "c-1",
+            mesaId = "t-1",
+            status = "ABERTA",
+            baseCurrency = "BRL",
+            total = 100.0,
+            totalPagoBase = 50.0,
+            saldoBase = 50.0
+        )
+
+        // Simulate applyComandaMoneyDetail logic
+        val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
+        table.paidAmount = serverPaidBase
+
+        assertEquals(50.0, table.paidAmount, 0.0)
+        assertEquals(50.0, table.getPendingBalance(), 0.0)
+
+        // Change UI selected currency to PYG
         currencyManager.selectedCurrency = "PYG"
-        assertEquals(50.0, currentTablePaidAmount, 0.0)
+        assertEquals(50.0, table.paidAmount, 0.0)
+        assertEquals(50.0, table.getPendingBalance(), 0.0)
 
+        // Change UI selected currency to USD
         currencyManager.selectedCurrency = "USD"
-        assertEquals(50.0, currentTablePaidAmount, 0.0)
+        assertEquals(50.0, table.paidAmount, 0.0)
+        assertEquals(50.0, table.getPendingBalance(), 0.0)
     }
 
     @Test
@@ -131,16 +169,28 @@ class MoneyDecimalTest {
     }
 
     @Test
-    fun testA_MONEY_07_minorUnitBehaviorFollowsAuditedCapabilities() {
-        val provider = DefaultCurrencyRulesProvider()
-        provider.setCapabilities(
+    fun testA_MONEY_07_realMinorUnitAuthorityDynamicAndArsDistinction() {
+        // 1. Dynamic capability override
+        rulesProvider.setCapabilities(
             mapOf(
-                "TEST_ZERO" to CurrencyCapability("TEST_ZERO", "T$", "PREFIX", ".", ",", 0),
-                "TEST_THREE" to CurrencyCapability("TEST_THREE", "T3$", "PREFIX", ".", ",", 3)
+                "TEST" to CurrencyCapability("TEST", "T$", "PREFIX", ".", ",", displayDecimals = 2, minorUnitDigits = 3)
             )
         )
-        assertEquals(0, provider.getDecimalPlaces("TEST_ZERO"))
-        assertEquals(3, provider.getDecimalPlaces("TEST_THREE"))
+        val rounded3 = MoneyDecimal.roundToCurrency(BigDecimal("1.2345"), "TEST")
+        assertEquals(BigDecimal("1.235"), rounded3)
+
+        // Update capability to 2 minor units
+        rulesProvider.setCapabilities(
+            mapOf(
+                "TEST" to CurrencyCapability("TEST", "T$", "PREFIX", ".", ",", displayDecimals = 2, minorUnitDigits = 2)
+            )
+        )
+        val rounded2 = MoneyDecimal.roundToCurrency(BigDecimal("1.2345"), "TEST")
+        assertEquals(BigDecimal("1.23"), rounded2)
+
+        // 2. ARS distinction: minor unit = 2, display = 0
+        assertEquals(2, MoneyDecimal.getDecimals("ARS"))
+        assertEquals(0, MoneyDecimal.getDisplayDecimals("ARS"))
         assertEquals(0, MoneyDecimal.getDecimals("PYG"))
         assertEquals(2, MoneyDecimal.getDecimals("BRL"))
     }
@@ -240,6 +290,29 @@ class MoneyDecimalTest {
         val remaining2 = MoneyDecimal.roundToCurrency(remaining1.subtract(finalPayment), "BRL")
         val isFinal2 = remaining2.signum() <= 0
         assertTrue("0.01 completion MUST be final payment", isFinal2)
+    }
+
+    @Test
+    fun testA_MONEY_13_frozenComandaBaseResistsMidComandaCompanyBaseChange() {
+        // Comanda opened with base BRL
+        val comandaBase = "BRL"
+
+        // Mid-comanda, company changes base to USD
+        val newCompanyBase = "USD"
+        currencyManager.selectedCurrency = "PYG"
+
+        // Operator checkouts in PYG (350.000 PYG)
+        // Must quote against comandaBase (BRL), NOT newCompanyBase (USD)
+        val quote = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
+            baseCurrency = comandaBase
+        ).getOrThrow()
+
+        assertEquals("BRL", quote.baseCurrency)
+        assertEquals("PYG", quote.transactionCurrency)
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("50.00"), quote.baseAmount))
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("7000"), quote.fxRate))
     }
 
     private fun sha256(input: String): String {

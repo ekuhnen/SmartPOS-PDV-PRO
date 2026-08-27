@@ -180,7 +180,16 @@ class DirectCheckoutViewModel @Inject constructor(
         val cm = CurrencyManager.getInstance()
         val currency = cm.selectedCurrency
         val baseCurrency = cm.getBaseCurrency()
-        val snapshot = cm.getNormalizedSnapshotForBase(baseCurrency).getOrNull()
+        val snapshotResult = cm.getNormalizedSnapshotForBase(baseCurrency)
+
+        if (currency.uppercase() != baseCurrency.uppercase() && snapshotResult.isFailure) {
+            Log.e("DirectCheckoutViewModel", "FX_RATE_MISSING: ${snapshotResult.exceptionOrNull()?.message}")
+            _saleResult.value = SaleResult.Error("FX_RATE_MISSING: Cotação de câmbio ausente")
+            _isLoading.value = false
+            return
+        }
+
+        val snapshot = snapshotResult.getOrNull()
 
         val saleRequest = SaleRequest(
             customerName = "Consumidor Final",

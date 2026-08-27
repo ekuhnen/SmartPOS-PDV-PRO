@@ -219,23 +219,28 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
+    var comandaBaseCurrency: String? = null
+
+    fun applyComandaMoneyDetail(detail: ComandaDetailResponse, targetTable: Table): Double {
+        comandaBaseCurrency = detail.baseCurrency
+        val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
+        if (serverPaidBase > 0) {
+            targetTable.paidAmount = serverPaidBase
+            TableManager.updateTable(targetTable)
+        }
+        return serverPaidBase
+    }
+
     fun fetchComandaPayments() {
         val currentTable = table ?: return
         val currentToken = token ?: return
         val cId = currentTable.comandaId ?: return
-        val cm = CurrencyManager.getInstance()
-        val currentCurrency = cm.selectedCurrency
 
         viewModelScope.launch {
             try {
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
                 val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
-                val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
-
-                if (serverPaidBase > 0) {
-                    currentTable.paidAmount = serverPaidBase
-                    TableManager.updateTable(currentTable)
-                }
+                val serverPaidBase = applyComandaMoneyDetail(detail, currentTable)
 
                 val currentReconciliation = _uiState.value.requiresReconciliation
 
@@ -373,6 +378,11 @@ class CheckoutViewModel @Inject constructor(
         calculateFinalAmount()
     }
 
+    data class PreparedCheckoutResult(
+        val operationKey: String,
+        val request: CommandCheckoutCommitRequest
+    )
+
     private fun buildCommitRequest(
         method: PaymentMethod,
         manualAmount: Double? = null,
@@ -381,7 +391,7 @@ class CheckoutViewModel @Inject constructor(
     ): CommandCheckoutCommitRequest {
         val currentTable = table ?: throw IllegalStateException("Table is null")
         val cm = CurrencyManager.getInstance()
-        val baseCurrency = cm.getBaseCurrency()
+        val baseCurrency = comandaBaseCurrency ?: cm.getBaseCurrency()
         val currentCurrency = manualCurrency ?: cm.selectedCurrency
 
         val amountToPayBigDecimal = if (manualAmount != null) {
@@ -451,7 +461,7 @@ class CheckoutViewModel @Inject constructor(
         manualAmount: Double? = null,
         manualCurrency: String? = null,
         manualBaseAmount: Double? = null
-    ): String {
+    ): PreparedCheckoutResult {
         val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount)
         val key = java.util.UUID.randomUUID().toString()
         val gson = com.google.gson.Gson()
@@ -476,7 +486,7 @@ class CheckoutViewModel @Inject constructor(
                 blockReason = "Pagamento aprovado aguardando sincronização com o servidor"
             )
         }
-        return key
+        return PreparedCheckoutResult(key, finalRequest)
     }
 
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {

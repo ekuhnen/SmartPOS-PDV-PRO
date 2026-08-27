@@ -16,6 +16,7 @@ data class CurrencyCapability(
     @SerializedName("thousands_separator") val thousandsSeparator: String = ".",
     @SerializedName("decimal_separator") val decimalSeparator: String = ",",
     @SerializedName("display_decimals") val displayDecimals: Int = 2,
+    @SerializedName("minor_unit_digits") val minorUnitDigits: Int = 2,
     @SerializedName("cash_rounding_mode") val cashRoundingMode: String = "HALF_EVEN"
 )
 

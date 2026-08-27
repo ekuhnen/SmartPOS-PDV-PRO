@@ -12,6 +12,8 @@ interface CurrencyRulesProvider {
     fun getAvailableCurrencies(): List<ExchangeResponse.CurrencyRate>
     fun getRateForCurrency(code: String): Double
     fun getDecimalPlaces(currencyCode: String): Int
+    fun getMinorUnitDigits(currencyCode: String): Int
+    fun getDisplayDecimals(currencyCode: String): Int
     fun isZeroDecimal(currencyCode: String): Boolean
     fun setCapabilities(capabilities: Map<String, CurrencyCapability>)
     fun getCapability(currencyCode: String): CurrencyCapability
@@ -33,7 +35,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "PREFIX",
             thousandsSeparator = ".",
             decimalSeparator = ",",
-            displayDecimals = 2
+            displayDecimals = 2,
+            minorUnitDigits = 2
         )
         capabilitiesMap["USD"] = CurrencyCapability(
             currencyCode = "USD",
@@ -41,7 +44,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "PREFIX",
             thousandsSeparator = ",",
             decimalSeparator = ".",
-            displayDecimals = 2
+            displayDecimals = 2,
+            minorUnitDigits = 2
         )
         capabilitiesMap["PYG"] = CurrencyCapability(
             currencyCode = "PYG",
@@ -49,7 +53,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "PREFIX",
             thousandsSeparator = ".",
             decimalSeparator = ",",
-            displayDecimals = 0
+            displayDecimals = 0,
+            minorUnitDigits = 0
         )
         capabilitiesMap["ARS"] = CurrencyCapability(
             currencyCode = "ARS",
@@ -57,7 +62,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "PREFIX",
             thousandsSeparator = ".",
             decimalSeparator = ",",
-            displayDecimals = 0
+            displayDecimals = 0,
+            minorUnitDigits = 2
         )
         capabilitiesMap["EUR"] = CurrencyCapability(
             currencyCode = "EUR",
@@ -65,7 +71,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "SUFFIX",
             thousandsSeparator = ".",
             decimalSeparator = ",",
-            displayDecimals = 2
+            displayDecimals = 2,
+            minorUnitDigits = 2
         )
     }
 
@@ -82,11 +89,19 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
     }
 
     override fun getDecimalPlaces(currencyCode: String): Int {
+        return getMinorUnitDigits(currencyCode)
+    }
+
+    override fun getMinorUnitDigits(currencyCode: String): Int {
+        return getCapability(currencyCode).minorUnitDigits
+    }
+
+    override fun getDisplayDecimals(currencyCode: String): Int {
         return getCapability(currencyCode).displayDecimals
     }
 
     override fun isZeroDecimal(currencyCode: String): Boolean {
-        return getDecimalPlaces(currencyCode) == 0
+        return getDisplayDecimals(currencyCode) == 0
     }
 
     override fun setCapabilities(capabilities: Map<String, CurrencyCapability>) {
@@ -103,7 +118,8 @@ class DefaultCurrencyRulesProvider @Inject constructor() : CurrencyRulesProvider
             symbolPosition = "PREFIX",
             thousandsSeparator = ".",
             decimalSeparator = ",",
-            displayDecimals = if (codeUpper == "PYG" || codeUpper == "ARS") 0 else 2
+            displayDecimals = if (codeUpper == "PYG" || codeUpper == "ARS") 0 else 2,
+            minorUnitDigits = if (codeUpper == "PYG" || codeUpper == "CLP") 0 else 2
         )
     }
 

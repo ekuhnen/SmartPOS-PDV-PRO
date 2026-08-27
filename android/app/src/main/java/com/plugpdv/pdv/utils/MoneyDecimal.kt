@@ -14,16 +14,52 @@ data class MoneyQuote(
 
 object MoneyDecimal {
 
+    @Volatile
+    private var rulesProvider: CurrencyRulesProvider? = null
+
+    fun setRulesProvider(provider: CurrencyRulesProvider) {
+        rulesProvider = provider
+    }
+
+    private val ISO_ZERO_DECIMALS = setOf(
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW",
+        "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"
+    )
+
+    private val ISO_THREE_DECIMALS = setOf(
+        "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"
+    )
+
+    private val ISO_TWO_DECIMALS = setOf(
+        "BRL", "USD", "EUR", "ARS", "GBP", "MXN", "COP", "PEN",
+        "UYU", "BOB", "CAD", "AUD", "CHF", "CNY"
+    )
+
     fun of(value: Long): BigDecimal = BigDecimal.valueOf(value)
     fun of(value: String): BigDecimal = BigDecimal(value)
     fun of(value: Double): BigDecimal = BigDecimal.valueOf(value)
 
     fun getDecimals(currencyCode: String): Int {
-        val code = currencyCode.uppercase()
-        return when (code) {
-            "PYG", "CLP" -> 0
-            else -> 2 // BRL, USD, EUR, ARS minor units
+        val upper = currencyCode.uppercase()
+        // 1. Dynamic capability from rules provider takes precedence
+        rulesProvider?.let { provider ->
+            return provider.getMinorUnitDigits(upper)
         }
+        // 2. Fallback to audited ISO 4217 table
+        return when {
+            ISO_ZERO_DECIMALS.contains(upper) -> 0
+            ISO_THREE_DECIMALS.contains(upper) -> 3
+            ISO_TWO_DECIMALS.contains(upper) -> 2
+            else -> 2 // standard ISO fallback
+        }
+    }
+
+    fun getDisplayDecimals(currencyCode: String): Int {
+        val upper = currencyCode.uppercase()
+        rulesProvider?.let { provider ->
+            return provider.getDisplayDecimals(upper)
+        }
+        return if (upper == "PYG" || upper == "ARS" || ISO_ZERO_DECIMALS.contains(upper)) 0 else 2
     }
 
     fun roundToCurrency(
@@ -68,7 +104,7 @@ object MoneyDecimal {
     }
 
     fun divide(a: BigDecimal, b: BigDecimal, currencyCode: String? = null): BigDecimal {
-        val decimals = if (currencyCode != null) getDecimals(currencyCode) else 6
+        val decimals = if (currencyCode != null) getDecimals(currencyCode) else 8
         return a.divide(b, decimals, RoundingMode.HALF_UP)
     }
 }
