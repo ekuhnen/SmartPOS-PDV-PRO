@@ -60,6 +60,7 @@ class OutboxSyncManager @Inject constructor(
         const val CRITICAL_QUEUE_COUNT_THRESHOLD = 20
         const val CRITICAL_QUEUE_DELAY_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutos
         const val MAX_BACKOFF_SECONDS = 60L
+        var faultInjectionHook: String? = null
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -409,10 +410,41 @@ class OutboxSyncManager @Inject constructor(
                 }
                 "COMANDA_CHECKOUT_COMMIT" -> {
                     val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
+
+                    val isCash = request.forma.equals("DINHEIRO", ignoreCase = true) ||
+                                 request.forma.equals("CASH", ignoreCase = true) ||
+                                 request.forma.equals("MONEY", ignoreCase = true)
+
+                    if (!isCash) {
+                        val matchingAttempt = paymentAttemptDao.getByReference(op.idempotencyKey)
+                        val hasApprovedAttempt = matchingAttempt?.status == "APPROVED"
+                        val hasValidExternalRef = !request.referenciaExterna.isNullOrEmpty()
+
+                        if (!hasApprovedAttempt && !hasValidExternalRef) {
+                            Log.e(TAG, "Tentativa de checkout sem aprovação comprovada do pagamento externo (K=${op.idempotencyKey}). Bloqueando envio.")
+                            outboxDao.markAsFailedWithKey(op.id, "MISSING_PAYMENT_APPROVAL", "REQUIRES_RECONCILIATION", false)
+                            _checkoutResultEvents.emit(
+                                CheckoutResultEvent(
+                                    operationId = op.id,
+                                    comandaId = op.targetGroupKey,
+                                    mesaId = request.mesaId,
+                                    closed = false,
+                                    requiresReconciliation = true
+                                )
+                            )
+                            return SingleOperationResult.NEEDS_RECONCILIATION
+                        }
+                    }
+
                     val response = apiService.commitComandaCheckout("Bearer $token", op.idempotencyKey, request)
                     val statusCode = response.code()
 
                     if (response.isSuccessful && response.body()?.success == true) {
+                        if (faultInjectionHook == "AFTER_HTTP_BEFORE_ROOM_SUCCESS") {
+                            faultInjectionHook = null
+                            throw java.io.IOException("FaultInjection: Killed after HTTP success before Room update")
+                        }
+
                         val commitRes = response.body()
                         if (commitRes?.requiresReconciliation == true) {
                             Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} requer conciliação financeira.")

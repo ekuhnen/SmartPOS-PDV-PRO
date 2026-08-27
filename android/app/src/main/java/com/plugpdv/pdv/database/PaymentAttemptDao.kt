@@ -31,6 +31,9 @@ interface PaymentAttemptDao {
     @Query("SELECT * FROM payment_attempts WHERE status = 'APPROVED'")
     suspend fun getApprovedAttempts(): List<PaymentAttemptEntity>
 
+    @Query("SELECT * FROM payment_attempts WHERE status = 'APPROVED' AND ((:tableNumber IS NOT NULL AND tableNumber = :tableNumber) OR (:orderId IS NOT NULL AND orderId = :orderId)) ORDER BY startedAt DESC")
+    suspend fun getApprovedAttemptsForTableOrOrder(tableNumber: Int?, orderId: String?): List<PaymentAttemptEntity>
+
     @Query("SELECT * FROM payment_attempts ORDER BY startedAt DESC LIMIT 50")
     fun getRecentAttemptsFlow(): Flow<List<PaymentAttemptEntity>>
 }

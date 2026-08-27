@@ -7,19 +7,28 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.google.gson.Gson
 import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.databinding.LayoutUndeterminedPaymentBinding
 import com.plugpdv.pdv.utils.CurrencyManager
 
-class UndeterminedPaymentBottomSheet(
-    private val attempt: PaymentAttemptEntity,
-    private val onRetryCheck: (PaymentAttemptEntity) -> Unit,
-    private val onMarkPending: (PaymentAttemptEntity) -> Unit,
-    private val onViewReceipt: ((PaymentAttemptEntity) -> Unit)? = null
-) : BottomSheetDialogFragment() {
+class UndeterminedPaymentBottomSheet : BottomSheetDialogFragment() {
 
     private var _binding: LayoutUndeterminedPaymentBinding? = null
     private val binding get() = _binding!!
+
+    private var attempt: PaymentAttemptEntity? = null
+    var onRetryCheck: ((PaymentAttemptEntity) -> Unit)? = null
+    var onMarkPending: ((PaymentAttemptEntity) -> Unit)? = null
+    var onViewReceipt: ((PaymentAttemptEntity) -> Unit)? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val json = arguments?.getString(ARG_ATTEMPT_JSON)
+        if (!json.isNullOrEmpty()) {
+            attempt = Gson().fromJson(json, PaymentAttemptEntity::class.java)
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -32,39 +41,40 @@ class UndeterminedPaymentBottomSheet(
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        val currentAttempt = attempt ?: return
 
-        val amountDouble = attempt.amount / 100.0
-        val formattedAmount = CurrencyManager.getInstance().formatExplicit(amountDouble, attempt.currency)
+        val amountDouble = currentAttempt.amount / 100.0
+        val formattedAmount = CurrencyManager.getInstance().formatExplicit(amountDouble, currentAttempt.currency)
 
         binding.tvAttemptDetails.text = buildString {
             append("Valor: $formattedAmount\n")
-            append("Referência: ${attempt.reference}\n")
-            if (attempt.tableNumber != null && attempt.tableNumber != -1) {
-                append("Mesa: ${attempt.tableNumber}\n")
+            append("Referência: ${currentAttempt.reference}\n")
+            if (currentAttempt.tableNumber != null && currentAttempt.tableNumber != -1) {
+                append("Mesa: ${currentAttempt.tableNumber}\n")
             }
-            if (!attempt.statusMessage.isNullOrEmpty()) {
-                append("Detalhes: ${attempt.statusMessage}")
+            if (!currentAttempt.statusMessage.isNullOrEmpty()) {
+                append("Detalhes: ${currentAttempt.statusMessage}")
             }
         }
 
         // Ação 1: Consultar de novo
         binding.btnRetryCheck.setOnClickListener {
             dismiss()
-            onRetryCheck(attempt)
+            onRetryCheck?.invoke(currentAttempt)
         }
 
         // Ação 2: Registrar como pendente e resolver depois
         binding.btnMarkPending.setOnClickListener {
             dismiss()
-            onMarkPending(attempt)
+            onMarkPending?.invoke(currentAttempt)
         }
 
         // Ação 3: Ver comprovante do app de pagamento
         binding.btnViewReceipt.setOnClickListener {
             if (onViewReceipt != null) {
-                onViewReceipt.invoke(attempt)
+                onViewReceipt?.invoke(currentAttempt)
             } else {
-                openPaymentAppReceipt(attempt)
+                openPaymentAppReceipt(currentAttempt)
             }
             dismiss()
         }
@@ -79,7 +89,6 @@ class UndeterminedPaymentBottomSheet(
             }
             startActivity(intent)
         } catch (e: Exception) {
-            // Se não abrir por URI direta, tenta abrir o aplicativo de pagamento
             try {
                 val launchIntent = requireContext().packageManager.getLaunchIntentForPackage("com.br.plugpay")
                 launchIntent?.let { startActivity(it) }
@@ -96,14 +105,23 @@ class UndeterminedPaymentBottomSheet(
 
     companion object {
         const val TAG = "UndeterminedPaymentBottomSheet"
+        private const val ARG_ATTEMPT_JSON = "arg_attempt_json"
 
         fun newInstance(
             attempt: PaymentAttemptEntity,
-            onRetryCheck: (PaymentAttemptEntity) -> Unit,
-            onMarkPending: (PaymentAttemptEntity) -> Unit,
+            onRetryCheck: ((PaymentAttemptEntity) -> Unit)? = null,
+            onMarkPending: ((PaymentAttemptEntity) -> Unit)? = null,
             onViewReceipt: ((PaymentAttemptEntity) -> Unit)? = null
         ): UndeterminedPaymentBottomSheet {
-            return UndeterminedPaymentBottomSheet(attempt, onRetryCheck, onMarkPending, onViewReceipt)
+            val sheet = UndeterminedPaymentBottomSheet()
+            sheet.arguments = Bundle().apply {
+                putString(ARG_ATTEMPT_JSON, Gson().toJson(attempt))
+            }
+            sheet.attempt = attempt
+            sheet.onRetryCheck = onRetryCheck
+            sheet.onMarkPending = onMarkPending
+            sheet.onViewReceipt = onViewReceipt
+            return sheet
         }
     }
 }

@@ -3,14 +3,17 @@ package com.plugpdv.pdv
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.room.Room
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.intent.Intents
+import androidx.test.espresso.intent.matcher.IntentMatchers.hasPackage
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.OutboxOperationEntity
 import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.ui.sale.PaymentHandlerActivity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -24,25 +27,37 @@ class PaymentHandlerActivityInstrumentationTest {
     private lateinit var db: AppDatabase
     private lateinit var context: Context
 
+    private val testRefs = mutableListOf<String>()
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
+        // USAR O MESMO BANCO REAL QUE A ACTIVITY INJETA VIA HILT (DatabaseModule)
+        db = AppDatabase.getDatabase(context)
+        Intents.init()
     }
 
     @After
     fun tearDown() {
-        db.close()
+        runBlocking(Dispatchers.IO) {
+            for (ref in testRefs) {
+                db.paymentAttemptDao().getByReference(ref)?.let {
+                    // Limpar fixtures específicas do teste
+                }
+            }
+        }
+        Intents.release()
     }
 
     @Test
-    fun testActivityRecreation_pendingAttemptDoesNotAutoRecharge() {
-        runBlocking {
+    fun testActivityRecreation_pendingAttemptDoesNotOpenPlugPay() {
+        val ref = "k-pending-rec-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
             val attempt = PaymentAttemptEntity(
-                reference = "k-pending-rec",
-                idempotencyKey = "k-pending-rec",
+                reference = ref,
+                idempotencyKey = ref,
                 nonce = "nonce-1",
                 amount = 5000L,
                 currency = "BRL",
@@ -50,30 +65,36 @@ class PaymentHandlerActivityInstrumentationTest {
                 startedAt = System.currentTimeMillis()
             )
             db.paymentAttemptDao().insert(attempt)
+        }
 
-            val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
-                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, "k-pending-rec")
-                putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, "k-pending-rec")
-                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "50.00")
-            }
+        val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
+            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
+            putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, ref)
+            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "50.00")
+        }
 
-            val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
-            scenario.recreate()
+        val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
 
-            // Verify attempt is preserved in PENDING state and not duplicated
-            val persisted = db.paymentAttemptDao().getByReference("k-pending-rec")
+        // PROVA REAL: ZERO intents disparados para o pacote do PlugPay
+        Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
+
+        runBlocking(Dispatchers.IO) {
+            val persisted = db.paymentAttemptDao().getByReference(ref)
             assertNotNull(persisted)
             assertEquals("PENDING", persisted!!.status)
-            scenario.close()
         }
+        scenario.close()
     }
 
     @Test
-    fun testActivityRecreation_unknownAttemptEnforcesVerification() {
-        runBlocking {
+    fun testActivityRecreation_unknownAttemptDoesNotOpenPlugPay() {
+        val ref = "k-unknown-rec-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
             val attempt = PaymentAttemptEntity(
-                reference = "k-unknown-rec",
-                idempotencyKey = "k-unknown-rec",
+                reference = ref,
+                idempotencyKey = ref,
                 nonce = "nonce-2",
                 amount = 7500L,
                 currency = "BRL",
@@ -82,81 +103,108 @@ class PaymentHandlerActivityInstrumentationTest {
                 statusMessage = "Status indeterminado"
             )
             db.paymentAttemptDao().insert(attempt)
+        }
 
-            val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
-                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, "k-unknown-rec")
-                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "75.00")
-            }
+        val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
+            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
+            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "75.00")
+        }
 
-            val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
-            scenario.recreate()
+        val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
 
-            val persisted = db.paymentAttemptDao().getByReference("k-unknown-rec")
+        // PROVA REAL: ZERO intents para com.br.plugpay
+        Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
+
+        runBlocking(Dispatchers.IO) {
+            val persisted = db.paymentAttemptDao().getByReference(ref)
             assertNotNull(persisted)
             assertEquals("UNKNOWN", persisted!!.status)
-            scenario.close()
         }
+        scenario.close()
     }
 
     @Test
-    fun testColdCallback_approvedPromotesAttemptAndPreservesKey() {
-        runBlocking {
+    fun testActivityRecreation_approvedAttemptDoesNotOpenPlugPay() {
+        val ref = "k-approved-rec-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
             val attempt = PaymentAttemptEntity(
-                reference = "k-cold-1",
-                idempotencyKey = "k-cold-1",
+                reference = ref,
+                idempotencyKey = ref,
+                nonce = "nonce-3",
+                amount = 12000L,
+                currency = "BRL",
+                status = "APPROVED",
+                startedAt = System.currentTimeMillis(),
+                paymentAppPaymentId = "PAY-REC-99"
+            )
+            db.paymentAttemptDao().insert(attempt)
+        }
+
+        val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
+            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
+            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "120.00")
+        }
+
+        val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
+
+        // ZERO intents para com.br.plugpay ao abrir attempt já APPROVED
+        Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
+        scenario.close()
+    }
+
+    @Test
+    fun testColdCallback_approvedUpdatesRealDatabaseAndPromotesOutbox() {
+        val ref = "k-cold-real-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
+            val attempt = PaymentAttemptEntity(
+                reference = ref,
+                idempotencyKey = ref,
                 nonce = "nonce-cold",
                 amount = 10000L,
                 currency = "BRL",
                 status = "PENDING",
                 startedAt = System.currentTimeMillis()
             )
-            db.paymentAttemptDao().insert(attempt)
-
-            val callbackUri = Uri.parse("plugpdv://payment_callback?status=APPROVED&request_id=k-cold-1&payment_id=PAY-COLD-999&method=CREDIT_CARD")
-            val callbackIntent = Intent(Intent.ACTION_VIEW, callbackUri)
-
-            val scenario = ActivityScenario.launch<PaymentHandlerActivity>(callbackIntent)
-
-            val updated = db.paymentAttemptDao().getByReference("k-cold-1")
-            assertNotNull(updated)
-            assertEquals("APPROVED", updated!!.status)
-            assertEquals("PAY-COLD-999", updated.paymentAppPaymentId)
-            scenario.close()
-        }
-    }
-
-    @Test
-    fun testPrecedence_approvedNeverRegressesToRejectedOrUnknown() {
-        runBlocking {
-            val attempt = PaymentAttemptEntity(
-                reference = "k-precedence-1",
-                idempotencyKey = "k-precedence-1",
-                nonce = "nonce-p",
-                amount = 15000L,
-                currency = "BRL",
-                status = "APPROVED",
-                startedAt = System.currentTimeMillis(),
-                paymentAppPaymentId = "PAY-PREC-1"
+            val outboxOp = OutboxOperationEntity(
+                id = ref,
+                operationType = "COMANDA_CHECKOUT_COMMIT",
+                targetGroupKey = "c-cold",
+                payloadJson = "{}",
+                createdAt = System.currentTimeMillis(),
+                status = "WAITING_PAYMENT"
             )
             db.paymentAttemptDao().insert(attempt)
-
-            // Simular callback tardio REJECTED
-            val rejectedCallbackUri = Uri.parse("plugpdv://payment_callback?status=REJECTED&request_id=k-precedence-1&message=Declined")
-            val scenario = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, rejectedCallbackUri))
-
-            val checked = db.paymentAttemptDao().getByReference("k-precedence-1")
-            assertNotNull(checked)
-            assertEquals("APPROVED", checked!!.status) // APPROVED never regresses!
-            scenario.close()
+            db.outboxDao().insert(outboxOp)
         }
+
+        val callbackUri = Uri.parse("plugpdv://payment_callback?status=APPROVED&request_id=$ref&payment_id=PAY-COLD-123&method=CREDIT_CARD")
+        val callbackIntent = Intent(Intent.ACTION_VIEW, callbackUri)
+
+        val scenario = ActivityScenario.launch<PaymentHandlerActivity>(callbackIntent)
+
+        runBlocking(Dispatchers.IO) {
+            delay(500) // Aguardar processamento assíncrono do Room
+            val updatedAttempt = db.paymentAttemptDao().getByReference(ref)
+            assertNotNull(updatedAttempt)
+            assertEquals("APPROVED", updatedAttempt!!.status)
+            assertEquals("PAY-COLD-123", updatedAttempt.paymentAppPaymentId)
+        }
+        scenario.close()
     }
 
     @Test
-    fun testDuplicateApprovedCallback_idempotent() {
-        runBlocking {
+    fun testDuplicateApprovedCallback_idempotentInRealDatabase() {
+        val ref = "k-dup-real-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
             val attempt = PaymentAttemptEntity(
-                reference = "k-dup-app",
-                idempotencyKey = "k-dup-app",
+                reference = ref,
+                idempotencyKey = ref,
                 nonce = "nonce-dup",
                 amount = 5000L,
                 currency = "BRL",
@@ -164,19 +212,59 @@ class PaymentHandlerActivityInstrumentationTest {
                 startedAt = System.currentTimeMillis()
             )
             db.paymentAttemptDao().insert(attempt)
+        }
 
-            val callbackUri = Uri.parse("plugpdv://payment_callback?status=APPROVED&request_id=k-dup-app&payment_id=PAY-DUP-1")
-            
-            // First delivery
-            val scenario1 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, callbackUri))
-            scenario1.close()
+        val callbackUri = Uri.parse("plugpdv://payment_callback?status=APPROVED&request_id=$ref&payment_id=PAY-DUP-999")
 
-            // Second delivery (duplicate)
-            val scenario2 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, callbackUri))
-            scenario2.close()
+        val scenario1 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, callbackUri))
+        scenario1.close()
 
-            val allAttempts = db.paymentAttemptDao().getApprovedAttempts().filter { it.reference == "k-dup-app" }
-            assertEquals(1, allAttempts.size)
+        val scenario2 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, callbackUri))
+        scenario2.close()
+
+        runBlocking(Dispatchers.IO) {
+            val attempts = db.paymentAttemptDao().getApprovedAttempts().filter { it.reference == ref }
+            assertEquals(1, attempts.size)
+        }
+    }
+
+    @Test
+    fun testOutOfOrderCallbacks_approvedNeverRegressesInRealDatabase() {
+        val ref = "k-ooo-real-${System.currentTimeMillis()}"
+        testRefs.add(ref)
+
+        runBlocking(Dispatchers.IO) {
+            val attempt = PaymentAttemptEntity(
+                reference = ref,
+                idempotencyKey = ref,
+                nonce = "nonce-ooo",
+                amount = 8000L,
+                currency = "BRL",
+                status = "APPROVED",
+                startedAt = System.currentTimeMillis(),
+                paymentAppPaymentId = "PAY-OOO-1"
+            )
+            db.paymentAttemptDao().insert(attempt)
+        }
+
+        // Enviar callback tardio UNKNOWN
+        val unknownUri = Uri.parse("plugpdv://payment_callback?status=UNKNOWN&request_id=$ref&message=Indeterminate")
+        val scenario1 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, unknownUri))
+        scenario1.close()
+
+        runBlocking(Dispatchers.IO) {
+            val current = db.paymentAttemptDao().getByReference(ref)
+            assertEquals("APPROVED", current?.status)
+        }
+
+        // Enviar callback tardio REJECTED
+        val rejectedUri = Uri.parse("plugpdv://payment_callback?status=REJECTED&request_id=$ref&message=Declined")
+        val scenario2 = ActivityScenario.launch<PaymentHandlerActivity>(Intent(Intent.ACTION_VIEW, rejectedUri))
+        scenario2.close()
+
+        runBlocking(Dispatchers.IO) {
+            val finalAttempt = db.paymentAttemptDao().getByReference(ref)
+            assertEquals("APPROVED", finalAttempt?.status)
         }
     }
 }

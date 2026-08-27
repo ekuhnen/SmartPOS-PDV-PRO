@@ -41,6 +41,7 @@ class SaleOutboxRepository @Inject constructor(
 
     companion object {
         private const val TAG = "SaleOutboxRepository"
+        var faultInjectionHook: String? = null
     }
 
     suspend fun enqueueSale(
@@ -135,6 +136,11 @@ class SaleOutboxRepository @Inject constructor(
             try {
                 val request = gson.fromJson(sale.payloadJson, SaleRequest::class.java)
                 val response = apiService.registerSale("Bearer $token", sale.localId, request)
+
+                if (faultInjectionHook == "AFTER_HTTP_BEFORE_ROOM_SUCCESS") {
+                    faultInjectionHook = null
+                    throw java.io.IOException("FaultInjection: Killed after HTTP success before Room update")
+                }
 
                 val apiIdResult = response.realId
                 if (apiIdResult != null) {

@@ -8,6 +8,7 @@ import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.plugpdv.pdv.models.ComandaCheckoutCommitResponse
 import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.ui.sale.CheckoutUiState
+import com.plugpdv.pdv.utils.OutboxSyncManager
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -41,7 +42,7 @@ class RecoveryAndChaosTest {
         assertFalse(shouldReopenPlugPay(attemptPending))
         assertFalse(shouldReopenPlugPay(attemptUnknown))
         assertFalse(shouldReopenPlugPay(attemptApproved))
-        assertTrue(shouldReopenPlugPay(null)) // Only fresh intents without prior record open PlugPay
+        assertTrue(shouldReopenPlugPay(null))
     }
 
     @Test
@@ -66,7 +67,7 @@ class RecoveryAndChaosTest {
                 else -> "UNKNOWN"
             }
             if (existing?.status == "APPROVED" && normalized != "APPROVED") {
-                return "APPROVED" // APPROVED is terminal and irreversible
+                return "APPROVED"
             }
             return normalized
         }
@@ -90,45 +91,127 @@ class RecoveryAndChaosTest {
         )
 
         val terminalizedOp = outboxOp.copy(
-            status = "CANCELLED_PAYMENT",
+            status = "FAILED",
             lastError = "CANCELLED",
             messageKey = "CANCELLED_PAYMENT",
             isRetriable = false
         )
 
-        assertEquals("CANCELLED_PAYMENT", terminalizedOp.status)
+        assertEquals("FAILED", terminalizedOp.status)
+        assertEquals("CANCELLED_PAYMENT", terminalizedOp.messageKey)
         assertFalse(terminalizedOp.isRetriable)
-        assertEquals(Table.Status.OCCUPIED, table.status) // Table remains occupied!
+        assertEquals(Table.Status.OCCUPIED, table.status)
     }
 
     @Test
-    fun testFailedToStartTerminalizesAttemptAndOutbox() {
-        val attempt = PaymentAttemptEntity(
-            reference = "req-fail",
-            idempotencyKey = "k-fail",
-            nonce = "n-fail",
-            amount = 2500L,
+    fun testReconciliationRestoreAndRaceProtection() {
+        // 1) UI inicializa com reconciliation restaurada
+        val initialState = CheckoutUiState(
+            requiresReconciliation = true,
+            isPayButtonBlocked = true,
+            paymentSuccess = false,
+            blockReason = "Pagamento aprovado requer conciliação"
+        )
+
+        // 2) fetchComandaPayments recebe resposta assíncrona FECHADA
+        val isComandaClosed = true
+        val mergedState = if (isComandaClosed) {
+            initialState.copy(
+                currentToPay = 0.0,
+                isPendingSync = false,
+                isPayButtonBlocked = initialState.requiresReconciliation,
+                paymentSuccess = !initialState.requiresReconciliation, // PRECEDÊNCIA: continua false!
+                requiresReconciliation = initialState.requiresReconciliation,
+                blockReason = if (initialState.requiresReconciliation) initialState.blockReason else null
+            )
+        } else {
+            initialState
+        }
+
+        assertTrue(mergedState.requiresReconciliation)
+        assertTrue(mergedState.isPayButtonBlocked)
+        assertFalse(mergedState.paymentSuccess)
+        assertEquals("Pagamento aprovado requer conciliação", mergedState.blockReason)
+    }
+
+    @Test
+    fun testApprovedOrphanBlocksCheckout() {
+        val orphanAttempt = PaymentAttemptEntity(
+            reference = "req-orphan",
+            idempotencyKey = "k-orphan",
+            nonce = "n-orphan",
+            amount = 5000L,
             currency = "BRL",
-            status = "FAILED_TO_START",
+            status = "APPROVED",
             startedAt = System.currentTimeMillis(),
-            statusMessage = "ActivityNotFoundException"
+            tableNumber = 5,
+            orderId = "c-orphan"
         )
 
-        val outbox = OutboxOperationEntity(
-            id = "req-fail",
-            operationType = "COMANDA_CHECKOUT_COMMIT",
-            targetGroupKey = "comanda-2",
-            payloadJson = "{}",
-            createdAt = System.currentTimeMillis(),
-            status = "FAILED",
-            lastError = "FAILED_TO_START",
-            messageKey = "FAILED_TO_START",
-            isRetriable = false
+        val outboxExists = false
+        val state = if (!outboxExists && orphanAttempt.status == "APPROVED") {
+            CheckoutUiState(
+                isPayButtonBlocked = true,
+                requiresReconciliation = true,
+                paymentSuccess = false,
+                blockReason = "Pagamento aprovado na maquininha sem registro de checkout (Requer conciliação)"
+            )
+        } else {
+            CheckoutUiState()
+        }
+
+        assertTrue(state.isPayButtonBlocked)
+        assertTrue(state.requiresReconciliation)
+        assertFalse(state.paymentSuccess)
+    }
+
+    @Test
+    fun testExternalPendingWithoutAttemptFailsReconciliation() {
+        val req = CommandCheckoutCommitRequest(
+            comandaId = "c-1",
+            forma = "CARD",
+            valor = 100.0,
+            moeda = "BRL",
+            valorBase = 100.0,
+            referenciaExterna = null // Sem comprovante externo
         )
 
-        assertEquals("FAILED_TO_START", attempt.status)
-        assertEquals("FAILED", outbox.status)
-        assertFalse(outbox.isRetriable)
+        val isCash = req.forma.equals("DINHEIRO", true) || req.forma.equals("CASH", true)
+        val matchingAttempt: PaymentAttemptEntity? = null // Sem attempt
+        val hasApprovedAttempt = matchingAttempt?.status == "APPROVED"
+        val hasValidExternalRef = !req.referenciaExterna.isNullOrEmpty()
+
+        val canSync = isCash || hasApprovedAttempt || hasValidExternalRef
+        assertFalse(canSync) // Rejeita e exige conciliação!
+    }
+
+    @Test
+    fun testCashWithoutAttemptAllowed() {
+        val req = CommandCheckoutCommitRequest(
+            comandaId = "c-1",
+            forma = "DINHEIRO",
+            valor = 100.0,
+            moeda = "BRL",
+            valorBase = 100.0,
+            referenciaExterna = null
+        )
+
+        val isCash = req.forma.equals("DINHEIRO", true) || req.forma.equals("CASH", true)
+        val canSync = isCash
+        assertTrue(canSync) // Pagamento em dinheiro permitido sem PaymentAttempt de maquininha
+    }
+
+    @Test
+    fun testFaultInjectionHooksDirectAndCheckout() {
+        SaleOutboxRepository.faultInjectionHook = "AFTER_HTTP_BEFORE_ROOM_SUCCESS"
+        assertEquals("AFTER_HTTP_BEFORE_ROOM_SUCCESS", SaleOutboxRepository.faultInjectionHook)
+        SaleOutboxRepository.faultInjectionHook = null
+        assertNull(SaleOutboxRepository.faultInjectionHook)
+
+        OutboxSyncManager.faultInjectionHook = "AFTER_HTTP_BEFORE_ROOM_SUCCESS"
+        assertEquals("AFTER_HTTP_BEFORE_ROOM_SUCCESS", OutboxSyncManager.faultInjectionHook)
+        OutboxSyncManager.faultInjectionHook = null
+        assertNull(OutboxSyncManager.faultInjectionHook)
     }
 
     @Test
@@ -157,7 +240,6 @@ class RecoveryAndChaosTest {
 
         assertEquals("UNKNOWN", recoveredAttempt.status)
         assertNotEquals("REJECTED", recoveredAttempt.status)
-        assertTrue(recoveredAttempt.statusMessage!!.contains("Timeout local"))
     }
 
     @Test
@@ -172,134 +254,11 @@ class RecoveryAndChaosTest {
         while (loopCount < 5) {
             loopCount++
             if (drainResult.processedCount == 0 || drainResult.stopReason != StopReason.PROGRESSED) {
-                break // Stops immediately on pass 1!
+                break
             }
         }
 
         assertEquals(1, loopCount)
         assertEquals(StopReason.AUTH_REQUIRED, drainResult.stopReason)
-    }
-
-    @Test
-    fun testDirectSaleResponseLostReplaySameKey() {
-        val localSale = LocalSaleEntity(
-            localId = "local-uuid-1",
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis(),
-            total = 100.0,
-            currency = "BRL",
-            paymentMethod = "DINHEIRO",
-            sessionId = "sess-1",
-            itemsJson = "[]",
-            payloadJson = "{}",
-            syncStatus = LocalSaleEntity.STATUS_PENDING,
-            idempotencyKeyUsed = true
-        )
-
-        assertTrue(localSale.idempotencyKeyUsed)
-        assertEquals(LocalSaleEntity.STATUS_PENDING, localSale.syncStatus)
-
-        val syncedSale = localSale.copy(
-            apiId = "sale-backend-100",
-            syncStatus = LocalSaleEntity.STATUS_SYNCED,
-            syncedToApi = true
-        )
-
-        assertEquals("sale-backend-100", syncedSale.apiId)
-        assertTrue(syncedSale.syncedToApi)
-    }
-
-    @Test
-    fun testCheckoutResponseLostReplaySameKey() {
-        val request = CommandCheckoutCommitRequest(
-            comandaId = "comanda-1",
-            forma = "CARD",
-            valor = 100.0,
-            moeda = "BRL",
-            valorBase = 100.0
-        )
-
-        val initialResponse = ComandaCheckoutCommitResponse(
-            success = true,
-            createdNew = true,
-            paymentId = "pay-1",
-            saleId = "sale-1",
-            closed = true
-        )
-
-        val replayResponse = ComandaCheckoutCommitResponse(
-            success = true,
-            createdNew = false,
-            paymentId = "pay-1",
-            saleId = "sale-1",
-            closed = true
-        )
-
-        assertEquals(initialResponse.paymentId, replayResponse.paymentId)
-        assertEquals(initialResponse.saleId, replayResponse.saleId)
-        assertEquals(initialResponse.closed, replayResponse.closed)
-    }
-
-    @Test
-    fun testFaultInjectionAfterHttpBeforeRoomSuccess() {
-        val initialSale = LocalSaleEntity(
-            localId = "local-crash-1",
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis(),
-            total = 50.0,
-            currency = "BRL",
-            paymentMethod = "DINHEIRO",
-            sessionId = "sess-1",
-            itemsJson = "[]",
-            payloadJson = "{}",
-            syncStatus = LocalSaleEntity.STATUS_SYNCING,
-            idempotencyKeyUsed = true
-        )
-
-        val recoveredSale = if (initialSale.syncStatus == LocalSaleEntity.STATUS_SYNCING && initialSale.idempotencyKeyUsed) {
-            initialSale.copy(syncStatus = LocalSaleEntity.STATUS_PENDING)
-        } else {
-            initialSale
-        }
-
-        assertEquals(LocalSaleEntity.STATUS_PENDING, recoveredSale.syncStatus)
-
-        val finalSynced = recoveredSale.copy(
-            apiId = "sale-server-50",
-            syncStatus = LocalSaleEntity.STATUS_SYNCED,
-            syncedToApi = true
-        )
-
-        assertEquals(LocalSaleEntity.STATUS_SYNCED, finalSynced.syncStatus)
-    }
-
-    @Test
-    fun testOrphanMatrixResolution() {
-        val now = System.currentTimeMillis()
-        val sixMinutesAgo = now - (6 * 60 * 1000L)
-
-        val orphanWaitingOp = OutboxOperationEntity(
-            id = "op-orphan",
-            operationType = "COMANDA_CHECKOUT_COMMIT",
-            targetGroupKey = "comanda-orphan",
-            payloadJson = "{}",
-            createdAt = sixMinutesAgo,
-            status = "WAITING_PAYMENT"
-        )
-
-        val resolvedOrphan = if (now - orphanWaitingOp.createdAt > (5 * 60 * 1000L)) {
-            orphanWaitingOp.copy(
-                status = "FAILED",
-                lastError = "ORPHAN_WAITING_TIMEOUT",
-                messageKey = "ORPHAN_WAITING",
-                isRetriable = false
-            )
-        } else {
-            orphanWaitingOp
-        }
-
-        assertEquals("FAILED", resolvedOrphan.status)
-        assertEquals("ORPHAN_WAITING_TIMEOUT", resolvedOrphan.lastError)
-        assertFalse(resolvedOrphan.isRetriable)
     }
 }

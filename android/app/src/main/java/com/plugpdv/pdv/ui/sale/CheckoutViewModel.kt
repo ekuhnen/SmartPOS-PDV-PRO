@@ -136,18 +136,26 @@ class CheckoutViewModel @Inject constructor(
         val cId = currentTable.comandaId ?: return
 
         viewModelScope.launch(Dispatchers.IO) {
-            val activeOps = outboxDao.getActiveOperationsForGroup(cId)
+            val recentOps = outboxDao.getRecentOperationsForGroup(cId)
                 .filter { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
 
-            val waitingOp = activeOps.find { it.status == "WAITING_PAYMENT" }
-            val pendingOrProcessingOp = activeOps.find { it.status == "PENDING" || it.status == "PROCESSING" }
+            val waitingOp = recentOps.find { it.status == "WAITING_PAYMENT" }
+            val pendingOrProcessingOp = recentOps.find { it.status == "PENDING" || it.status == "PROCESSING" }
+            val reconciliationOp = recentOps.find {
+                it.status == "REQUIRES_RECONCILIATION" || (it.status == "FAILED" && it.messageKey == "REQUIRES_RECONCILIATION")
+            }
 
             var blocked = false
             var pendingSync = false
             var reconciliation = false
             var reason: String? = null
 
-            if (waitingOp != null) {
+            if (reconciliationOp != null) {
+                blocked = true
+                pendingSync = false
+                reconciliation = true
+                reason = "Pagamento aprovado requer conciliação"
+            } else if (waitingOp != null) {
                 val attempt = paymentAttemptDao.getByReference(waitingOp.idempotencyKey)
                 when (attempt?.status) {
                     "PENDING" -> {
@@ -182,6 +190,18 @@ class CheckoutViewModel @Inject constructor(
                 blocked = true
                 pendingSync = true
                 reason = "Pagamento aprovado aguardando sincronização com o servidor"
+            } else {
+                // Caso B: PaymentAttempt APPROVED órfão sem Outbox correspondente
+                val approvedAttempts = paymentAttemptDao.getApprovedAttemptsForTableOrOrder(currentTable.number, cId)
+                for (att in approvedAttempts) {
+                    val matchingOp = outboxDao.getById(att.reference)
+                    if (matchingOp == null) {
+                        blocked = true
+                        reconciliation = true
+                        reason = "Pagamento aprovado na maquininha sem registro de checkout (Requer conciliação)"
+                        break
+                    }
+                }
             }
 
             withContext(Dispatchers.Main) {
@@ -190,6 +210,7 @@ class CheckoutViewModel @Inject constructor(
                         isPayButtonBlocked = blocked,
                         isPendingSync = pendingSync,
                         requiresReconciliation = reconciliation,
+                        paymentSuccess = if (reconciliation) false else _uiState.value.paymentSuccess,
                         blockReason = reason
                     )
                 }
@@ -216,20 +237,27 @@ class CheckoutViewModel @Inject constructor(
                     TableManager.updateTable(currentTable)
                 }
 
+                val currentReconciliation = _uiState.value.requiresReconciliation
+
                 if (isComandaClosed) {
                     currentTable.id?.let { TableManager.markTableAvailable(it) }
                     _uiState.value = _uiState.value.copy(
                         paymentsHistory = detail.pagamentos,
                         currentToPay = 0.0,
                         isPendingSync = false,
-                        isPayButtonBlocked = false,
-                        paymentSuccess = true,
-                        blockReason = null
+                        isPayButtonBlocked = currentReconciliation,
+                        paymentSuccess = !currentReconciliation,
+                        requiresReconciliation = currentReconciliation,
+                        blockReason = if (currentReconciliation) _uiState.value.blockReason else null
                     )
                 } else {
                     _uiState.value = _uiState.value.copy(
                         paymentsHistory = detail.pagamentos,
-                        currentToPay = currentTable.getPendingBalance()
+                        currentToPay = currentTable.getPendingBalance(),
+                        isPendingSync = if (currentReconciliation) false else _uiState.value.isPendingSync,
+                        isPayButtonBlocked = if (currentReconciliation) true else _uiState.value.isPayButtonBlocked,
+                        requiresReconciliation = currentReconciliation,
+                        paymentSuccess = if (currentReconciliation) false else _uiState.value.paymentSuccess
                     )
                 }
                 calculateFinalAmount()

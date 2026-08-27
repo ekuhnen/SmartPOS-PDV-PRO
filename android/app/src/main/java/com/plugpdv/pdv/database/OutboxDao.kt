@@ -58,6 +58,9 @@ interface OutboxDao {
     @Query("SELECT COUNT(*) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     suspend fun getPendingCount(): Int
 
+    @Query("SELECT * FROM outbox_operations WHERE targetGroupKey = :groupKey ORDER BY createdAt DESC LIMIT 10")
+    suspend fun getRecentOperationsForGroup(groupKey: String): List<OutboxOperationEntity>
+
     @Query("SELECT MIN(createdAt) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     suspend fun getOldestPendingTimestamp(): Long?
 }
