@@ -326,6 +326,8 @@ class OutboxSyncManager @Inject constructor(
                 "COMANDA_CHECKOUT_COMMIT" -> {
                     val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
                     val response = apiService.commitComandaCheckout("Bearer $token", op.idempotencyKey, request)
+                    val statusCode = response.code()
+
                     if (response.isSuccessful && response.body()?.success == true) {
                         val commitRes = response.body()
                         if (commitRes?.requiresReconciliation == true) {
@@ -337,6 +339,13 @@ class OutboxSyncManager @Inject constructor(
                                 com.plugpdv.pdv.utils.TableManager.markTableAvailable(mesaId)
                             }
                         }
+                        true
+                    } else if (statusCode == 409) {
+                        Log.w(TAG, "Operação K=${op.idempotencyKey} em progresso no servidor (HTTP 409). Reagendando backoff.")
+                        false
+                    } else if (statusCode == 400 || statusCode == 422) {
+                        Log.e(TAG, "Operação K=${op.idempotencyKey} falhou com erro permanente (HTTP $statusCode). Cancelando retries.")
+                        outboxDao.markAsFailedWithKey(op.id, "HTTP_$statusCode", "UNRECOVERABLE_ERROR", false)
                         true
                     } else {
                         false

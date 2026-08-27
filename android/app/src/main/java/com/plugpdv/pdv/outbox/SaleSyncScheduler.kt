@@ -57,7 +57,7 @@ class SaleSyncScheduler @Inject constructor() {
                 .build()
 
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                SaleSyncWorker.UNIQUE_WORK_NAME,
+                SaleSyncWorker.UNIQUE_WORK_NAME + "-retry",
                 ExistingWorkPolicy.REPLACE,
                 workRequest
             )

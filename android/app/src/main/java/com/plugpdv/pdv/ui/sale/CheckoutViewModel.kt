@@ -28,6 +28,10 @@ data class CheckoutUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val paymentSuccess: Boolean = false,
+    val isPendingSync: Boolean = false,
+    val isPayButtonBlocked: Boolean = false,
+    val blockReason: String? = null,
+    val requiresReconciliation: Boolean = false,
     val currentToPay: Double = 0.0,
     val taxAmount: Double = 0.0,
     val finalToPay: Double = 0.0,
@@ -224,10 +228,16 @@ class CheckoutViewModel @Inject constructor(
 
     private fun buildCommitRequest(method: PaymentMethod, manualAmount: Double? = null): CommandCheckoutCommitRequest {
         val currentTable = table ?: throw IllegalStateException("Table is null")
-        val amountToPay = manualAmount ?: _uiState.value.finalToPay
-        val baseAmountToPay = manualAmount ?: _uiState.value.currentToPay
         val cm = CurrencyManager.getInstance()
         val currentCurrency = cm.selectedCurrency
+
+        val amountToPay = manualAmount ?: _uiState.value.finalToPay
+        val baseAmountToPay = if (manualAmount != null) {
+            cm.convertToBrl(manualAmount)
+        } else {
+            _uiState.value.currentToPay
+        }
+
         val isFinalPayment = (currentTable.getPendingBalance() - baseAmountToPay) <= 0.01
 
         val shouldRegisterSale = when (_uiState.value.splitMode) {
