@@ -160,11 +160,27 @@ class OutboxSyncManager @Inject constructor(
 
     suspend fun recoverAndPromoteApprovedCheckouts() {
         try {
+            val now = System.currentTimeMillis()
+            val fiveMinutesMs = 5 * 60 * 1000L
+
+            // 1. Recuperar PaymentAttempts PENDING antigas (> 5 min) -> UNKNOWN (nunca REJECTED)
+            val pendingAttempts = paymentAttemptDao.getPendingOrUndeterminedAttempts().filter { it.status == "PENDING" }
+            for (attempt in pendingAttempts) {
+                if (now - attempt.startedAt > fiveMinutesMs) {
+                    paymentAttemptDao.update(
+                        attempt.copy(
+                            status = "UNKNOWN",
+                            statusMessage = "Timeout local de callback (> 5 min). Necessita verificação."
+                        )
+                    )
+                    Log.w(TAG, "Tentativa K=${attempt.reference} PENDING há mais de 5min -> UNKNOWN / NEEDS_VERIFICATION.")
+                }
+            }
+
             val approvedAttempts = paymentAttemptDao.getApprovedAttempts()
             val waitingOps = outboxDao.getWaitingPaymentOperations()
 
-            if (approvedAttempts.isEmpty() || waitingOps.isEmpty()) return
-
+            // 2. Promover WAITING_PAYMENT com PaymentAttempt APPROVED para PENDING
             for (op in waitingOps) {
                 val matchingAttempt = approvedAttempts.find { it.reference == op.idempotencyKey || it.idempotencyKey == op.idempotencyKey }
                 if (matchingAttempt != null) {
@@ -181,6 +197,16 @@ class OutboxSyncManager @Inject constructor(
 
                     outboxDao.update(updatedOp)
                     Log.i(TAG, "Process Death Recovery: Operação K=${op.idempotencyKey} promovida de WAITING_PAYMENT para PENDING (PaymentAttempt APPROVED)")
+                } else if (now - op.createdAt > fiveMinutesMs) {
+                    // 3. Tratamento de órfãos WAITING_PAYMENT antigos
+                    val attempt = paymentAttemptDao.getByReference(op.idempotencyKey)
+                    if (attempt == null) {
+                        outboxDao.markAsFailedWithKey(op.id, "ORPHAN_WAITING_TIMEOUT", "ORPHAN_WAITING", false)
+                        Log.w(TAG, "Outbox K=${op.idempotencyKey} WAITING_PAYMENT sem PaymentAttempt (>5min) -> FAILED.")
+                    } else if (attempt.status == "CANCELLED" || attempt.status == "REJECTED") {
+                        outboxDao.markAsFailedWithKey(op.id, attempt.status, "CANCELLED_PAYMENT", false)
+                        Log.i(TAG, "Outbox K=${op.idempotencyKey} sincronizada com attempt terminal (${attempt.status}) -> CANCELLED_PAYMENT.")
+                    }
                 }
             }
         } catch (e: Exception) {

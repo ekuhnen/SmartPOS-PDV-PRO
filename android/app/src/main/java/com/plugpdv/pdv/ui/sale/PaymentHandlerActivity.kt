@@ -47,7 +47,8 @@ class PaymentHandlerActivity : BaseActivity() {
     @Inject
     lateinit var paymentAttemptDao: PaymentAttemptDao
 
-    private var isWaitingForCallback = false
+    @Inject
+    lateinit var outboxDao: com.plugpdv.pdv.database.OutboxDao
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,8 +68,48 @@ class PaymentHandlerActivity : BaseActivity() {
         if (data != null && CALLBACK_SCHEME == data.scheme && CALLBACK_HOST == data.host) {
             handlePaymentCallback(data)
         } else {
-            if (!isWaitingForCallback) {
-                startPayment(intent)
+            val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+            val tableNum = intent.getIntExtra(EXTRA_TABLE_NUMBER, -1)
+            val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
+
+            lifecycleScope.launch {
+                val existingAttempt = if (!requestId.isNullOrEmpty()) {
+                    withContext(Dispatchers.IO) { paymentAttemptDao.getByReference(requestId) }
+                } else null
+
+                if (existingAttempt != null) {
+                    when (existingAttempt.status) {
+                        "APPROVED" -> {
+                            Log.d(TAG, "Tentativa K=$requestId já APROVADA no Room. Recuperando resultado sem reabrir PlugPay.")
+                            deliverApprovedResult(
+                                requestId = existingAttempt.reference,
+                                paymentId = existingAttempt.paymentAppPaymentId,
+                                method = existingAttempt.paymentMethod,
+                                message = existingAttempt.statusMessage,
+                                tableNum = if (tableNum != -1) tableNum.toString() else null,
+                                tableId = tableId
+                            )
+                        }
+                        "PENDING" -> {
+                            Log.d(TAG, "Tentativa K=$requestId em PENDING pós recriação. Bloqueando reabertura automática.")
+                            Toast.makeText(this@PaymentHandlerActivity, "Pagamento aguardando confirmação...", Toast.LENGTH_SHORT).show()
+                        }
+                        "UNKNOWN" -> {
+                            Log.d(TAG, "Tentativa K=$requestId em UNKNOWN pós recriação. Exibindo conciliação.")
+                            showUndeterminedPaymentDialog(existingAttempt, if (tableNum != -1) tableNum.toString() else null)
+                        }
+                        "CANCELLED", "REJECTED", "FAILED_TO_START" -> {
+                            Log.d(TAG, "Tentativa K=$requestId em estado terminal (${existingAttempt.status}).")
+                            deliverFailedResult(existingAttempt.status, existingAttempt.statusMessage, if (tableNum != -1) tableNum.toString() else null, tableId)
+                        }
+                        else -> {
+                            Log.w(TAG, "Tentativa K=$requestId em estado não esperado (${existingAttempt.status}).")
+                            showUndeterminedPaymentDialog(existingAttempt, if (tableNum != -1) tableNum.toString() else null)
+                        }
+                    }
+                } else {
+                    startPayment(intent)
+                }
             }
         }
     }
@@ -162,7 +203,6 @@ class PaymentHandlerActivity : BaseActivity() {
 
             try {
                 startActivity(paymentIntent)
-                isWaitingForCallback = true
             } catch (e: Exception) {
                 Log.e(TAG, "Falha ao abrir app de pagamento: ", e)
                 withContext(Dispatchers.IO) {
@@ -171,6 +211,12 @@ class PaymentHandlerActivity : BaseActivity() {
                             status = "FAILED_TO_START",
                             statusMessage = e.message
                         )
+                    )
+                    outboxDao.markAsFailedWithKey(
+                        id = requestId,
+                        error = "FAILED_TO_START",
+                        messageKey = "FAILED_TO_START",
+                        isRetriable = false
                     )
                 }
                 appNotFoundResult(e.message ?: "Erro desconhecido")
@@ -222,17 +268,40 @@ class PaymentHandlerActivity : BaseActivity() {
                 else -> "UNKNOWN" // INVARIANTE 7: unknown nunca é apresentado como recusa
             }
 
+            // REGRA DE PRECEDÊNCIA: APPROVED nunca regride para PENDING/UNKNOWN/REJECTED/CANCELLED
+            if (existingAttempt?.status == "APPROVED" && !isApproved) {
+                Log.w(TAG, "Tentativa K=$requestId já está APPROVED. Ignorando regressão para $normalizedStatus.")
+                deliverApprovedResult(
+                    requestId = existingAttempt.reference,
+                    paymentId = existingAttempt.paymentAppPaymentId,
+                    method = existingAttempt.paymentMethod,
+                    message = existingAttempt.statusMessage,
+                    tableNum = tableNum,
+                    tableId = tableId
+                )
+                return@launch
+            }
+
             if (existingAttempt != null) {
                 val updatedAttempt = existingAttempt.copy(
                     status = normalizedStatus,
                     completedAt = System.currentTimeMillis(),
                     paymentMethod = method ?: existingAttempt.paymentMethod,
-                    paymentAppPaymentId = paymentId,
-                    statusMessage = message,
+                    paymentAppPaymentId = paymentId ?: existingAttempt.paymentAppPaymentId,
+                    statusMessage = message ?: existingAttempt.statusMessage,
                     rawCallbackUri = uri.toString()
                 )
                 withContext(Dispatchers.IO) {
                     paymentAttemptDao.update(updatedAttempt)
+                    if (isCancelled || isRejected) {
+                        outboxDao.markAsFailedWithKey(
+                            id = updatedAttempt.reference,
+                            error = normalizedStatus,
+                            messageKey = "CANCELLED_PAYMENT",
+                            isRetriable = false
+                        )
+                        Log.i(TAG, "Outbox K=${updatedAttempt.reference} terminalizada como CANCELLED_PAYMENT ($normalizedStatus). Mesa continua aberta.")
+                    }
                 }
                 Log.d(TAG, "Tentativa de pagamento atualizada no Room: ref=${updatedAttempt.reference}, status=$normalizedStatus")
             }

@@ -7,6 +7,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.plugpdv.pdv.database.LocalSaleDao
 import com.plugpdv.pdv.repository.SaleOutboxRepository
+import com.plugpdv.pdv.repository.StopReason
+import com.plugpdv.pdv.utils.OutboxSyncManager
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
@@ -16,7 +18,7 @@ class SaleSyncWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val saleOutboxRepository: SaleOutboxRepository,
     private val localSaleDao: LocalSaleDao,
-    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager
+    private val outboxSyncManager: OutboxSyncManager
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -29,21 +31,31 @@ class SaleSyncWorker @AssistedInject constructor(
 
         try {
             var loopCount = 0
-            while (true) {
-                val pending = localSaleDao.getPendingSales()
-                if (pending.isEmpty()) {
+            var lastStopReason = StopReason.EMPTY
+
+            while (loopCount < 5) {
+                loopCount++
+                val result = saleOutboxRepository.processOutboxBatch()
+                lastStopReason = result.stopReason
+                Log.d(TAG, "Passada $loopCount: processadas ${result.processedCount} vendas, restantes: ${result.remainingCount}, motivo: ${result.stopReason}")
+
+                if (result.processedCount == 0 || result.stopReason != StopReason.PROGRESSED) {
                     break
                 }
-
-                loopCount++
-                Log.d(TAG, "Passada $loopCount: processando ${pending.size} vendas pendentes...")
-                saleOutboxRepository.processOutboxBatch()
             }
 
             // Drenagem estrita e durável das operações da outbox geral (incluindo COMANDA_CHECKOUT_COMMIT)
             outboxSyncManager.drainPendingOutbox()
 
-            return Result.success()
+            return when (lastStopReason) {
+                StopReason.EMPTY,
+                StopReason.PROGRESSED,
+                StopReason.AUTH_REQUIRED,
+                StopReason.PERMANENT_ONLY -> Result.success()
+                StopReason.BACKOFF_REQUIRED,
+                StopReason.TRANSIENT_FAILURE,
+                StopReason.NO_PROGRESS -> Result.retry()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Erro inesperado no SaleSyncWorker: ${e.message}", e)
             return Result.retry()

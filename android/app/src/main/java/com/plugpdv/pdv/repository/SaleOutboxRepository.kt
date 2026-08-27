@@ -15,6 +15,22 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class SaleDrainResult(
+    val processedCount: Int,
+    val remainingCount: Int,
+    val stopReason: StopReason
+)
+
+enum class StopReason {
+    EMPTY,
+    PROGRESSED,
+    AUTH_REQUIRED,
+    BACKOFF_REQUIRED,
+    TRANSIENT_FAILURE,
+    PERMANENT_ONLY,
+    NO_PROGRESS
+}
+
 @Singleton
 class SaleOutboxRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -59,7 +75,7 @@ class SaleOutboxRepository @Inject constructor(
             lastAttemptAt = null,
             syncStatus = LocalSaleEntity.STATUS_PENDING,
             syncedToApi = false,
-            idempotencyKeyUsed = true // Vendas criadas no STABILIZE-02 nascem com idempotência ativada
+            idempotencyKeyUsed = true
         )
 
         localSaleDao.insert(entity)
@@ -67,18 +83,17 @@ class SaleOutboxRepository @Inject constructor(
         return entity
     }
 
-    suspend fun processOutboxBatch(): Int {
+    suspend fun processOutboxBatch(): SaleDrainResult {
         val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val token = prefs.getString(Constants.TOKEN, null)
 
+        val pendingBefore = localSaleDao.getPendingSales()
+
         if (token.isNullOrEmpty()) {
             Log.w(TAG, "Sem token de autenticação ativo. Sincronização da Outbox suspensa.")
-            return 0
+            return SaleDrainResult(0, pendingBefore.size, StopReason.AUTH_REQUIRED)
         }
 
-        // Recuperação determinística de operações SYNCING abandonadas por crash/morte de processo.
-        // SYNCING + idempotencyKeyUsed == true  -> PENDING (retry seguro com a mesma chave)
-        // SYNCING + idempotencyKeyUsed == false -> UNKNOWN (nunca auto-retry para evitar duplicidade legada)
         val recoveredKeyed = localSaleDao.recoverStaleSyncingKeyedToPending()
         val recoveredUnkeyed = localSaleDao.recoverStaleSyncingUnkeyedToUnknown()
 
@@ -92,15 +107,14 @@ class SaleOutboxRepository @Inject constructor(
         val pendingSales = localSaleDao.getPendingSales()
         if (pendingSales.isEmpty()) {
             Log.d(TAG, "Fila de outbox vazia. Nenhuma venda pendente.")
-            return 0
+            return SaleDrainResult(0, 0, StopReason.EMPTY)
         }
 
         Log.i(TAG, "Iniciando processamento de ${pendingSales.size} vendas pendentes na Outbox...")
         var processedCount = 0
+        var stopReason = StopReason.PROGRESSED
 
         for (sale in pendingSales) {
-            // Se for venda legada que NUNCA iniciou transmissão (attemptCount == 0 && lastAttemptAt == null),
-            // ou se já for uma venda keyed, marcamos explicitamente a ativação da chave ANTES do POST.
             if (!sale.idempotencyKeyUsed) {
                 if (sale.attemptCount == 0 && sale.lastAttemptAt == null) {
                     localSaleDao.markAsKeyed(sale.localId)
@@ -140,7 +154,8 @@ class SaleOutboxRepository @Inject constructor(
                     code == 401 || code == 403 -> {
                         Log.w(TAG, "Outbox [${sale.localId}] Falha de autenticação ($code). Interrompendo outbox e mantendo PENDING.")
                         localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "Auth error HTTP $code")
-                        break // Interrompe o lote para não falhar as demais por token inválido
+                        stopReason = StopReason.AUTH_REQUIRED
+                        break
                     }
                     code == 409 -> {
                         if (errorBody.contains("IDEMPOTENCY_KEY_REUSED") || errorBody.contains("IDEMPOTENCY_SCOPE_MISMATCH")) {
@@ -149,13 +164,16 @@ class SaleOutboxRepository @Inject constructor(
                         } else if (errorBody.contains("OPERATION_IN_PROGRESS")) {
                             Log.w(TAG, "Outbox [${sale.localId}] Operação em andamento no servidor (HTTP 409). Mantendo PENDING e aplicando backoff (interrompendo lote).")
                             localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "HTTP 409: OPERATION_IN_PROGRESS")
-                            break // Interrompe o lote para dar tempo ao servidor (backoff)
+                            stopReason = StopReason.BACKOFF_REQUIRED
+                            break
                         } else if (errorBody.contains("INSUFFICIENT_STOCK")) {
                             Log.e(TAG, "Outbox [${sale.localId}] Estoque insuficiente. Marcando FAILED_PERMANENT.")
                             localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_FAILED_PERMANENT, "HTTP 409: INSUFFICIENT_STOCK")
                         } else {
                             Log.w(TAG, "Outbox [${sale.localId}] HTTP 409 genérico. Marcando PENDING para retry idempotente.")
                             localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "HTTP 409: $errorBody")
+                            stopReason = StopReason.TRANSIENT_FAILURE
+                            break
                         }
                     }
                     code == 400 || code == 422 -> {
@@ -165,6 +183,8 @@ class SaleOutboxRepository @Inject constructor(
                     code == 408 || code == 429 || code >= 500 -> {
                         Log.w(TAG, "Outbox [${sale.localId}] Erro temporário ($code). Mantendo PENDING para retry idempotente.")
                         localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "HTTP $code: $errorBody")
+                        stopReason = StopReason.TRANSIENT_FAILURE
+                        break
                     }
                     else -> {
                         Log.w(TAG, "Outbox [${sale.localId}] Erro HTTP ambíguo ($code). Marcando UNKNOWN.")
@@ -174,12 +194,23 @@ class SaleOutboxRepository @Inject constructor(
             } catch (e: IOException) {
                 Log.w(TAG, "Outbox [${sale.localId}] Exceção de E/S / Conexão (${e.message}). Mantendo PENDING para retry idempotente seguro.")
                 localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "E/S error: ${e.message}")
+                stopReason = StopReason.TRANSIENT_FAILURE
+                break
             } catch (e: Exception) {
                 Log.e(TAG, "Outbox [${sale.localId}] Exceção não tratada: ${e.message}", e)
                 localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_UNKNOWN, "Exception: ${e.message}")
             }
         }
 
-        return processedCount
+        val remaining = localSaleDao.getPendingSales().size
+        val finalStopReason = if (remaining == 0) {
+            StopReason.EMPTY
+        } else if (processedCount == 0 && stopReason == StopReason.PROGRESSED) {
+            StopReason.NO_PROGRESS
+        } else {
+            stopReason
+        }
+
+        return SaleDrainResult(processedCount, remaining, finalStopReason)
     }
 }

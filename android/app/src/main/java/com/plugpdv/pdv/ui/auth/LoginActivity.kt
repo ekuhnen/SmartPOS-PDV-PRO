@@ -34,6 +34,9 @@ class LoginActivity : BaseActivity() {
     @Inject
     lateinit var deviceGuardService: DeviceGuardService
 
+    @Inject
+    lateinit var saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLoginBinding.inflate(layoutInflater)
@@ -123,6 +126,9 @@ class LoginActivity : BaseActivity() {
                         
                     // Iniciar monitoramento Realtime (Kill-Switch)
                     deviceGuardService.start(this, result.userId, DeviceIdProvider.get(this))
+
+                    // Reagendar WorkManager imediatamente para processar outbox suspensa por falta de token
+                    saleSyncScheduler.scheduleSync(this)
                         
                     if (result.isOpen) {
                         val intent = Intent(this, DirectSaleActivity::class.java).apply {

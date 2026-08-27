@@ -106,9 +106,9 @@ class SaleOutboxRepositoryTest {
             whenever(apiService.registerSale(eq("Bearer valid_test_token"), eq("local_100"), any()))
                 .thenReturn(SaleResponse(id = null, saleId = "api_sale_999", status = "SUCCESS"))
 
-            val processed = repository.processOutboxBatch()
+            val result = repository.processOutboxBatch()
 
-            assertEquals(1, processed)
+            assertEquals(1, result.processedCount)
             val updated = fakeLocalSaleDao.sales.first { it.localId == "local_100" }
             assertEquals(LocalSaleEntity.STATUS_SYNCED, updated.syncStatus)
             assertEquals("api_sale_999", updated.apiId)
@@ -134,9 +134,9 @@ class SaleOutboxRepositoryTest {
 
             fakeLocalSaleDao.insert(legacyStaleSale)
 
-            val processed = repository.processOutboxBatch()
+            val result = repository.processOutboxBatch()
 
-            assertEquals(0, processed)
+            assertEquals(0, result.processedCount)
             val updated = fakeLocalSaleDao.sales.first { it.localId == "legacy_stale_1" }
             assertEquals(LocalSaleEntity.STATUS_UNKNOWN, updated.syncStatus)
             verify(apiService, never()).registerSale(any(), any(), any())
@@ -164,9 +164,9 @@ class SaleOutboxRepositoryTest {
             whenever(apiService.registerSale(any(), eq("keyed_stale_1"), any()))
                 .thenReturn(SaleResponse(id = "api_recovered_1", status = "SUCCESS"))
 
-            val processed = repository.processOutboxBatch()
+            val result = repository.processOutboxBatch()
 
-            assertEquals(1, processed)
+            assertEquals(1, result.processedCount)
             val updated = fakeLocalSaleDao.sales.first { it.localId == "keyed_stale_1" }
             assertEquals(LocalSaleEntity.STATUS_SYNCED, updated.syncStatus)
             assertEquals("api_recovered_1", updated.apiId)
@@ -196,9 +196,9 @@ class SaleOutboxRepositoryTest {
             whenever(apiService.registerSale(any(), eq("legacy_pending_1"), any()))
                 .thenReturn(SaleResponse(id = "api_legacy_1", status = "SUCCESS"))
 
-            val processed = repository.processOutboxBatch()
+            val result = repository.processOutboxBatch()
 
-            assertEquals(1, processed)
+            assertEquals(1, result.processedCount)
             val updated = fakeLocalSaleDao.sales.first { it.localId == "legacy_pending_1" }
             assertEquals(LocalSaleEntity.STATUS_SYNCED, updated.syncStatus)
             assertTrue(updated.idempotencyKeyUsed) // Ativou a chave antes do POST!
