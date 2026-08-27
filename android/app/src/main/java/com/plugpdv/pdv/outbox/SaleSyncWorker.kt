@@ -15,7 +15,8 @@ class SaleSyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val saleOutboxRepository: SaleOutboxRepository,
-    private val localSaleDao: LocalSaleDao
+    private val localSaleDao: LocalSaleDao,
+    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -39,6 +40,7 @@ class SaleSyncWorker @AssistedInject constructor(
                 loopCount++
                 Log.d(TAG, "Passada $loopCount: processando ${pending.size} vendas pendentes...")
                 saleOutboxRepository.processOutboxBatch()
+                outboxSyncManager.triggerSync()
             }
 
             return Result.success()

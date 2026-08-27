@@ -28,6 +28,9 @@ interface PaymentAttemptDao {
     @Query("SELECT * FROM payment_attempts WHERE tableNumber = :tableNumber AND (status = 'PENDING' OR status = 'UNKNOWN') ORDER BY startedAt DESC LIMIT 1")
     suspend fun getLatestPendingForTable(tableNumber: Int): PaymentAttemptEntity?
 
+    @Query("SELECT * FROM payment_attempts WHERE status = 'APPROVED'")
+    suspend fun getApprovedAttempts(): List<PaymentAttemptEntity>
+
     @Query("SELECT * FROM payment_attempts ORDER BY startedAt DESC LIMIT 50")
     fun getRecentAttemptsFlow(): Flow<List<PaymentAttemptEntity>>
 }

@@ -246,7 +246,7 @@ class PaymentHandlerActivity : BaseActivity() {
                         message = message
                     )
                 )
-                deliverApprovedResult(paymentId, method, message, tableNum, tableId)
+                deliverApprovedResult(requestId ?: existingAttempt?.reference, paymentId, method, message, tableNum, tableId)
             } else if (isUndetermined) {
                 // Pagamento não determinado: abre tela com opções seguras para não cobrar duas vezes
                 showUndeterminedPaymentDialog(
@@ -270,10 +270,11 @@ class PaymentHandlerActivity : BaseActivity() {
         }
     }
 
-    private fun deliverApprovedResult(paymentId: String?, method: String?, message: String?, tableNum: String?, tableId: String? = null) {
+    private fun deliverApprovedResult(requestId: String?, paymentId: String?, method: String?, message: String?, tableNum: String?, tableId: String? = null) {
         val resultIntent = Intent().apply {
             putExtra("status", "APPROVED")
             putExtra("payment_id", paymentId)
+            putExtra("request_id", requestId)
             putExtra("method", method)
             putExtra("message", message)
         }

@@ -32,6 +32,7 @@ data class OutboxQueueStatus(
 class OutboxSyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val outboxDao: OutboxDao,
+    private val paymentAttemptDao: com.plugpdv.pdv.database.PaymentAttemptDao,
     private val apiService: PosApiService,
     private val syncMetricsTracker: SyncMetricsTracker
 ) {
@@ -137,7 +138,38 @@ class OutboxSyncManager @Inject constructor(
         }
     }
 
+    suspend fun recoverAndPromoteApprovedCheckouts() {
+        try {
+            val approvedAttempts = paymentAttemptDao.getApprovedAttempts()
+            val waitingOps = outboxDao.getWaitingPaymentOperations()
+
+            if (approvedAttempts.isEmpty() || waitingOps.isEmpty()) return
+
+            for (op in waitingOps) {
+                val matchingAttempt = approvedAttempts.find { it.reference == op.idempotencyKey || it.idempotencyKey == op.idempotencyKey }
+                if (matchingAttempt != null) {
+                    val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
+                    val updatedRequest = request.copy(
+                        referenciaExterna = matchingAttempt.paymentAppPaymentId ?: request.referenciaExterna,
+                        forma = matchingAttempt.paymentMethod ?: request.forma
+                    )
+
+                    val updatedOp = op.copy(
+                        payloadJson = gson.toJson(updatedRequest),
+                        status = "PENDING"
+                    )
+
+                    outboxDao.update(updatedOp)
+                    Log.i(TAG, "Process Death Recovery: Operação K=${op.idempotencyKey} promovida de WAITING_PAYMENT para PENDING (PaymentAttempt APPROVED)")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Falha durante recuperação de process death para checkout: ${e.message}")
+        }
+    }
+
     private suspend fun processPendingOutbox() {
+        recoverAndPromoteApprovedCheckouts()
         val now = System.currentTimeMillis()
         val groups = outboxDao.getDistinctPendingGroups(now)
         if (groups.isEmpty()) return

@@ -46,6 +46,15 @@ interface OutboxDao {
     @Query("SELECT MIN(createdAt) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     fun getOldestPendingTimestampFlow(): Flow<Long?>
 
+    @Query("SELECT * FROM outbox_operations WHERE id = :id")
+    suspend fun getById(id: String): OutboxOperationEntity?
+
+    @Query("SELECT * FROM outbox_operations WHERE status = 'WAITING_PAYMENT'")
+    suspend fun getWaitingPaymentOperations(): List<OutboxOperationEntity>
+
+    @Query("SELECT * FROM outbox_operations WHERE targetGroupKey = :groupKey AND status IN ('WAITING_PAYMENT', 'PENDING', 'PROCESSING')")
+    suspend fun getActiveOperationsForGroup(groupKey: String): List<OutboxOperationEntity>
+
     @Query("SELECT COUNT(*) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     suspend fun getPendingCount(): Int
 

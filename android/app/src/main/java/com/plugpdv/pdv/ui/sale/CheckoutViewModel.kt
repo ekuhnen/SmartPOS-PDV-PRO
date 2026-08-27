@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
 data class CheckoutUiState(
@@ -45,7 +47,9 @@ data class CheckoutUiState(
 class CheckoutViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val apiService: PosApiService,
-    private val taxRepository: TaxRepository
+    private val taxRepository: TaxRepository,
+    private val outboxDao: com.plugpdv.pdv.database.OutboxDao,
+    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CheckoutUiState())
@@ -217,49 +221,24 @@ class CheckoutViewModel @Inject constructor(
         calculateFinalAmount()
     }
 
-    fun finalizePayment(method: PaymentMethod, manualAmount: Double? = null) {
-        val currentToken = token
-        val currentTable = table
-        val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        val currentSessionId = sessionId ?: prefs.getString(com.plugpdv.pdv.utils.Constants.SESSION_ID, null)
-
-        if (currentToken == null || currentTable == null || currentSessionId == null) {
-            val missing = mutableListOf<String>()
-            if (currentToken == null) missing.add("Token")
-            if (currentTable == null) missing.add("Mesa")
-            if (currentSessionId == null) missing.add("Sessão de Caixa")
-            _uiState.value = _uiState.value.copy(
-                error = "Não é possível finalizar o pagamento: ausência de ${missing.joinToString(", ")}"
-            )
-            return
-        }
-
-        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-        
+    private fun buildCommitRequest(method: PaymentMethod, manualAmount: Double? = null): CommandCheckoutCommitRequest {
+        val currentTable = table ?: throw IllegalStateException("Table is null")
         val amountToPay = manualAmount ?: _uiState.value.finalToPay
-        val baseAmountToPay = if (manualAmount != null) {
-            manualAmount
-        } else {
-            _uiState.value.currentToPay
-        }
-
+        val baseAmountToPay = manualAmount ?: _uiState.value.currentToPay
         val cm = CurrencyManager.getInstance()
         val currentCurrency = cm.selectedCurrency
-        val convertedTotal = cm.convert(amountToPay)
-
         val isFinalPayment = (currentTable.getPendingBalance() - baseAmountToPay) <= 0.01
 
         val shouldRegisterSale = when (_uiState.value.splitMode) {
-            0 -> true // Pagamento total sempre registra venda
-            1 -> isFinalPayment // Dividir por pessoas: apenas registra venda no fechamento final
-            2 -> true // Dividir por itens: sempre registra a venda correspondente aos itens selecionados
+            0 -> true
+            1 -> isFinalPayment
+            2 -> true
             else -> true
         }
 
         val saleItems = if (_uiState.value.splitMode == 2) {
             itemsToPay.filter { it.selected }.map { SaleItem(it.item.product.id, it.item.product.name, it.selectedQuantity, it.item.product.selling_price ?: 0.0) }
         } else if (_uiState.value.splitMode == 1) {
-            // Se for dividir por pessoas e for o pagamento final, envia todos os itens da mesa
             currentTable.items.filter { !it.removed }
                 .map { SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0) }
         } else {
@@ -267,98 +246,134 @@ class CheckoutViewModel @Inject constructor(
                 .map { SaleItem(it.product.id, it.product.name, it.quantity - it.paidQuantity, it.product.selling_price ?: 0.0) }
         }
 
-        var taxPercentage = 0.0
-        _uiState.value.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach {
-            taxPercentage += it.percentage
-        }
-        val fullTableBase = currentTable.calculateTotal()
-        val fullTableTax = if (taxPercentage > 0) fullTableBase * (taxPercentage / 100.0) else 0.0
-        val fullTableTotal = fullTableBase + fullTableTax
-
-        val sfAmount1 = _uiState.value.serviceFeeAmount
-        val sfKind1 = _uiState.value.serviceFeeKind ?: if (sfAmount1 > 0) "fixed" else null
-
         val sfAmount2 = if (manualAmount != null) 0.0 else _uiState.value.serviceFeeAmount
         val sfKind2 = if (manualAmount != null) null else (_uiState.value.serviceFeeKind ?: if (sfAmount2 > 0) "fixed" else null)
 
-        val saleRequest = if (_uiState.value.splitMode == 1) {
-            SaleRequest(
-                customerName = currentTable.customerName,
-                total = fullTableTotal,
-                items = saleItems,
-                paymentMethod = method.apiValue,
-                currency = currentCurrency,
-                caixa_session_id = currentSessionId,
-                operatorId = operatorId,
-                operatorName = operatorName,
-                taxAmount = fullTableTax,
-                serviceFeeAmount = sfAmount1,
-                serviceFeeKind = sfKind1,
-                convertedTotal = cm.convert(fullTableTotal)
-            )
-        } else {
-            SaleRequest(
-                customerName = currentTable.customerName,
-                total = amountToPay,
-                items = saleItems,
-                paymentMethod = method.apiValue,
-                currency = currentCurrency,
-                caixa_session_id = currentSessionId,
-                operatorId = operatorId,
-                operatorName = operatorName,
-                taxAmount = if (manualAmount != null) 0.0 else _uiState.value.taxAmount,
-                serviceFeeAmount = sfAmount2,
-                serviceFeeKind = sfKind2,
-                convertedTotal = convertedTotal
-            )
-        }
+        return CommandCheckoutCommitRequest(
+            comandaId = currentTable.comandaId ?: "",
+            mesaId = currentTable.id,
+            forma = method.apiValue,
+            valor = amountToPay,
+            moeda = currentCurrency,
+            shouldRegisterSale = shouldRegisterSale,
+            saleItems = saleItems,
+            discount = 0.0,
+            serviceFee = sfAmount2,
+            serviceFeeKind = sfKind2
+        )
+    }
 
-        viewModelScope.launch {
+    suspend fun prepareCheckoutOperation(method: PaymentMethod, manualAmount: Double? = null): String {
+        val request = buildCommitRequest(method, manualAmount)
+        val key = java.util.UUID.randomUUID().toString()
+        val gson = com.google.gson.Gson()
+
+        val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
+            id = key,
+            operationType = "COMANDA_CHECKOUT_COMMIT",
+            targetGroupKey = request.comandaId,
+            payloadJson = gson.toJson(request),
+            createdAt = System.currentTimeMillis(),
+            idempotencyKey = key,
+            status = "WAITING_PAYMENT"
+        )
+
+        outboxDao.insert(entity)
+        Log.d("CheckoutViewModel", "Operação de checkout K=$key persistida como WAITING_PAYMENT antes do deeplink")
+        return key
+    }
+
+    fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
+        val gson = com.google.gson.Gson()
+        val amountToPay = _uiState.value.finalToPay
+        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                Log.d("CheckoutViewModel", "Iniciando finalização de pagamento atômica MESA: ${method.apiValue} - Valor: $amountToPay")
-                
-                val checkoutOperationId = java.util.UUID.randomUUID().toString()
+                val op = outboxDao.getById(checkoutOperationId)
+                if (op != null) {
+                    val request = gson.fromJson(op.payloadJson, CommandCheckoutCommitRequest::class.java)
+                    val updatedRequest = request.copy(
+                        referenciaExterna = paymentId ?: request.referenciaExterna,
+                        forma = method.apiValue
+                    )
 
-                val commitRequest = CommandCheckoutCommitRequest(
-                    comandaId = currentTable.comandaId ?: "",
-                    mesaId = currentTable.id,
-                    forma = method.apiValue,
-                    valor = amountToPay,
-                    moeda = currentCurrency,
-                    shouldRegisterSale = shouldRegisterSale,
-                    saleItems = saleItems,
-                    discount = 0.0,
-                    serviceFee = sfAmount2,
-                    serviceFeeKind = sfKind2
-                )
+                    val updatedOp = op.copy(
+                        payloadJson = gson.toJson(updatedRequest),
+                        status = "PENDING"
+                    )
 
-                val response = retryIO { apiService.commitComandaCheckout("Bearer $currentToken", checkoutOperationId, commitRequest) }
-                if (!response.isSuccessful) {
-                    val errorBody = response.errorBody()?.string() ?: ""
-                    throw Exception("Erro ao executar checkout atômico: ${response.code()} $errorBody")
+                    outboxDao.update(updatedOp)
+                    Log.d("CheckoutViewModel", "Operação K=$checkoutOperationId promovida para PENDING com referencia_externa=$paymentId")
+
+                    outboxSyncManager.triggerSync()
+
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        processLocalPaymentResult(ComandaCheckoutCommitResponse(closed = true))
+                        fetchComandaPayments()
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            paymentSuccess = true,
+                            lastPaymentMethod = method.apiValue,
+                            lastPaymentAmount = amountToPay
+                        )
+                    }
+                } else {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(isLoading = false, error = "Operação de checkout não encontrada no Room: K=$checkoutOperationId")
+                    }
                 }
-
-                val commitRes = response.body()
-                Log.d("CheckoutViewModel", "Checkout atômico concluído no backend. Closed: ${commitRes?.closed}")
-
-                processLocalPaymentResult(commitRes)
-                fetchComandaPayments()
-
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false, 
-                    paymentSuccess = true,
-                    fullTableTotalPaid = fullTableTotal,
-                    lastPaymentMethod = method.apiValue,
-                    lastPaymentAmount = amountToPay
-                )
-            } catch (e: retrofit2.HttpException) {
-                val errorBody = e.response()?.errorBody()?.string() ?: e.message()
-                Log.e("CheckoutViewModel", "FALHA NO CHECKOUT ATÔMICO (HTTP ${e.code()}): $errorBody")
-                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: HTTP ${e.code()} $errorBody")
             } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "FALHA NO CHECKOUT ATÔMICO: ${e.message}")
-                e.printStackTrace()
-                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: ${e.message}")
+                Log.e("CheckoutViewModel", "Erro ao promover checkout K=$checkoutOperationId: ${e.message}")
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao promover checkout: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun finalizePayment(method: PaymentMethod, manualAmount: Double? = null) {
+        val currentTable = table ?: return
+        val gson = com.google.gson.Gson()
+        val amountToPay = manualAmount ?: _uiState.value.finalToPay
+
+        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val request = buildCommitRequest(method, manualAmount)
+                val key = java.util.UUID.randomUUID().toString()
+
+                val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
+                    id = key,
+                    operationType = "COMANDA_CHECKOUT_COMMIT",
+                    targetGroupKey = request.comandaId,
+                    payloadJson = gson.toJson(request),
+                    createdAt = System.currentTimeMillis(),
+                    idempotencyKey = key,
+                    status = "PENDING"
+                )
+
+                outboxDao.insert(entity)
+                Log.d("CheckoutViewModel", "Operação de checkout DINHEIRO K=$key enfileirada no Room")
+
+                outboxSyncManager.triggerSync()
+
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    processLocalPaymentResult(ComandaCheckoutCommitResponse(closed = true))
+                    fetchComandaPayments()
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        paymentSuccess = true,
+                        lastPaymentMethod = method.apiValue,
+                        lastPaymentAmount = amountToPay
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("CheckoutViewModel", "Erro ao registrar checkout em dinheiro: ${e.message}")
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: ${e.message}")
+                }
             }
         }
     }

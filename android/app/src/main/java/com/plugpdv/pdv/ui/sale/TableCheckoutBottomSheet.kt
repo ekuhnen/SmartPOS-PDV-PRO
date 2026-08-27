@@ -43,13 +43,17 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     
     private val viewModel: CheckoutViewModel by viewModels()
 
+    private var pendingCheckoutOperationId: String? = null
+
     private val paymentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             val status = result.data?.getStringExtra("status")
             val methodStr = result.data?.getStringExtra("method") ?: "PIX"
-            if ("APPROVED" == status) {
+            val paymentId = result.data?.getStringExtra("payment_id")
+            val requestId = result.data?.getStringExtra("request_id") ?: pendingCheckoutOperationId
+            if ("APPROVED" == status && !requestId.isNullOrEmpty()) {
                 val method = PaymentMethod.fromString(methodStr)
-                viewModel.finalizePayment(method)
+                viewModel.finalizeApprovedCheckout(requestId, paymentId, method)
             } else {
                 Toast.makeText(context, "Pagamento não aprovado: $status", Toast.LENGTH_LONG).show()
             }
@@ -104,7 +108,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         if (result.status.equals("APPROVED", ignoreCase = true)) {
             Log.d("TableCheckoutBottomSheet", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}")
             val method = PaymentMethod.fromString(result.method)
-            viewModel.finalizePayment(method)
+            val key = pendingCheckoutOperationId
+            if (!key.isNullOrEmpty()) {
+                viewModel.finalizeApprovedCheckout(key, result.paymentId, method)
+            }
         }
     }
 
@@ -347,25 +354,32 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                     viewModel.finalizePayment(PaymentMethod.CASH, amount)
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
-                    val cm = CurrencyManager.getInstance()
-                    val convertedAmount = cm.convert(amount)
-                    val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-                    val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
+                    lifecycleScope.launch {
+                        val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, amount)
+                        pendingCheckoutOperationId = operationKey
 
-                    val activeTaxes = viewModel.uiState.value.activeTaxes
-                    val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(amount, cm.selectedCurrency, activeTaxes, cm)
+                        val cm = CurrencyManager.getInstance()
+                        val convertedAmount = cm.convert(amount)
+                        val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                        val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
-                    val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, convertedAmount.toString())
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, amount.toString())
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
-                        putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
-                        putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
-                        putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
-                        putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
-                        putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
+                        val activeTaxes = viewModel.uiState.value.activeTaxes
+                        val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(amount, cm.selectedCurrency, activeTaxes, cm)
+
+                        val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
+                            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, operationKey)
+                            putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, operationKey)
+                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, convertedAmount.toString())
+                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, amount.toString())
+                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
+                            putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
+                            putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
+                            putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
+                            putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
+                            putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
+                        }
+                        paymentLauncher.launch(intent)
                     }
-                    paymentLauncher.launch(intent)
                 }
             }
         }.show(childFragmentManager, "payment_selector")
