@@ -89,4 +89,16 @@ object TableManager {
     fun updateTableStatus(id: String?, number: Int, status: String, sectorId: String? = null) {
         getTable(id, number, sectorId)?.let { it.status = status }
     }
+
+    @JvmStatic
+    fun markTableAvailable(tableId: String?) {
+        if (tableId.isNullOrEmpty()) return
+        getTableById(tableId)?.let { t ->
+            t.status = Table.Status.AVAILABLE
+            t.comandaId = null
+            t.customerName = ""
+            t.paidAmount = 0.0
+            t.items.clear()
+        }
+    }
 }

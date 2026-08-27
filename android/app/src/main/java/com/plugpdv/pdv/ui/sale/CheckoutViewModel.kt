@@ -49,7 +49,8 @@ class CheckoutViewModel @Inject constructor(
     private val apiService: PosApiService,
     private val taxRepository: TaxRepository,
     private val outboxDao: com.plugpdv.pdv.database.OutboxDao,
-    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager
+    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager,
+    private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CheckoutUiState())
@@ -307,9 +308,9 @@ class CheckoutViewModel @Inject constructor(
                     Log.d("CheckoutViewModel", "Operação K=$checkoutOperationId promovida para PENDING com referencia_externa=$paymentId")
 
                     outboxSyncManager.triggerSync()
+                    saleSyncScheduler.scheduleSync(context)
 
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        processLocalPaymentResult(ComandaCheckoutCommitResponse(closed = true))
                         fetchComandaPayments()
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
@@ -333,7 +334,6 @@ class CheckoutViewModel @Inject constructor(
     }
 
     fun finalizePayment(method: PaymentMethod, manualAmount: Double? = null) {
-        val currentTable = table ?: return
         val gson = com.google.gson.Gson()
         val amountToPay = manualAmount ?: _uiState.value.finalToPay
 
@@ -358,9 +358,9 @@ class CheckoutViewModel @Inject constructor(
                 Log.d("CheckoutViewModel", "Operação de checkout DINHEIRO K=$key enfileirada no Room")
 
                 outboxSyncManager.triggerSync()
+                saleSyncScheduler.scheduleSync(context)
 
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    processLocalPaymentResult(ComandaCheckoutCommitResponse(closed = true))
                     fetchComandaPayments()
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,

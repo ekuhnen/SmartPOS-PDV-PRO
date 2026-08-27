@@ -25,23 +25,23 @@ class SaleSyncWorker @AssistedInject constructor(
     }
 
     override suspend fun doWork(): Result {
-        Log.d(TAG, "Iniciando worker de sincronização da Outbox de vendas...")
+        Log.d(TAG, "Iniciando worker de sincronização da Outbox de vendas e comandas...")
 
         try {
             var loopCount = 0
-            // Loop de drenagem da fila para evitar starvation caso novas vendas entrem enquanto o worker executa
             while (true) {
                 val pending = localSaleDao.getPendingSales()
                 if (pending.isEmpty()) {
-                    Log.d(TAG, "Nenhuma venda pendente elegível para envio.")
                     break
                 }
 
                 loopCount++
                 Log.d(TAG, "Passada $loopCount: processando ${pending.size} vendas pendentes...")
                 saleOutboxRepository.processOutboxBatch()
-                outboxSyncManager.triggerSync()
             }
+
+            // Drenagem estrita e durável das operações da outbox geral (incluindo COMANDA_CHECKOUT_COMMIT)
+            outboxSyncManager.drainPendingOutbox()
 
             return Result.success()
         } catch (e: Exception) {

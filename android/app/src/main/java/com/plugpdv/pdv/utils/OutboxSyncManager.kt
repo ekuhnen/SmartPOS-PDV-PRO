@@ -168,29 +168,31 @@ class OutboxSyncManager @Inject constructor(
         }
     }
 
-    private suspend fun processPendingOutbox() {
+    suspend fun drainPendingOutbox(): Boolean {
         recoverAndPromoteApprovedCheckouts()
         val now = System.currentTimeMillis()
         val groups = outboxDao.getDistinctPendingGroups(now)
-        if (groups.isEmpty()) return
+        if (groups.isEmpty()) return true
 
         val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        val token = prefs.getString(Constants.TOKEN, null) ?: return
+        val token = prefs.getString(Constants.TOKEN, null) ?: return false
 
-        // Comandas diferentes sincronizam em paralelo; a mesma comanda sincroniza em FIFO estrito
-        val deferredJobs = groups.map { groupKey ->
-            scope.async {
-                val groupMutex = groupMutexes.getOrPut(groupKey) { Mutex() }
-                if (groupMutex.tryLock()) {
-                    try {
+        val jobs = groups.map { groupKey ->
+            coroutineScope {
+                async {
+                    val groupMutex = groupMutexes.getOrPut(groupKey) { Mutex() }
+                    groupMutex.withLock {
                         processGroupQueue(groupKey, token)
-                    } finally {
-                        groupMutex.unlock()
                     }
                 }
             }
         }
-        deferredJobs.awaitAll()
+        jobs.awaitAll()
+        return true
+    }
+
+    private suspend fun processPendingOutbox() {
+        drainPendingOutbox()
     }
 
     private suspend fun processGroupQueue(groupKey: String, token: String) {
@@ -198,92 +200,114 @@ class OutboxSyncManager @Inject constructor(
         if (operations.isEmpty()) return
 
         val readyOps = operations.takeWhile { it.nextRetryAt <= System.currentTimeMillis() }
-            .take(50) // Lote máximo de 50 operações por sincronização
+            .take(50)
 
         if (readyOps.isEmpty()) return
 
-        val batchSynced = try {
-            val items = readyOps.map { op ->
-                SyncOperationItem(
-                    id = op.id,
-                    operationType = op.operationType,
-                    targetGroupKey = op.targetGroupKey,
-                    idempotencyKey = op.idempotencyKey,
-                    clientCreatedAt = op.createdAt,
-                    payloadJson = op.payloadJson
+        // Excluir COMANDA_CHECKOUT_COMMIT do sync_batch para envio individual idempotente dedicado
+        val (checkoutOps, batchOps) = readyOps.partition { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
+
+        // Processar operações de checkout atômico individualmente
+        for (op in checkoutOps) {
+            val success = executeSingleOperation(op, token)
+            if (success) {
+                outboxDao.markAsSynced(op.id)
+                syncMetricsTracker.recordSyncFlush(
+                    groupOrSaleId = op.targetGroupKey,
+                    createdAt = op.createdAt
                 )
+                Log.d(TAG, "Operação de checkout K=${op.idempotencyKey} sincronizada com sucesso.")
+            } else {
+                val nextAttempt = op.attemptCount + 1
+                val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                outboxDao.update(op.copy(
+                    attemptCount = nextAttempt,
+                    lastAttemptAt = System.currentTimeMillis(),
+                    nextRetryAt = nextRetry,
+                    status = "PENDING"
+                ))
+                Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} falhou no envio (tentativa $nextAttempt). Reagendando em ${backoffSec}s.")
             }
-            val response = apiService.syncBatch("Bearer $token", SyncBatchRequest(items))
-            if (response.isSuccessful && response.body() != null) {
-                val results = response.body()!!.results
-                for (res in results) {
-                    val op = readyOps.find { it.id == res.operationId } ?: continue
-                    if (res.success) {
-                        outboxDao.markAsSyncedWithSeq(op.id, res.serverSeq)
+        }
+
+        if (batchOps.isNotEmpty()) {
+            val batchSynced = try {
+                val items = batchOps.map { op ->
+                    SyncOperationItem(
+                        id = op.id,
+                        operationType = op.operationType,
+                        targetGroupKey = op.targetGroupKey,
+                        idempotencyKey = op.idempotencyKey,
+                        clientCreatedAt = op.createdAt,
+                        payloadJson = op.payloadJson
+                    )
+                }
+                val response = apiService.syncBatch("Bearer $token", SyncBatchRequest(items))
+                if (response.isSuccessful && response.body() != null) {
+                    val results = response.body()!!.results
+                    for (res in results) {
+                        val op = batchOps.find { it.id == res.operationId } ?: continue
+                        if (res.success) {
+                            outboxDao.markAsSyncedWithSeq(op.id, res.serverSeq)
+                            syncMetricsTracker.recordSyncFlush(
+                                groupOrSaleId = op.targetGroupKey,
+                                createdAt = op.createdAt
+                            )
+                            Log.d(TAG, "Operação ${op.id} sincronizada em lote com sucesso (serverSeq=${res.serverSeq}).")
+                        } else {
+                            if (res.retriable) {
+                                val nextAttempt = op.attemptCount + 1
+                                val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                                val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                                outboxDao.update(op.copy(
+                                    attemptCount = nextAttempt,
+                                    lastAttemptAt = System.currentTimeMillis(),
+                                    nextRetryAt = nextRetry,
+                                    lastError = res.errorCode,
+                                    messageKey = res.messageKey,
+                                    status = "PENDING"
+                                ))
+                            } else {
+                                outboxDao.markAsFailedWithKey(
+                                    id = op.id,
+                                    error = res.errorCode ?: "UNRECOVERABLE_ERROR",
+                                    messageKey = res.messageKey,
+                                    isRetriable = false
+                                )
+                            }
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "sync_batch falhou (${e.message}). Executando fallback individual.")
+                false
+            }
+
+            if (!batchSynced) {
+                for (op in batchOps) {
+                    val success = executeSingleOperation(op, token)
+                    if (success) {
+                        outboxDao.markAsSynced(op.id)
                         syncMetricsTracker.recordSyncFlush(
                             groupOrSaleId = op.targetGroupKey,
                             createdAt = op.createdAt
                         )
-                        Log.d(TAG, "Operação ${op.id} sincronizada em lote com sucesso (serverSeq=${res.serverSeq}).")
                     } else {
-                        if (res.retriable) {
-                            val nextAttempt = op.attemptCount + 1
-                            val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
-                            val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
-                            outboxDao.update(op.copy(
-                                attemptCount = nextAttempt,
-                                lastAttemptAt = System.currentTimeMillis(),
-                                nextRetryAt = nextRetry,
-                                lastError = res.errorCode,
-                                messageKey = res.messageKey,
-                                status = "PENDING"
-                            ))
-                            Log.w(TAG, "Operação ${op.id} recusada retentável (${res.errorCode}). Próxima tentativa em ${backoffSec}s.")
-                        } else {
-                            outboxDao.markAsFailedWithKey(
-                                id = op.id,
-                                error = res.errorCode ?: "UNRECOVERABLE_ERROR",
-                                messageKey = res.messageKey,
-                                isRetriable = false
-                            )
-                            Log.e(TAG, "Operação ${op.id} falhou com erro não-retentável (${res.errorCode}).")
-                        }
+                        val nextAttempt = op.attemptCount + 1
+                        val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                        val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                        outboxDao.update(op.copy(
+                            attemptCount = nextAttempt,
+                            lastAttemptAt = System.currentTimeMillis(),
+                            nextRetryAt = nextRetry,
+                            status = "PENDING"
+                        ))
+                        break
                     }
-                }
-                true
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "sync_batch não disponível ou falhou (${e.message}). Executando fallback individual.")
-            false
-        }
-
-        if (!batchSynced) {
-            // Fallback para envio individual operando em FIFO estrito
-            for (op in readyOps) {
-                val success = executeSingleOperation(op, token)
-                if (success) {
-                    outboxDao.markAsSynced(op.id)
-                    syncMetricsTracker.recordSyncFlush(
-                        groupOrSaleId = op.targetGroupKey,
-                        createdAt = op.createdAt
-                    )
-                    Log.d(TAG, "Operação ${op.id} sincronizada individualmente com sucesso.")
-                } else {
-                    val nextAttempt = op.attemptCount + 1
-                    val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
-                    val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
-
-                    val updatedOp = op.copy(
-                        attemptCount = nextAttempt,
-                        lastAttemptAt = System.currentTimeMillis(),
-                        nextRetryAt = nextRetry,
-                        status = "PENDING"
-                    )
-                    outboxDao.update(updatedOp)
-                    Log.w(TAG, "Operação ${op.id} falhou no envio individual (tentativa $nextAttempt). Próxima tentativa em ${backoffSec}s.")
-                    break
                 }
             }
         }
