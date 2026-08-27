@@ -262,8 +262,13 @@ class OutboxSyncManager @Inject constructor(
             when (op.operationType) {
                 "COMMAND_ACTION" -> {
                     val request = gson.fromJson(op.payloadJson, CommandActionRequest::class.java)
-                    val response = apiService.manageComanda("Bearer $token", request)
+                    val response = apiService.manageComanda("Bearer $token", request, op.idempotencyKey)
                     response.isSuccessful
+                }
+                "COMANDA_CHECKOUT_COMMIT" -> {
+                    val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
+                    val response = apiService.commitComandaCheckout("Bearer $token", op.idempotencyKey, request)
+                    response.isSuccessful && response.body()?.success == true
                 }
                 "SALE_DIRECT" -> {
                     val request = gson.fromJson(op.payloadJson, SaleRequest::class.java)

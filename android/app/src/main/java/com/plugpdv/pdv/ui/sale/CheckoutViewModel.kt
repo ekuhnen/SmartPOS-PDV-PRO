@@ -315,42 +315,35 @@ class CheckoutViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                Log.d("CheckoutViewModel", "Iniciando finalização de pagamento MESA: ${method.apiValue} - Valor: $amountToPay")
+                Log.d("CheckoutViewModel", "Iniciando finalização de pagamento atômica MESA: ${method.apiValue} - Valor: $amountToPay")
                 
-                // 1. Registrar a venda fiscal se necessário
-                if (shouldRegisterSale) {
-                    val idempotencyKey = java.util.UUID.randomUUID().toString()
-                    retryIO { apiService.registerSale("Bearer $currentToken", idempotencyKey, saleRequest) }
-                    Log.d("CheckoutViewModel", "Venda fiscal registrada com sucesso.")
-                }
-                
-                // 2. Registrar o pagamento na comanda (convertendo para a moeda da transação)
-                val amountInSelectedCurrency = cm.fromBrl(baseAmountToPay, currentCurrency)
-                val finalAmountForAction = if (currentCurrency.equals("PYG", ignoreCase = true) || currentCurrency.equals("ARS", ignoreCase = true)) {
-                    Math.ceil(amountInSelectedCurrency)
-                } else {
-                    amountInSelectedCurrency
-                }
+                val checkoutOperationId = java.util.UUID.randomUUID().toString()
 
-                val paymentAction = CommandActionRequest().apply {
-                    action = "add_pagamento"
-                    comandaId = currentTable.comandaId
-                    mesaId = currentTable.id
-                    paymentForm = method.apiValue
-                    currency = currentCurrency
-                    amount = finalAmountForAction
-                }
-                val response = retryIO { apiService.manageComanda("Bearer $currentToken", paymentAction) }
+                val commitRequest = CommandCheckoutCommitRequest(
+                    comandaId = currentTable.comandaId ?: "",
+                    mesaId = currentTable.id,
+                    forma = method.apiValue,
+                    valor = amountToPay,
+                    moeda = currentCurrency,
+                    shouldRegisterSale = shouldRegisterSale,
+                    saleItems = saleItems,
+                    discount = 0.0,
+                    serviceFee = sfAmount2,
+                    serviceFeeKind = sfKind2
+                )
+
+                val response = retryIO { apiService.commitComandaCheckout("Bearer $currentToken", checkoutOperationId, commitRequest) }
                 if (!response.isSuccessful) {
                     val errorBody = response.errorBody()?.string() ?: ""
-                    throw Exception("Erro ao registrar pagamento: ${response.code()} $errorBody")
+                    throw Exception("Erro ao executar checkout atômico: ${response.code()} $errorBody")
                 }
-                Log.d("CheckoutViewModel", "Pagamento na comanda registrado com sucesso.")
 
-                // 3. Atualizar estado local e buscar o estado mais recente de pagamentos no servidor
-                processLocalPayment(currentToken)
+                val commitRes = response.body()
+                Log.d("CheckoutViewModel", "Checkout atômico concluído no backend. Closed: ${commitRes?.closed}")
+
+                processLocalPaymentResult(commitRes)
                 fetchComandaPayments()
-                
+
                 _uiState.value = _uiState.value.copy(
                     isLoading = false, 
                     paymentSuccess = true,
@@ -360,21 +353,19 @@ class CheckoutViewModel @Inject constructor(
                 )
             } catch (e: retrofit2.HttpException) {
                 val errorBody = e.response()?.errorBody()?.string() ?: e.message()
-                Log.e("CheckoutViewModel", "FALHA NO PAGAMENTO MESA (HTTP ${e.code()}): $errorBody")
-                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar venda: HTTP ${e.code()} $errorBody")
+                Log.e("CheckoutViewModel", "FALHA NO CHECKOUT ATÔMICO (HTTP ${e.code()}): $errorBody")
+                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: HTTP ${e.code()} $errorBody")
             } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "FALHA NO PAGAMENTO MESA: ${e.message}")
+                Log.e("CheckoutViewModel", "FALHA NO CHECKOUT ATÔMICO: ${e.message}")
                 e.printStackTrace()
-                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar venda: ${e.message}")
+                _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: ${e.message}")
             }
         }
     }
 
-    private suspend fun processLocalPayment(currentToken: String) {
+    private fun processLocalPaymentResult(commitRes: ComandaCheckoutCommitResponse?) {
         val currentTable = table ?: return
         val state = _uiState.value
-        val savedComandaId = currentTable.comandaId
-        val savedTableId = currentTable.id
 
         when (state.splitMode) {
             0 -> {
@@ -396,24 +387,9 @@ class CheckoutViewModel @Inject constructor(
             }
         }
 
-        val isFullyPaid = currentTable.getPendingBalance() <= 0.01
+        val isFullyPaidOnServer = commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)
 
-        if (isFullyPaid) {
-            if (!savedComandaId.isNullOrEmpty() && !savedTableId.isNullOrEmpty()) {
-                val request = CommandActionRequest().apply {
-                    action = "fechar"
-                    comandaId = savedComandaId
-                    mesaId = savedTableId
-                }
-                val response = retryIO { apiService.manageComanda("Bearer $currentToken", request) }
-                if (!response.isSuccessful) {
-                    val errorBody = response.errorBody()?.string() ?: ""
-                    Log.e("CheckoutViewModel", "Erro ao fechar mesa no servidor: ${response.code()} $errorBody")
-                } else {
-                    Log.d("CheckoutViewModel", "Mesa fechada no servidor síncronamente.")
-                }
-            }
-
+        if (isFullyPaidOnServer) {
             currentTable.status = Table.Status.AVAILABLE
             currentTable.comandaId = null
             currentTable.customerName = ""

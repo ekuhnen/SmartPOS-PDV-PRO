@@ -51,8 +51,16 @@ interface PosApiService {
     @POST("api-comandas")
     suspend fun manageComanda(
         @Header("Authorization") token: String,
-        @Body request: CommandActionRequest
+        @Body request: CommandActionRequest,
+        @Header("Idempotency-Key") idempotencyKey: String? = null
     ): Response<Map<String, Any>>
+
+    @POST("api-comandas")
+    suspend fun commitComandaCheckout(
+        @Header("Authorization") token: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
+        @Body request: CommandCheckoutCommitRequest
+    ): Response<ComandaCheckoutCommitResponse>
 
     @GET("api-comandas")
     suspend fun getComandaDetail(
