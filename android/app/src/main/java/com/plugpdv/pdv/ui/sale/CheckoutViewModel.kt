@@ -275,16 +275,26 @@ class CheckoutViewModel @Inject constructor(
         )
     }
 
-    suspend fun prepareCheckoutOperation(method: PaymentMethod, manualAmount: Double? = null): String {
+    suspend fun prepareCheckoutOperation(
+        method: PaymentMethod,
+        manualAmount: Double? = null,
+        manualCurrency: String? = null,
+        manualBaseAmount: Double? = null
+    ): String {
         val request = buildCommitRequest(method, manualAmount)
+        val finalRequest = if (manualAmount != null && manualCurrency != null && manualBaseAmount != null) {
+            request.copy(valor = manualAmount, moeda = manualCurrency, valorBase = manualBaseAmount)
+        } else {
+            request
+        }
         val key = java.util.UUID.randomUUID().toString()
         val gson = com.google.gson.Gson()
 
         val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
             id = key,
             operationType = "COMANDA_CHECKOUT_COMMIT",
-            targetGroupKey = request.comandaId,
-            payloadJson = gson.toJson(request),
+            targetGroupKey = finalRequest.comandaId,
+            payloadJson = gson.toJson(finalRequest),
             createdAt = System.currentTimeMillis(),
             idempotencyKey = key,
             status = "WAITING_PAYMENT"
@@ -292,6 +302,14 @@ class CheckoutViewModel @Inject constructor(
 
         outboxDao.insert(entity)
         Log.d("CheckoutViewModel", "Operação de checkout K=$key persistida como WAITING_PAYMENT antes do deeplink")
+
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
+            _uiState.value = _uiState.value.copy(
+                isPendingSync = true,
+                isPayButtonBlocked = true,
+                blockReason = "Pagamento aprovado aguardando sincronização com o servidor"
+            )
+        }
         return key
     }
 
@@ -325,7 +343,10 @@ class CheckoutViewModel @Inject constructor(
                         fetchComandaPayments()
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            paymentSuccess = true,
+                            paymentSuccess = false,
+                            isPendingSync = true,
+                            isPayButtonBlocked = true,
+                            blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                             lastPaymentMethod = method.apiValue,
                             lastPaymentAmount = amountToPay
                         )
@@ -344,7 +365,12 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
-    fun finalizePayment(method: PaymentMethod, manualAmount: Double? = null) {
+    fun finalizePayment(
+        method: PaymentMethod,
+        manualAmount: Double? = null,
+        manualCurrency: String? = null,
+        manualBaseAmount: Double? = null
+    ) {
         val gson = com.google.gson.Gson()
         val amountToPay = manualAmount ?: _uiState.value.finalToPay
 
@@ -353,13 +379,18 @@ class CheckoutViewModel @Inject constructor(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val request = buildCommitRequest(method, manualAmount)
+                val finalRequest = if (manualAmount != null && manualCurrency != null && manualBaseAmount != null) {
+                    request.copy(valor = manualAmount, moeda = manualCurrency, valorBase = manualBaseAmount)
+                } else {
+                    request
+                }
                 val key = java.util.UUID.randomUUID().toString()
 
                 val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
                     id = key,
                     operationType = "COMANDA_CHECKOUT_COMMIT",
-                    targetGroupKey = request.comandaId,
-                    payloadJson = gson.toJson(request),
+                    targetGroupKey = finalRequest.comandaId,
+                    payloadJson = gson.toJson(finalRequest),
                     createdAt = System.currentTimeMillis(),
                     idempotencyKey = key,
                     status = "PENDING"
@@ -375,7 +406,10 @@ class CheckoutViewModel @Inject constructor(
                     fetchComandaPayments()
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        paymentSuccess = true,
+                        paymentSuccess = false,
+                        isPendingSync = true,
+                        isPayButtonBlocked = true,
+                        blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
                         lastPaymentAmount = amountToPay
                     )

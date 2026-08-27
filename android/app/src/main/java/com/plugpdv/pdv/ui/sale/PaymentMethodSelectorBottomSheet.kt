@@ -14,7 +14,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
     private val binding get() = _binding!!
 
     private var totalAmount: Double = 0.0
-    private var onMethodSelected: ((PaymentType, Double) -> Unit)? = null
+    private var onMethodSelected: ((PaymentType, Double, String, Double) -> Unit)? = null
 
     enum class PaymentType {
         CASH, PLUG_PAY
@@ -39,7 +39,6 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         // Ajusta o prefixo para a moeda selecionada (ex: "Gs. ", "R$ ")
         binding.tilAmount.prefixText = "${cm.selectedCurrency} "
         
-        // Se a moeda não tiver casas decimais (ex: PYG, ARS), devemos arredondar para cima (teto)
         val isNoDecimals = cm.selectedCurrency.equals("PYG", ignoreCase = true) || cm.selectedCurrency.equals("ARS", ignoreCase = true)
         val formattedLocal = if (isNoDecimals) {
             String.format("%.0f", Math.ceil(localTotal))
@@ -48,6 +47,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         } else {
             String.format("%.2f", localTotal).replace(",", ".")
         }
+
         binding.etAmount.setText(formattedLocal)
 
         val isOffline = isNetworkOffline(requireContext())
@@ -57,22 +57,21 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
             val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
             val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
             val amountBrl = cm.convertToBrl(localAmount)
-            onMethodSelected?.invoke(PaymentType.CASH, amountBrl)
+            onMethodSelected?.invoke(PaymentType.CASH, localAmount, cm.selectedCurrency, amountBrl)
             dismiss()
         }
 
         // Configuração de Pagamento Cartão/PlugPay (Verifica se offline)
-        val plugPayAllowedOffline = true // Conforme PaymentMethodCapability default
+        val plugPayAllowedOffline = true
         if (isOffline && !plugPayAllowedOffline) {
             binding.cardPlugPay.isEnabled = false
             binding.cardPlugPay.alpha = 0.5f
-            // Botão desabilitado no toque com motivo visível (Invariante 8)
         } else {
             binding.cardPlugPay.setOnClickListener {
                 val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
                 val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
                 val amountBrl = cm.convertToBrl(localAmount)
-                onMethodSelected?.invoke(PaymentType.PLUG_PAY, amountBrl)
+                onMethodSelected?.invoke(PaymentType.PLUG_PAY, localAmount, cm.selectedCurrency, amountBrl)
                 dismiss()
             }
         }
@@ -96,7 +95,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
     companion object {
         private const val ARG_TOTAL = "arg_total"
 
-        fun newInstance(total: Double, onSelected: (PaymentType, Double) -> Unit): PaymentMethodSelectorBottomSheet {
+        fun newInstance(total: Double, onSelected: (PaymentType, Double, String, Double) -> Unit): PaymentMethodSelectorBottomSheet {
             return PaymentMethodSelectorBottomSheet().apply {
                 arguments = Bundle().apply {
                     putDouble(ARG_TOTAL, total)

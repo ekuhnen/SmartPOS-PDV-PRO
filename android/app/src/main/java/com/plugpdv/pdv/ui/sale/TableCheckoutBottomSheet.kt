@@ -170,8 +170,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.tvTotalPaid.text = cm.format(totalPaid)
         b.tvPendingBalance.text = cm.format(pendingBalance)
         b.tvTotalToPay.text = cm.format(state.finalToPay)
-        b.loadingLayout.loadingOverlay.visibility = if (state.isLoading) View.VISIBLE else View.GONE
-        b.btnPayLink.isEnabled = !state.isLoading
+        b.btnPayLink.isEnabled = !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
+        if (state.requiresReconciliation) {
+            b.btnPayLink.text = "Pagamento aprovado requer conciliação"
+        } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
+            b.btnPayLink.text = state.blockReason
+        }
 
         populatePaymentsHistory(state.paymentsHistory)
 
@@ -347,30 +351,29 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             return
         }
 
-        PaymentMethodSelectorBottomSheet.newInstance(state.finalToPay) { method, amount ->
-            Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, Valor Pago: $amount")
+        PaymentMethodSelectorBottomSheet.newInstance(state.finalToPay) { method, txAmount, txCurrency, baseAmount ->
+            Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, TxAmount: $txAmount $txCurrency, BaseAmount: $baseAmount")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
-                    viewModel.finalizePayment(PaymentMethod.CASH, amount)
+                    viewModel.finalizePayment(PaymentMethod.CASH, txAmount, txCurrency, baseAmount)
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
                     lifecycleScope.launch {
-                        val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, amount)
+                        val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
                         pendingCheckoutOperationId = operationKey
 
                         val cm = CurrencyManager.getInstance()
-                        val convertedAmount = cm.convert(amount)
                         val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                         val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
                         val activeTaxes = viewModel.uiState.value.activeTaxes
-                        val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(amount, cm.selectedCurrency, activeTaxes, cm)
+                        val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
 
                         val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
                             putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, operationKey)
                             putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, operationKey)
-                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, convertedAmount.toString())
-                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, amount.toString())
+                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
+                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
                             putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                             putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
                             putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)

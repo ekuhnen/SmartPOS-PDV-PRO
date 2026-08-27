@@ -241,27 +241,24 @@ class CheckoutActivity : BaseActivity() {
 
         val total = viewModel.finalTotal.value ?: 0.0
         
-        PaymentMethodSelectorBottomSheet.newInstance(total) { method, amount ->
-            Log.d("CheckoutActivity", "Método selecionado: $method, Valor: $amount")
+        PaymentMethodSelectorBottomSheet.newInstance(total) { method, txAmount, txCurrency, baseAmount ->
+            Log.d("CheckoutActivity", "Método selecionado: $method, TxAmount: $txAmount $txCurrency, BaseAmount: $baseAmount")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
                     // Finaliza direto em dinheiro com o valor selecionado
                     token?.let {
-                        viewModel.finishSale(it, "DINHEIRO", sessionId ?: "", operatorId, operatorName, amount)
+                        viewModel.finishSale(it, "DINHEIRO", sessionId ?: "", operatorId, operatorName, baseAmount)
                     } ?: Log.e("CheckoutActivity", "Impossível finalizar: Token is NULL")
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
-                    // Segue para o app de pagamento via deeplink
-                    // O resultado retorna via PaymentResultStore + onResume (não via ActivityResult)
-                    paymentProcessed = false // reset para aceitar novo resultado
+                    paymentProcessed = false
                     val cm = CurrencyManager.getInstance()
-                    val convertedAmount = cm.convert(amount)
                     val activeTaxes = viewModel.activeTaxes.value ?: emptyList()
-                    val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(amount, cm.selectedCurrency, activeTaxes, cm)
+                    val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
                     
                     val intent = Intent(this, PaymentHandlerActivity::class.java).apply {
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, convertedAmount.toString())
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, amount.toString())
+                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
+                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
                         putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                         putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, "direct_${System.currentTimeMillis()}")
                         putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")

@@ -341,8 +341,33 @@ class OutboxSyncManager @Inject constructor(
                         }
                         true
                     } else if (statusCode == 409) {
-                        Log.w(TAG, "Operação K=${op.idempotencyKey} em progresso no servidor (HTTP 409). Reagendando backoff.")
-                        false
+                        val errorBodyStr = response.errorBody()?.string() ?: ""
+                        val errorCode = try {
+                            val jsonObj = gson.fromJson(errorBodyStr, com.google.gson.JsonObject::class.java)
+                            jsonObj?.get("code")?.asString ?: jsonObj?.get("error")?.asString ?: ""
+                        } catch (e: Exception) { "" }
+
+                        when (errorCode) {
+                            "OPERATION_IN_PROGRESS" -> {
+                                Log.w(TAG, "Operação K=${op.idempotencyKey} em progresso no servidor (OPERATION_IN_PROGRESS). Reagendando backoff.")
+                                false
+                            }
+                            "IDEMPOTENCY_KEY_REUSED", "IDEMPOTENCY_SCOPE_MISMATCH" -> {
+                                Log.e(TAG, "Operação K=${op.idempotencyKey} conflito de chave ($errorCode). Marcando NEEDS_RECONCILIATION sem retry.")
+                                outboxDao.markAsFailedWithKey(op.id, errorCode, "REQUIRES_RECONCILIATION", false)
+                                true
+                            }
+                            "INSUFFICIENT_STOCK", "COMANDA_ALREADY_CLOSED" -> {
+                                Log.e(TAG, "Operação K=${op.idempotencyKey} falhou por regra de negócio ($errorCode). Cancelando retries.")
+                                outboxDao.markAsFailedWithKey(op.id, errorCode, "BUSINESS_RULE_ERROR", false)
+                                true
+                            }
+                            else -> {
+                                Log.e(TAG, "Operação K=${op.idempotencyKey} HTTP 409 não classificado ($errorCode). Cancelando retries.")
+                                outboxDao.markAsFailedWithKey(op.id, if (errorCode.isNotEmpty()) errorCode else "HTTP_409", "UNRECOVERABLE_ERROR", false)
+                                true
+                            }
+                        }
                     } else if (statusCode == 400 || statusCode == 422) {
                         Log.e(TAG, "Operação K=${op.idempotencyKey} falhou com erro permanente (HTTP $statusCode). Cancelando retries.")
                         outboxDao.markAsFailedWithKey(op.id, "HTTP_$statusCode", "UNRECOVERABLE_ERROR", false)
