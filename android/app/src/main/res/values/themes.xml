@@ -8,6 +8,7 @@
         <item name="android:windowBackground">@color/bg_light</item>
         <item name="android:statusBarColor">@color/bg_light</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:fitsSystemWindows">true</item>
         
         <!-- Component Styles -->
         <item name="materialCardViewStyle">@style/Widget.SmartPos.Card</item>

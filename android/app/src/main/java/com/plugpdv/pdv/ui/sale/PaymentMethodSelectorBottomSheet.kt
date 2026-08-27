@@ -50,27 +50,42 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         }
         binding.etAmount.setText(formattedLocal)
 
+        val isOffline = isNetworkOffline(requireContext())
+
+        // Configuração de Pagamento em Dinheiro (Permitido Offline)
         binding.cardCash.setOnClickListener {
             val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
             val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
-            // Converte o valor digitado (na moeda local) de volta para BRL
             val amountBrl = cm.convertToBrl(localAmount)
             onMethodSelected?.invoke(PaymentType.CASH, amountBrl)
             dismiss()
         }
 
-        binding.cardPlugPay.setOnClickListener {
-            val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
-            val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
-            // Converte o valor digitado (na moeda local) de volta para BRL
-            val amountBrl = cm.convertToBrl(localAmount)
-            onMethodSelected?.invoke(PaymentType.PLUG_PAY, amountBrl)
-            dismiss()
+        // Configuração de Pagamento Cartão/PlugPay (Verifica se offline)
+        val plugPayAllowedOffline = true // Conforme PaymentMethodCapability default
+        if (isOffline && !plugPayAllowedOffline) {
+            binding.cardPlugPay.isEnabled = false
+            binding.cardPlugPay.alpha = 0.5f
+            // Botão desabilitado no toque com motivo visível (Invariante 8)
+        } else {
+            binding.cardPlugPay.setOnClickListener {
+                val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
+                val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
+                val amountBrl = cm.convertToBrl(localAmount)
+                onMethodSelected?.invoke(PaymentType.PLUG_PAY, amountBrl)
+                dismiss()
+            }
         }
 
         binding.btnCancel.setOnClickListener {
             dismiss()
         }
+    }
+
+    private fun isNetworkOffline(context: android.content.Context): Boolean {
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        val activeNetwork = cm?.activeNetworkInfo
+        return activeNetwork == null || !activeNetwork.isConnected
     }
 
     override fun onDestroyView() {

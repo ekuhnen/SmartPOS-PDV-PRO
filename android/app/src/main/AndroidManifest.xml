@@ -96,7 +96,7 @@
         <activity
             android:name=".ui.sale.PaymentHandlerActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.SmartPosPdvPro.Transparent"> <!-- transparent theme -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -121,6 +121,17 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/black" /> <!-- Você pode ajustar para a cor tema do app no futuro -->
+
+        <!-- Desabilita o WorkManagerInitializer padrão para permitir o HiltWorkerFactory -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

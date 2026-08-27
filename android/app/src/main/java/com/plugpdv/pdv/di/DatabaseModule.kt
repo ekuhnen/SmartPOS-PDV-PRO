@@ -4,6 +4,8 @@ import android.content.Context
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.CatalogDao
 import com.plugpdv.pdv.database.LocalSaleDao
+import com.plugpdv.pdv.database.OutboxDao
+import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.TaxDao
 import dagger.Module
 import dagger.Provides
@@ -35,5 +37,20 @@ object DatabaseModule {
     @Provides
     fun provideLocalSaleDao(database: AppDatabase): LocalSaleDao {
         return database.localSaleDao()
+    }
+
+    @Provides
+    fun provideOutboxDao(database: AppDatabase): OutboxDao {
+        return database.outboxDao()
+    }
+
+    @Provides
+    fun providePaymentAttemptDao(database: AppDatabase): PaymentAttemptDao {
+        return database.paymentAttemptDao()
+    }
+
+    @Provides
+    fun provideTableDao(database: AppDatabase): com.plugpdv.pdv.database.TableDao {
+        return database.tableDao()
     }
 }

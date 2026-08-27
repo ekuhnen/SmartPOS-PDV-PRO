@@ -19,7 +19,10 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(@dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context): okhttp3.OkHttpClient {
         return okhttp3.OkHttpClient.Builder()
-            .addInterceptor(com.plugpdv.pdv.api.DeviceIdInterceptor(context))
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .addInterceptor(com.plugpdv.pdv.api.AppHeadersInterceptor(context))
             .addInterceptor(com.plugpdv.pdv.api.BlockResponseInterceptor())
             .build()
     }

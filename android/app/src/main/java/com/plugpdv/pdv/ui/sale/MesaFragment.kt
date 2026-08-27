@@ -5,9 +5,12 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.getSystemService
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.recyclerview.widget.GridLayoutManager
@@ -26,6 +29,7 @@ class MesaFragment : Fragment() {
     private var adapter: TableAdapter? = null
     private var sectorAdapter: SectorAdapter? = null
     private var token: String? = null
+    private var pendingTable: Table? = null // Mesa que o usuário está tentando abrir
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentMesaBinding.inflate(inflater, container, false)
@@ -81,15 +85,62 @@ class MesaFragment : Fragment() {
         viewModel.error.observe(viewLifecycleOwner) { error ->
             error?.let { Toast.makeText(requireContext(), it, Toast.LENGTH_SHORT).show() }
         }
+
+        viewModel.openSuccess.observe(viewLifecycleOwner) { success ->
+            if (success) {
+                // Consome o evento imediatamente para evitar re-navegação
+                viewModel.consumeOpenSuccess()
+                pendingTable?.let { table ->
+                    // Atualiza o comandaId da mesa com o valor retornado pela API
+                    val comandaId = viewModel.openedComandaId.value
+                    if (!comandaId.isNullOrEmpty()) {
+                        table.comandaId = comandaId
+                        table.status = Table.Status.OCCUPIED
+                        // Garante que o TableManager tem o dado atualizado antes de navegar
+                        com.plugpdv.pdv.utils.TableManager.updateTable(table)
+                    }
+                    openTableOrder(table)
+                }
+                pendingTable = null
+            }
+        }
+
+        viewModel.sessionExpired.observe(viewLifecycleOwner) { expired ->
+            if (expired == true) {
+                viewModel.consumeSessionExpired()
+                showSessionExpiredDialog()
+            }
+        }
+    }
+
+    private fun showSessionExpiredDialog() {
+        if (!isAdded || isStateSaved) return
+        val ctx = context ?: return
+        AlertDialog.Builder(ctx)
+            .setTitle("Sessão Encerrada")
+            .setMessage("Sua sessão expirou ou outro terminal realizou login com este mesmo usuário. Por favor, faça login novamente.")
+            .setCancelable(false)
+            .setPositiveButton("OK") { dialog, _ ->
+                dialog.dismiss()
+                com.plugpdv.pdv.utils.KillSwitchManager.forceLogout(
+                    ctx.applicationContext,
+                    "Sessão expirada ou iniciada em outro terminal."
+                )
+            }
+            .show()
     }
 
     private fun showOpenTableDialog(table: Table) {
+        pendingTable = table // Guarda a mesa exata que o usuário quer abrir
         val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_open_table, null)
         val etName = dialogView.findViewById<EditText>(R.id.etCustomerName)
         
         val dialog = AlertDialog.Builder(requireContext())
             .setView(dialogView)
             .create()
+
+        // Força o teclado a aparecer automaticamente quando o diálogo abrir
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
 
         dialogView.findViewById<View>(R.id.btnCancel).setOnClickListener { dialog.dismiss() }
         
@@ -104,6 +155,13 @@ class MesaFragment : Fragment() {
         }
 
         dialog.show()
+
+        // Solicita foco e abre teclado após o diálogo ser exibido
+        etName.requestFocus()
+        etName.postDelayed({
+            val imm = requireContext().getSystemService<InputMethodManager>()
+            imm?.showSoftInput(etName, InputMethodManager.SHOW_IMPLICIT)
+        }, 100)
     }
 
     private fun showTransferDialog(originTable: Table) {
@@ -133,7 +191,9 @@ class MesaFragment : Fragment() {
 
     private fun openTableOrder(table: Table) {
         val intent = Intent(requireActivity(), TableOrderActivity::class.java).apply {
+            putExtra("TABLE_ID", table.id)
             putExtra("TABLE_NUMBER", table.number)
+            putExtra("SECTOR_ID", table.sectorId)
             putExtra("ACCESS_TOKEN", token)
         }
         startActivity(intent)

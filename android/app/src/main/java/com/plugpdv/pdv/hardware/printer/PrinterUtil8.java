@@ -46,42 +46,44 @@ public class PrinterUtil8 {
 
                 pm.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER, 20, false));
 
+                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+
                 // 4) Detalhes da Transação
-                pm.addPrintLine(formatKozenLine("TRANSACAO:", data.getTransactionId()));
-                pm.addPrintLine(formatKozenLine("DATA:", data.getDate() + " " + data.getTime()));
+                pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_transaction_label), data.getTransactionId()));
+                pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_date_label), data.getDate() + " " + data.getTime()));
                 if (!data.getOperatorName().isEmpty()) {
-                    pm.addPrintLine(formatKozenLine("OPERADOR:", data.getOperatorName()));
+                    pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_operator_label), data.getOperatorName()));
                 }
 
                 pm.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER, 20, false));
 
                 // 5) Dados do Cliente
                 if (!data.getCustomerName().isEmpty()) {
-                    pm.addPrintLine(formatKozenLine("CLIENTE:", data.getCustomerName()));
+                    pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_customer_label), data.getCustomerName()));
                 }
                 if (!data.getCustomerDocument().isEmpty()) {
-                    pm.addPrintLine(formatKozenLine("DOC:", data.getCustomerDocument()));
+                    pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_doc_label), data.getCustomerDocument()));
                 }
                 if (!data.getCustomerName().isEmpty() || !data.getCustomerDocument().isEmpty()) {
                     pm.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER, 20, false));
                 }
 
                 // 6) Forma e Total
-                pm.addPrintLine(formatKozenLine("FORMA:", data.getPaymentMethod()));
+                pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_payment_method_label), data.getPaymentMethod()));
                 
                 if (data.getServiceFeeAmount() != null && !data.getServiceFeeAmount().equals("0,00")) {
-                    pm.addPrintLine(formatKozenLine("TAXA DE SERVICO:", data.getCurrency() + " " + data.getServiceFeeAmount()));
+                    pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_service_fee_label), data.getCurrency() + " " + data.getServiceFeeAmount()));
                 }
                 
-                pm.addPrintLine(new TextPrintLine("TOTAL: " + data.getCurrency() + " " + data.getAmount(), PrintLine.RIGHT, 24, true));
+                pm.addPrintLine(new TextPrintLine(ctx.getString(R.string.print_total_label) + " " + data.getCurrency() + " " + data.getAmount(), PrintLine.RIGHT, 24, true));
 
                 pm.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER, 20, false));
 
                 // 7) Rodapé
                 if (!data.getSerialNumber().isEmpty()) {
-                    pm.addPrintLine(formatKozenLine("S/N:", data.getSerialNumber()));
+                    pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_sn_label), data.getSerialNumber()));
                 }
-                pm.addPrintLine(new TextPrintLine("OBRIGADO PELA PREFERENCIA", PrintLine.CENTER, 18, false));
+                pm.addPrintLine(new TextPrintLine(ctx.getString(R.string.print_thank_you), PrintLine.CENTER, 18, false));
 
                 // Avanco de papel
                 for (int i = 0; i < 4; i++) {

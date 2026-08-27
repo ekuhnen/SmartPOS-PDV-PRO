@@ -48,24 +48,26 @@ public class GeneralPrinterUtil {
                     printerManager.addPrintLine(new BitmapPrintLine(logo, PrintLine.CENTER));
                 }
 
+                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+
                 // 3) Corpo
                 printerManager.addPrintLine(new TextPrintLine(data.getMerchantName(), PrintLine.CENTER, 18, false));
                 printerManager.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER));
 
-                printerManager.addPrintLine(formatPOILine("TRANSACAO:", data.getTransactionId()));
-                printerManager.addPrintLine(formatPOILine("DATA:", data.getDate() + " " + data.getTime()));
+                printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_transaction_label), data.getTransactionId()));
+                printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_date_label), data.getDate() + " " + data.getTime()));
                 
                 if (!data.getCustomerName().isEmpty()) {
-                    printerManager.addPrintLine(formatPOILine("CLIENTE:", data.getCustomerName()));
+                    printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_customer_label), data.getCustomerName()));
                 }
 
                 printerManager.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER));
 
-                printerManager.addPrintLine(formatPOILine("FORMA:", data.getPaymentMethod()));
-                printerManager.addPrintLine(new TextPrintLine("TOTAL: " + data.getCurrency() + " " + data.getAmount(), PrintLine.RIGHT, 20, true));
+                printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_payment_method_label), data.getPaymentMethod()));
+                printerManager.addPrintLine(new TextPrintLine(ctx.getString(R.string.print_total_label) + " " + data.getCurrency() + " " + data.getAmount(), PrintLine.RIGHT, 20, true));
 
                 printerManager.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER));
-                printerManager.addPrintLine(new TextPrintLine("OBRIGADO PELA PREFERENCIA", PrintLine.CENTER, 16, false));
+                printerManager.addPrintLine(new TextPrintLine(ctx.getString(R.string.print_thank_you), PrintLine.CENTER, 16, false));
                 
                 printerManager.addPrintLine(new TextPrintLine(" ", 0, 80)); // Feed
 
@@ -93,6 +95,8 @@ public class GeneralPrinterUtil {
 
         new Thread(() -> {
             try {
+                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+
                 ICallback.Stub callback = new ICallback.Stub() {
                     @Override public void onRunResult(boolean isSuccess) {}
                     @Override public void onReturnString(String result) {}
@@ -118,14 +122,14 @@ public class GeneralPrinterUtil {
 
                 // 4) Body
                 service.setAlignment(0, callback); // Left
-                service.printTextWithFont(formatAidlLine("TRANS:", data.getTransactionId()), null, 20, callback);
-                service.printTextWithFont(formatAidlLine("DATA:", data.getDate()), null, 20, callback);
+                service.printTextWithFont(formatAidlLine(ctx.getString(R.string.print_transaction_label), data.getTransactionId()), null, 20, callback);
+                service.printTextWithFont(formatAidlLine(ctx.getString(R.string.print_date_label), data.getDate()), null, 20, callback);
                 
                 service.printTextWithFont("--------------------------------\n", null, 20, callback);
-                service.printTextWithFont(formatAidlLine("TOTAL:", data.getCurrency() + " " + data.getAmount()), null, 24, callback);
+                service.printTextWithFont(formatAidlLine(ctx.getString(R.string.print_total_label), data.getCurrency() + " " + data.getAmount()), null, 24, callback);
                 
                 service.setAlignment(1, callback);
-                service.printTextWithFont("\nOBRIGADO PELA PREFERENCIA\n", null, 18, callback);
+                service.printTextWithFont("\n" + ctx.getString(R.string.print_thank_you) + "\n", null, 18, callback);
 
                 service.lineWrap(4, callback);
                 service.sendRAWData(ESCUtil.cutPaper(), callback);

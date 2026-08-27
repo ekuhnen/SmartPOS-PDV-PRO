@@ -4,6 +4,7 @@ const BASE_URL = 'https://ypvcxgkzolzxggfrmzlz.supabase.co/functions/v1';
 
 const api = axios.create({
   baseURL: BASE_URL,
+  timeout: 60000,
 });
 
 api.interceptors.request.use((config) => {
@@ -52,6 +53,10 @@ export const salesService = {
   getHistory: async (date?: string) => {
     const params = date ? { date } : {};
     const response = await api.get('/api-vendas', { params });
+    return response.data;
+  },
+  getSaleById: async (saleId: string) => {
+    const response = await api.get('/api-vendas', { params: { id: saleId } });
     return response.data;
   },
 };

@@ -19,7 +19,7 @@
     <string name="all_categories">All</string>
     
     <string name="cashier_ops">Cashier Operations</string>
-    <string name="amount_label">Amount ($)</string>
+    <string name="amount_label">Amount</string>
     <string name="open_cashier">OPEN CASHIER</string>
     <string name="sangria">WITHDRAWAL (SANGRIA)</string>
     <string name="close_cashier">CLOSE CASHIER</string>
@@ -61,4 +61,60 @@
     <string name="dashboard_btn">OPERATIONS DASHBOARD</string>
     <string name="subtotal">Subtotal</string>
     <string name="tax">Tax</string>
+
+    <string name="payments_made">Payments Made</string>
+    <string name="comanda_total">Order Total</string>
+    <string name="total_paid">Paid</string>
+    <string name="remaining_balance">Remaining Balance</string>
+    <string name="total_to_pay_now">Total to Pay Now</string>
+    <string name="partial_payment_approved">Partial payment approved!</string>
+
+    <!-- Print Strings (English) -->
+    <string name="print_thank_you">THANK YOU FOR YOUR PREFERENCE</string>
+    <string name="print_pickup_ticket">PICKUP TICKET</string>
+    <string name="print_date_label">DATE:</string>
+    <string name="print_operator_label">OPERATOR:</string>
+    <string name="print_qty_label">QTY:</string>
+    <string name="print_copy_via">Copy %1$d/%2$d</string>
+    <string name="print_unit_price_label">UNIT:</string>
+    <string name="print_subtotal_label">SUBTOTAL:</string>
+    <string name="print_total_purchase_label">TOTAL PURCHASE:</string>
+    <string name="print_payment_method_label">METHOD:</string>
+    <string name="print_present_at_counter">PRESENT AT COUNTER FOR PICKUP</string>
+    <string name="print_audit_report_title">POS AUDIT REPORT</string>
+    <string name="print_offline_mode_label">[OFFLINE MODE - LOCAL RECORD]</string>
+    <string name="print_period_label">Period:</string>
+    <string name="print_emission_label">Issued:</string>
+    <string name="print_open_balances_title">OPEN BALANCES (COLLECTION):</string>
+    <string name="print_no_pending_tables">No tables with pending balance.</string>
+    <string name="print_table_word">Table</string>
+    <string name="print_pending_balance_label">Pending Balance:</string>
+    <string name="print_total_pending_label">TOTAL PENDING:</string>
+    <string name="print_products_sold_title">PRODUCTS SOLD:</string>
+    <string name="print_no_products_sold">No products sold in this period.</string>
+    <string name="print_payment_summary_title">PAYMENT SUMMARY:</string>
+    <string name="print_currency_summary_title">CURRENCY SUMMARY:</string>
+    <string name="print_total_sales_label">TOTAL SALES:</string>
+    <string name="print_electronic_invoice_title">*** ELECTRONIC INVOICE ***</string>
+    <string name="print_simulated_doc">(SIMULATED DOCUMENT)</string>
+    <string name="print_number_label">NO.:</string>
+    <string name="print_issuer_label">ISSUER:</string>
+    <string name="print_total_label">TOTAL:</string>
+    <string name="print_issuance_in_process">** ISSUANCE IN PROCESS **</string>
+    <string name="print_invoice_email_notice">You will receive the document in your registered email.</string>
+    <string name="print_customer_label">CUSTOMER:</string>
+    <string name="print_table_label">TABLE:</string>
+    <string name="print_paid_amount_label">AMOUNT PAID:</string>
+    <string name="print_change_label">CHANGE:</string>
+    <string name="print_service_fee_label">SERVICE FEE:</string>
+    <string name="print_payment_receipt_title">PAYMENT RECEIPT</string>
+    <string name="print_split_people">DIVIDED BY %d PEOPLE</string>
+    <string name="print_value_per_person">AMOUNT PER PERSON:</string>
+    <string name="print_printing">Printing receipt...</string>
+    <string name="print_error">Printing error: %s</string>
+    <string name="print_not_detected">Printer not detected or unsupported.</string>
+    <string name="print_amount_label">AMOUNT:</string>
+    <string name="print_transaction_label">TRANSACTION:</string>
+    <string name="print_doc_label">DOC:</string>
+    <string name="print_sn_label">S/N:</string>
 </resources>

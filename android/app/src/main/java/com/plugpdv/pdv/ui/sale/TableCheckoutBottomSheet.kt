@@ -62,8 +62,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
+            val tableId = it.getString("TABLE_ID")
             val tableNumber = it.getInt("TABLE_NUMBER")
-            table = TableManager.getTableByNumber(tableNumber)
+            table = TableManager.getTable(tableId, tableNumber)
             token = it.getString("TOKEN")
         }
         
@@ -91,6 +92,20 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         super.onViewCreated(view, savedInstanceState)
         setupUI()
         observeViewModel()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkPendingPaymentResult()
+    }
+
+    private fun checkPendingPaymentResult() {
+        val result = com.plugpdv.pdv.utils.PaymentResultStore.consume() ?: return
+        if (result.status.equals("APPROVED", ignoreCase = true)) {
+            Log.d("TableCheckoutBottomSheet", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}")
+            val method = PaymentMethod.fromString(result.method)
+            viewModel.finalizePayment(method)
+        }
     }
 
     private fun setupUI() {
@@ -140,10 +155,18 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val b = binding ?: return
         val cm = CurrencyManager.getInstance()
 
-        b.tvPendingBalance.text = cm.format(table?.getPendingBalance() ?: 0.0)
+        val comandaTotal = table?.calculateTotal() ?: 0.0
+        val totalPaid = table?.paidAmount ?: 0.0
+        val pendingBalance = table?.getPendingBalance() ?: 0.0
+
+        b.tvComandaTotal.text = cm.format(comandaTotal)
+        b.tvTotalPaid.text = cm.format(totalPaid)
+        b.tvPendingBalance.text = cm.format(pendingBalance)
         b.tvTotalToPay.text = cm.format(state.finalToPay)
         b.loadingLayout.loadingOverlay.visibility = if (state.isLoading) View.VISIBLE else View.GONE
         b.btnPayLink.isEnabled = !state.isLoading
+
+        populatePaymentsHistory(state.paymentsHistory)
 
         if (state.paymentSuccess) {
             onUpdateNotify()
@@ -178,7 +201,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 }.show()
                 
             } else {
-                Toast.makeText(context, "Pagamento parcial aprovado!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, getString(R.string.partial_payment_approved), Toast.LENGTH_SHORT).show()
                 viewModel.acknowledgePaymentSuccess()
             }
         }
@@ -203,6 +226,34 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         lockModeIfPaymentStarted()
     }
 
+    private fun populatePaymentsHistory(payments: List<com.plugpdv.pdv.models.ComandaPaymentDto>) {
+        val b = binding ?: return
+        b.layoutPaymentsList.removeAllViews()
+        if (payments.isEmpty()) {
+            b.layoutPaymentsContainer.visibility = View.GONE
+            return
+        }
+
+        b.layoutPaymentsContainer.visibility = View.VISIBLE
+        val cm = CurrencyManager.getInstance()
+        payments.forEach { payment ->
+            val rowBinding = ItemTaxRowBinding.inflate(layoutInflater, b.layoutPaymentsList, true)
+            val formaLabel = when (payment.forma.uppercase()) {
+                "DINHEIRO", "CASH" -> getString(R.string.cash)
+                "PIX", "PIX_TRANSFERENCIA" -> getString(R.string.pix)
+                "CREDITO", "CREDIT" -> getString(R.string.credit)
+                "DEBITO", "DEBIT" -> getString(R.string.debit)
+                "CARTAO", "CARD" -> getString(R.string.credit)
+                else -> payment.forma
+            }
+            rowBinding.tvLabel.text = formaLabel
+            rowBinding.tvValue.text = cm.format(payment.valor)
+            context?.let { ctx ->
+                rowBinding.tvValue.setTextColor(ctx.getColor(R.color.success))
+            }
+        }
+    }
+
     private fun setupItemsAdapter() {
         val b = binding ?: return
         if (b.rvSelectItems.adapter == null) {
@@ -220,11 +271,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.layoutTaxBreakdown.removeAllViews()
         val cm = CurrencyManager.getInstance()
         
-        addBreakdownRow(getString(R.string.subtotal), cm.format(state.currentToPay))
+        val baseToPay = state.currentToPay.coerceAtLeast(0.0)
+        addBreakdownRow(getString(R.string.subtotal), cm.format(baseToPay))
         
         val currentCurrency = cm.selectedCurrency
         state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach { tax ->
-            val calculatedTax = state.currentToPay * (tax.percentage / 100.0)
+            val calculatedTax = baseToPay * (tax.percentage / 100.0)
             val label = "${tax.name} (${String.format("%.1f%%", tax.percentage)})"
             addBreakdownRow(label, cm.format(calculatedTax))
         }
@@ -309,6 +361,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                         putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                         putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
                         putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
+                        putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
                         putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
                         putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
                     }
@@ -320,14 +373,15 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private fun printTableReceipt() {
         val currentTable = table ?: return
+        val ctx = context?.let { com.plugpdv.pdv.utils.LanguageManager.updateResources(it, com.plugpdv.pdv.utils.LanguageManager.getLanguage(it)) } ?: return
         val state = viewModel.uiState.value
         val sb = StringBuilder()
         val cm = CurrencyManager.getInstance()
         val currentCurrency = cm.selectedCurrency
 
-        sb.append("MESA: ").append(currentTable.number).append("\n")
+        sb.append(ctx.getString(R.string.print_table_label)).append(" ").append(currentTable.number).append("\n")
         if (!currentTable.customerName.isNullOrEmpty()) {
-            sb.append("CLIENTE: ").append(currentTable.customerName).append("\n")
+            sb.append(ctx.getString(R.string.print_customer_label)).append(" ").append(currentTable.customerName).append("\n")
         }
         sb.append("--------------------------------\n")
 
@@ -353,7 +407,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         sb.append("--------------------------------\n")
-        sb.append(String.format("%-18s %13s\n", "SUBTOTAL:", cm.format(state.currentToPay)))
+        sb.append(String.format("%-18s %13s\n", ctx.getString(R.string.print_subtotal_label), cm.format(state.currentToPay)))
 
         state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach { tax ->
             val calculatedTax = state.currentToPay * (tax.percentage / 100.0)
@@ -362,11 +416,11 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         if (state.serviceFeeAmount > 0) {
-            sb.append(String.format("%-20s %11s\n", "TAXA DE SERVICO:", cm.format(state.serviceFeeAmount)))
+            sb.append(String.format("%-20s %11s\n", ctx.getString(R.string.print_service_fee_label), cm.format(state.serviceFeeAmount)))
         }
 
         sb.append("--------------------------------\n")
-        sb.append(String.format("%-15s %16s\n", "TOTAL:", cm.format(state.finalToPay)))
+        sb.append(String.format("%-15s %16s\n", ctx.getString(R.string.print_total_label), cm.format(state.finalToPay)))
 
         if (state.splitMode == 1) {
             val peopleStr = binding?.etPeopleCount?.text.toString()
@@ -374,33 +428,35 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             if (people > 1) {
                 val perPerson = state.finalToPay / people
                 sb.append("--------------------------------\n")
-                sb.append("DIVIDIDO POR $people PESSOAS\n")
-                sb.append(String.format("%-15s %16s\n", "VALOR POR PESSOA:", cm.format(perPerson)))
+                sb.append("${String.format(ctx.getString(R.string.print_split_people), people)}\n")
+                sb.append(String.format("%-15s %16s\n", ctx.getString(R.string.print_value_per_person), cm.format(perPerson)))
             }
         }
 
-        context?.let { PrinterHelper.printReceipt(it, sb.toString()) }
+        PrinterHelper.printReceipt(ctx, sb.toString())
     }
 
     private fun printPaymentReceipt(method: String, amountPaid: Double) {
         val currentTable = table ?: return
+        val ctx = context?.let { com.plugpdv.pdv.utils.LanguageManager.updateResources(it, com.plugpdv.pdv.utils.LanguageManager.getLanguage(it)) } ?: return
         val sb = java.lang.StringBuilder()
         val cm = CurrencyManager.getInstance()
-        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(ctx)
+        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
         
-        sb.append("COMPROVANTE DE PAGAMENTO\n")
+        sb.append(ctx.getString(R.string.print_payment_receipt_title)).append("\n")
         sb.append("--------------------------------\n")
-        sb.append("MESA: ").append(currentTable.number).append("\n")
-        sb.append("DATA: ").append(dateStr).append("\n")
-        sb.append("VALOR PAGO: ").append(cm.format(amountPaid)).append("\n")
-        sb.append("METODO: ").append(method).append("\n")
+        sb.append(ctx.getString(R.string.print_table_label)).append(" ").append(currentTable.number).append("\n")
+        sb.append(ctx.getString(R.string.print_date_label)).append(" ").append(dateStr).append("\n")
+        sb.append(ctx.getString(R.string.print_paid_amount_label)).append(" ").append(cm.format(amountPaid)).append("\n")
+        sb.append(ctx.getString(R.string.print_payment_method_label)).append(" ").append(method).append("\n")
         
-        val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val operatorName = prefs.getString(Constants.OPERATOR_NAME, "Operador")
-        sb.append("OPERADOR: ").append(operatorName).append("\n")
+        sb.append(ctx.getString(R.string.print_operator_label)).append(" ").append(operatorName).append("\n")
         sb.append("--------------------------------\n")
         
-        context?.let { PrinterHelper.printReceipt(it, sb.toString()) }
+        PrinterHelper.printReceipt(ctx, sb.toString())
     }
 
     private fun refreshUI() {
@@ -421,8 +477,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     companion object {
         @JvmStatic
         fun newInstance(tableNumber: Int, token: String): TableCheckoutBottomSheet {
+            return newInstance(null, tableNumber, token)
+        }
+
+        @JvmStatic
+        fun newInstance(tableId: String?, tableNumber: Int, token: String): TableCheckoutBottomSheet {
             return TableCheckoutBottomSheet().apply {
                 arguments = Bundle().apply {
+                    putString("TABLE_ID", tableId)
                     putInt("TABLE_NUMBER", tableNumber)
                     putString("TOKEN", token)
                 }

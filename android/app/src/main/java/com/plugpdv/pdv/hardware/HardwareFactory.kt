@@ -31,9 +31,7 @@ object HardwareFactory {
         Log.d(TAG, "Detecting printer for: $debugInfo")
 
         fun showDebugToast(msg: String) {
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
-            }
+            Log.d(TAG, "[Printer Detection Debug] $msg")
         }
 
         // Toast sempre visível com dados brutos do aparelho para diagnóstico

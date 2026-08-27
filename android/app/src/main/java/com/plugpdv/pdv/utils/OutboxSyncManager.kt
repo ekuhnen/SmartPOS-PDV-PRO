@@ -1,0 +1,283 @@
+package com.plugpdv.pdv.utils
+
+import android.content.Context
+import android.util.Log
+import com.google.gson.Gson
+import com.plugpdv.pdv.api.PosApiService
+import com.plugpdv.pdv.database.OutboxDao
+import com.plugpdv.pdv.database.OutboxOperationEntity
+import com.plugpdv.pdv.models.CommandActionRequest
+import com.plugpdv.pdv.models.SaleRequest
+import com.plugpdv.pdv.models.SyncBatchRequest
+import com.plugpdv.pdv.models.SyncOperationItem
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.min
+import kotlin.math.pow
+
+data class OutboxQueueStatus(
+    val pendingCount: Int = 0,
+    val oldestPendingAgeMs: Long = 0L,
+    val hasCriticalQueue: Boolean = false, // > 20 itens ou > 5 minutos de atraso
+    val alertMessage: String? = null
+)
+
+@Singleton
+class OutboxSyncManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val outboxDao: OutboxDao,
+    private val apiService: PosApiService,
+    private val syncMetricsTracker: SyncMetricsTracker
+) {
+    private val gson: Gson = Gson()
+
+    companion object {
+        private const val TAG = "OutboxSyncManager"
+        const val CRITICAL_QUEUE_COUNT_THRESHOLD = 20
+        const val CRITICAL_QUEUE_DELAY_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutos
+        const val MAX_BACKOFF_SECONDS = 60L
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val groupMutexes = ConcurrentHashMap<String, Mutex>()
+    private var syncJob: Job? = null
+
+    private val _queueStatus = MutableStateFlow(OutboxQueueStatus())
+    val queueStatus: StateFlow<OutboxQueueStatus> = _queueStatus.asStateFlow()
+
+    init {
+        startObservingQueue()
+        startPeriodicSync()
+    }
+
+    private fun startObservingQueue() {
+        scope.launch {
+            combine(
+                outboxDao.getPendingCountFlow(),
+                outboxDao.getOldestPendingTimestampFlow()
+            ) { count, oldestTimestamp ->
+                val now = System.currentTimeMillis()
+                val ageMs = if (oldestTimestamp != null && oldestTimestamp > 0) {
+                    (now - oldestTimestamp).coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+
+                val isCountExceeded = count >= CRITICAL_QUEUE_COUNT_THRESHOLD
+                val isDelayExceeded = ageMs >= CRITICAL_QUEUE_DELAY_THRESHOLD_MS && count > 0
+
+                val isCritical = isCountExceeded || isDelayExceeded
+                val message = when {
+                    isCountExceeded && isDelayExceeded -> "Fila de sincronização com $count operações pendentes há mais de ${ageMs / 60000} minutos."
+                    isCountExceeded -> "Fila de sincronização cheia ($count operações pendentes)."
+                    isDelayExceeded -> "Operações aguardando sincronização há mais de ${ageMs / 60000} minutos."
+                    else -> null
+                }
+
+                OutboxQueueStatus(
+                    pendingCount = count,
+                    oldestPendingAgeMs = ageMs,
+                    hasCriticalQueue = isCritical,
+                    alertMessage = message
+                )
+            }.collect { status ->
+                _queueStatus.value = status
+            }
+        }
+    }
+
+    fun enqueue(
+        id: String,
+        operationType: String,
+        targetGroupKey: String,
+        payloadJson: String,
+        idempotencyKey: String = id
+    ) {
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val entity = OutboxOperationEntity(
+                id = id,
+                operationType = operationType,
+                targetGroupKey = targetGroupKey,
+                payloadJson = payloadJson,
+                createdAt = now,
+                idempotencyKey = idempotencyKey,
+                nextRetryAt = now,
+                status = "PENDING"
+            )
+            outboxDao.insert(entity)
+            Log.d(TAG, "Operação $id ($operationType) enfileirada na Outbox para o grupo $targetGroupKey com idempotencyKey=$idempotencyKey")
+            triggerSync()
+        }
+    }
+
+    fun triggerSync() {
+        scope.launch {
+            processPendingOutbox()
+        }
+    }
+
+    private fun startPeriodicSync() {
+        syncJob?.cancel()
+        syncJob = scope.launch {
+            while (isActive) {
+                try {
+                    processPendingOutbox()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Erro no loop de sincronização periódica: ${e.message}")
+                }
+                delay(10_000) // Verifica a cada 10 segundos
+            }
+        }
+    }
+
+    private suspend fun processPendingOutbox() {
+        val now = System.currentTimeMillis()
+        val groups = outboxDao.getDistinctPendingGroups(now)
+        if (groups.isEmpty()) return
+
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        val token = prefs.getString(Constants.TOKEN, null) ?: return
+
+        // Comandas diferentes sincronizam em paralelo; a mesma comanda sincroniza em FIFO estrito
+        val deferredJobs = groups.map { groupKey ->
+            scope.async {
+                val groupMutex = groupMutexes.getOrPut(groupKey) { Mutex() }
+                if (groupMutex.tryLock()) {
+                    try {
+                        processGroupQueue(groupKey, token)
+                    } finally {
+                        groupMutex.unlock()
+                    }
+                }
+            }
+        }
+        deferredJobs.awaitAll()
+    }
+
+    private suspend fun processGroupQueue(groupKey: String, token: String) {
+        val operations = outboxDao.getPendingForGroup(groupKey)
+        if (operations.isEmpty()) return
+
+        val readyOps = operations.takeWhile { it.nextRetryAt <= System.currentTimeMillis() }
+            .take(50) // Lote máximo de 50 operações por sincronização
+
+        if (readyOps.isEmpty()) return
+
+        val batchSynced = try {
+            val items = readyOps.map { op ->
+                SyncOperationItem(
+                    id = op.id,
+                    operationType = op.operationType,
+                    targetGroupKey = op.targetGroupKey,
+                    idempotencyKey = op.idempotencyKey,
+                    clientCreatedAt = op.createdAt,
+                    payloadJson = op.payloadJson
+                )
+            }
+            val response = apiService.syncBatch("Bearer $token", SyncBatchRequest(items))
+            if (response.isSuccessful && response.body() != null) {
+                val results = response.body()!!.results
+                for (res in results) {
+                    val op = readyOps.find { it.id == res.operationId } ?: continue
+                    if (res.success) {
+                        outboxDao.markAsSyncedWithSeq(op.id, res.serverSeq)
+                        syncMetricsTracker.recordSyncFlush(
+                            groupOrSaleId = op.targetGroupKey,
+                            createdAt = op.createdAt
+                        )
+                        Log.d(TAG, "Operação ${op.id} sincronizada em lote com sucesso (serverSeq=${res.serverSeq}).")
+                    } else {
+                        if (res.retriable) {
+                            val nextAttempt = op.attemptCount + 1
+                            val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                            val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+                            outboxDao.update(op.copy(
+                                attemptCount = nextAttempt,
+                                lastAttemptAt = System.currentTimeMillis(),
+                                nextRetryAt = nextRetry,
+                                lastError = res.errorCode,
+                                messageKey = res.messageKey,
+                                status = "PENDING"
+                            ))
+                            Log.w(TAG, "Operação ${op.id} recusada retentável (${res.errorCode}). Próxima tentativa em ${backoffSec}s.")
+                        } else {
+                            outboxDao.markAsFailedWithKey(
+                                id = op.id,
+                                error = res.errorCode ?: "UNRECOVERABLE_ERROR",
+                                messageKey = res.messageKey,
+                                isRetriable = false
+                            )
+                            Log.e(TAG, "Operação ${op.id} falhou com erro não-retentável (${res.errorCode}).")
+                        }
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sync_batch não disponível ou falhou (${e.message}). Executando fallback individual.")
+            false
+        }
+
+        if (!batchSynced) {
+            // Fallback para envio individual operando em FIFO estrito
+            for (op in readyOps) {
+                val success = executeSingleOperation(op, token)
+                if (success) {
+                    outboxDao.markAsSynced(op.id)
+                    syncMetricsTracker.recordSyncFlush(
+                        groupOrSaleId = op.targetGroupKey,
+                        createdAt = op.createdAt
+                    )
+                    Log.d(TAG, "Operação ${op.id} sincronizada individualmente com sucesso.")
+                } else {
+                    val nextAttempt = op.attemptCount + 1
+                    val backoffSec = min(2.0.pow(nextAttempt.toDouble()).toLong(), MAX_BACKOFF_SECONDS)
+                    val nextRetry = System.currentTimeMillis() + (backoffSec * 1000L)
+
+                    val updatedOp = op.copy(
+                        attemptCount = nextAttempt,
+                        lastAttemptAt = System.currentTimeMillis(),
+                        nextRetryAt = nextRetry,
+                        status = "PENDING"
+                    )
+                    outboxDao.update(updatedOp)
+                    Log.w(TAG, "Operação ${op.id} falhou no envio individual (tentativa $nextAttempt). Próxima tentativa em ${backoffSec}s.")
+                    break
+                }
+            }
+        }
+    }
+
+    private suspend fun executeSingleOperation(op: OutboxOperationEntity, token: String): Boolean {
+        return try {
+            when (op.operationType) {
+                "COMMAND_ACTION" -> {
+                    val request = gson.fromJson(op.payloadJson, CommandActionRequest::class.java)
+                    val response = apiService.manageComanda("Bearer $token", request)
+                    response.isSuccessful
+                }
+                "SALE_DIRECT" -> {
+                    val request = gson.fromJson(op.payloadJson, SaleRequest::class.java)
+                    val response = apiService.registerSale("Bearer $token", op.idempotencyKey, request)
+                    response.id != null
+                }
+                else -> {
+                    Log.e(TAG, "Tipo de operação desconhecido na outbox: ${op.operationType}")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exceção ao sincronizar operação ${op.id}: ${e.message}")
+            false
+        }
+    }
+}

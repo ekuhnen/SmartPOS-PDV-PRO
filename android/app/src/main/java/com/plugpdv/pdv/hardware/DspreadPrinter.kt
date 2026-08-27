@@ -27,9 +27,7 @@ class DspreadPrinter(private val context: Context) : Printer {
     private var isInitialized = false
 
     private fun showToast(msg: String) {
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-        }
+        Log.d(TAG, "[Dspread Debug] $msg")
     }
 
     private val printListener = object : PrintListener {

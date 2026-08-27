@@ -17,6 +17,7 @@ interface PosApiService {
     @POST("api-vendas")
     suspend fun registerSale(
         @Header("Authorization") token: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
         @Body sale: SaleRequest
     ): SaleResponse
 
@@ -67,4 +68,15 @@ interface PosApiService {
 
     @GET("api-taxes")
     suspend fun getTaxes(@Header("Authorization") token: String): TaxResponse
+
+    @POST("api/v2/terminal/sync_batch")
+    suspend fun syncBatch(
+        @Header("Authorization") token: String,
+        @Body request: SyncBatchRequest
+    ): Response<SyncBatchResponse>
+
+    @GET("api/v2/terminal/capabilities")
+    suspend fun getCapabilities(
+        @Header("Authorization") token: String
+    ): CapabilitiesResponse
 }

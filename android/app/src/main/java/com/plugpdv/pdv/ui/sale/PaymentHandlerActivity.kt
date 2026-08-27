@@ -1,30 +1,37 @@
 package com.plugpdv.pdv.ui.sale
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
-import android.content.Context
-import android.content.pm.PackageManager
+import androidx.lifecycle.lifecycleScope
+import com.plugpdv.pdv.database.PaymentAttemptDao
+import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.PaymentResultStore
 import dagger.hilt.android.AndroidEntryPoint
-import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.*
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class PaymentHandlerActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_REQUEST_ID = "request_id"
+        const val EXTRA_IDEMPOTENCY_KEY = "idempotency_key"
         const val EXTRA_ORDER_ID = "order_id"
         const val EXTRA_AMOUNT = "amount"
         const val EXTRA_DESCRIPTION = "description"
         const val EXTRA_TABLE_NUMBER = "table_number"
+        const val EXTRA_TABLE_ID = "table_id"
         const val EXTRA_IS_TABLE = "is_table"
         const val EXTRA_MERCHANT_ID = "merchant_id"
         const val EXTRA_AMOUNT_BRL = "amount_brl"
@@ -34,7 +41,11 @@ class PaymentHandlerActivity : BaseActivity() {
         private const val PAYMENT_APP_HOST = "pay"
         private const val CALLBACK_SCHEME = "plugpdv"
         private const val CALLBACK_HOST = "payment_callback"
+        private const val TAG = "PaymentHandlerActivity"
     }
+
+    @Inject
+    lateinit var paymentAttemptDao: PaymentAttemptDao
 
     private var isWaitingForCallback = false
 
@@ -63,17 +74,21 @@ class PaymentHandlerActivity : BaseActivity() {
     }
 
     private fun startPayment(intent: Intent) {
-        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: System.currentTimeMillis().toString()
+        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: UUID.randomUUID().toString()
+        val idempotencyKey = intent.getStringExtra(EXTRA_IDEMPOTENCY_KEY) ?: UUID.randomUUID().toString()
+        val nonce = UUID.randomUUID().toString()
         val orderId = intent.getStringExtra(EXTRA_ORDER_ID) ?: "0"
         val amountStr = intent.getStringExtra(EXTRA_AMOUNT)
         val description = intent.getStringExtra(EXTRA_DESCRIPTION) ?: "Payment"
         val tableNumber = intent.getIntExtra(EXTRA_TABLE_NUMBER, -1)
 
+        val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
+
         val currencyCode = CurrencyManager.getInstance().selectedCurrency.takeIf { it.isNotEmpty() } ?: "BRL"
 
         var amount = amountStr?.toDoubleOrNull() ?: 0.0
         val isNoFractionCurrency = currencyCode.equals("PYG", ignoreCase = true) || currencyCode.equals("ARS", ignoreCase = true)
-        
+
         if (isNoFractionCurrency) {
             amount = Math.ceil(amount)
         }
@@ -84,7 +99,13 @@ class PaymentHandlerActivity : BaseActivity() {
             String.format(Locale.US, "%.2f", amount)
         }
 
-        val merchantId = intent.getStringExtra(EXTRA_MERCHANT_ID).takeIf { !it.isNullOrEmpty() } ?: "merchant123"
+        // Converte para unidade mínima da moeda (Long) para invariante de dinheiro
+        val minimalUnitAmount = if (isNoFractionCurrency) {
+            amount.toLong()
+        } else {
+            Math.round(amount * 100.0)
+        }
+
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
         val password = prefs.getString(Constants.PASSWORD, "") ?: ""
@@ -92,12 +113,13 @@ class PaymentHandlerActivity : BaseActivity() {
         var callbackUri = "$CALLBACK_SCHEME://$CALLBACK_HOST"
         if (tableNumber != -1) {
             callbackUri += "?table_number=$tableNumber"
+            if (!tableId.isNullOrEmpty()) {
+                callbackUri += "&table_id=$tableId"
+            }
         }
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
 
-        // Monta a URI conforme o protocolo do PixPlug (plugpay://pay)
-        // Ref: deeplink_uri_reference.md seção 1
         val uriBuilder = Uri.Builder()
             .scheme(PAYMENT_APP_SCHEME)
             .authority(PAYMENT_APP_HOST)
@@ -116,15 +138,43 @@ class PaymentHandlerActivity : BaseActivity() {
 
         val paymentIntent = Intent(Intent.ACTION_VIEW, paymentUri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            setPackage("com.br.plugpay") // Força o Android a procurar apenas neste pacote
+            setPackage("com.br.plugpay")
         }
 
-        try {
-            startActivity(paymentIntent)
-            isWaitingForCallback = true
-        } catch (e: Exception) {
-            Log.e("PaymentHandlerActivity", "Falha ao abrir app de pagamento: ", e)
-            appNotFoundResult(e.message ?: "Erro desconhecido")
+        lifecycleScope.launch {
+            // INVARIANTE 9: PERSISTA EM ROOM ANTES DE DISPARAR O DEEPLINK
+            val attemptEntity = PaymentAttemptEntity(
+                reference = requestId,
+                idempotencyKey = idempotencyKey,
+                nonce = nonce,
+                amount = minimalUnitAmount,
+                currency = currencyCode,
+                status = "PENDING",
+                startedAt = System.currentTimeMillis(),
+                tableNumber = if (tableNumber != -1) tableNumber else null,
+                orderId = orderId,
+                description = description
+            )
+            withContext(Dispatchers.IO) {
+                paymentAttemptDao.insert(attemptEntity)
+            }
+            Log.d(TAG, "Tentativa de pagamento persistida no Room antes do deeplink. Ref: $requestId")
+
+            try {
+                startActivity(paymentIntent)
+                isWaitingForCallback = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Falha ao abrir app de pagamento: ", e)
+                withContext(Dispatchers.IO) {
+                    paymentAttemptDao.update(
+                        attemptEntity.copy(
+                            status = "FAILED_TO_START",
+                            statusMessage = e.message
+                        )
+                    )
+                }
+                appNotFoundResult(e.message ?: "Erro desconhecido")
+            }
         }
     }
 
@@ -140,50 +190,170 @@ class PaymentHandlerActivity : BaseActivity() {
     }
 
     private fun handlePaymentCallback(uri: Uri) {
-        val status = uri.getQueryParameter("status") ?: "ERROR"
+        val rawStatus = uri.getQueryParameter("status") ?: "UNKNOWN"
         val paymentId = uri.getQueryParameter("payment_id")
         val method = uri.getQueryParameter("method")
         val message = uri.getQueryParameter("message")
         val tableNum = uri.getQueryParameter("table_number")
+        val tableId = uri.getQueryParameter("table_id")
+        val requestId = uri.getQueryParameter("request_id")
 
-        Log.d("PaymentHandlerActivity", "Callback recebido: status=$status, method=$method, paymentId=$paymentId")
+        Log.d(TAG, "Callback recebido: status=$rawStatus, paymentId=$paymentId, requestId=$requestId, tableNum=$tableNum, tableId=$tableId")
 
-        if (status.equals("APPROVED", ignoreCase = true)) {
-            if (tableNum != null) {
-                // Fluxo de mesa: vai para TableOrderActivity com auto-checkout
-                val tableIntent = Intent(this, TableOrderActivity::class.java).apply {
-                    putExtra("TABLE_NUMBER", tableNum.toInt())
-                    putExtra("AUTO_CHECKOUT", true)
-                    putExtra("payment_method", method)
-                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        lifecycleScope.launch {
+            // Recuperar tentativa a partir do Room
+            val existingAttempt = withContext(Dispatchers.IO) {
+                if (!requestId.isNullOrEmpty()) {
+                    paymentAttemptDao.getByReference(requestId)
+                } else if (tableNum != null) {
+                    paymentAttemptDao.getLatestPendingForTable(tableNum.toIntOrNull() ?: -1)
+                } else null
+            }
+
+            val isApproved = rawStatus.equals("APPROVED", ignoreCase = true)
+            val isCancelled = rawStatus.equals("CANCELLED", ignoreCase = true) || rawStatus.equals("CANCELED", ignoreCase = true)
+            val isRejected = rawStatus.equals("REJECTED", ignoreCase = true) || rawStatus.equals("DECLINED", ignoreCase = true)
+            val isUndetermined = !isApproved && !isCancelled && !isRejected
+
+            val normalizedStatus = when {
+                isApproved -> "APPROVED"
+                isCancelled -> "CANCELLED"
+                isRejected -> "REJECTED"
+                else -> "UNKNOWN" // INVARIANTE 7: unknown nunca é apresentado como recusa
+            }
+
+            if (existingAttempt != null) {
+                val updatedAttempt = existingAttempt.copy(
+                    status = normalizedStatus,
+                    completedAt = System.currentTimeMillis(),
+                    paymentMethod = method ?: existingAttempt.paymentMethod,
+                    paymentAppPaymentId = paymentId,
+                    statusMessage = message,
+                    rawCallbackUri = uri.toString()
+                )
+                withContext(Dispatchers.IO) {
+                    paymentAttemptDao.update(updatedAttempt)
                 }
-                startActivity(tableIntent)
-            } else {
-                // Fluxo de venda direta: grava no PaymentResultStore e vai para CheckoutActivity
+                Log.d(TAG, "Tentativa de pagamento atualizada no Room: ref=${updatedAttempt.reference}, status=$normalizedStatus")
+            }
+
+            if (isApproved) {
                 PaymentResultStore.setResult(
                     PaymentResultStore.PaymentResult(
-                        status = status,
+                        status = "APPROVED",
                         paymentId = paymentId,
                         method = method,
                         message = message
                     )
                 )
+                deliverApprovedResult(paymentId, method, message, tableNum, tableId)
+            } else if (isUndetermined) {
+                // Pagamento não determinado: abre tela com opções seguras para não cobrar duas vezes
+                showUndeterminedPaymentDialog(
+                    attempt = existingAttempt ?: PaymentAttemptEntity(
+                        reference = requestId ?: "UNKNOWN",
+                        idempotencyKey = requestId ?: "UNKNOWN",
+                        nonce = "",
+                        amount = 0L,
+                        currency = CurrencyManager.getInstance().selectedCurrency,
+                        status = "UNKNOWN",
+                        startedAt = System.currentTimeMillis(),
+                        tableNumber = tableNum?.toIntOrNull(),
+                        statusMessage = message
+                    ),
+                    tableNum = tableNum
+                )
+            } else {
+                // Cancelado ou recusado explicitamente pelo app de pagamento
+                deliverFailedResult(rawStatus, message, tableNum, tableId)
+            }
+        }
+    }
+
+    private fun deliverApprovedResult(paymentId: String?, method: String?, message: String?, tableNum: String?, tableId: String? = null) {
+        val resultIntent = Intent().apply {
+            putExtra("status", "APPROVED")
+            putExtra("payment_id", paymentId)
+            putExtra("method", method)
+            putExtra("message", message)
+        }
+
+        if (!isTaskRoot) {
+            setResult(Activity.RESULT_OK, resultIntent)
+            finish()
+        } else {
+            val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            val token = prefs.getString(Constants.TOKEN, "") ?: ""
+            if (tableNum != null) {
+                val tableIntent = Intent(this, TableOrderActivity::class.java).apply {
+                    if (!tableId.isNullOrEmpty()) {
+                        putExtra("TABLE_ID", tableId)
+                    }
+                    putExtra("TABLE_NUMBER", tableNum.toInt())
+                    putExtra("AUTO_CHECKOUT", true)
+                    putExtra("payment_method", method)
+                    putExtra("ACCESS_TOKEN", token)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(tableIntent)
+            } else {
                 val checkoutIntent = Intent(this, CheckoutActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
                 startActivity(checkoutIntent)
             }
-        } else {
-            // Pagamento recusado ou erro
-            Log.w("PaymentHandlerActivity", "Pagamento não aprovado: status=$status, message=$message")
-            val checkoutIntent = Intent(this, CheckoutActivity::class.java).apply {
-                putExtra("PAYMENT_FAILED", true)
-                putExtra("PAYMENT_MESSAGE", message ?: "Pagamento não aprovado")
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(checkoutIntent)
+            finish()
+        }
+    }
+
+    private fun deliverFailedResult(status: String, message: String?, tableNum: String?, tableId: String? = null) {
+        val resultIntent = Intent().apply {
+            putExtra("status", status)
+            putExtra("message", message)
         }
 
-        finish()
+        if (!isTaskRoot) {
+            setResult(Activity.RESULT_CANCELED, resultIntent)
+            finish()
+        } else {
+            val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            val token = prefs.getString(Constants.TOKEN, "") ?: ""
+            if (tableNum != null) {
+                val tableIntent = Intent(this, TableOrderActivity::class.java).apply {
+                    if (!tableId.isNullOrEmpty()) {
+                        putExtra("TABLE_ID", tableId)
+                    }
+                    putExtra("TABLE_NUMBER", tableNum.toInt())
+                    putExtra("AUTO_CHECKOUT", true)
+                    putExtra("ACCESS_TOKEN", token)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(tableIntent)
+            } else {
+                val checkoutIntent = Intent(this, CheckoutActivity::class.java).apply {
+                    putExtra("PAYMENT_FAILED", true)
+                    putExtra("PAYMENT_MESSAGE", message ?: "Pagamento não finalizado")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(checkoutIntent)
+            }
+            finish()
+        }
+    }
+
+    private fun showUndeterminedPaymentDialog(attempt: PaymentAttemptEntity, tableNum: String?) {
+        val sheet = UndeterminedPaymentBottomSheet.newInstance(
+            attempt = attempt,
+            onRetryCheck = {
+                // Re-dispara verificação / consulta de status
+                Toast.makeText(this, "Consultando status no servidor...", Toast.LENGTH_SHORT).show()
+                // Mantém a tela/mesa aberta
+            },
+            onMarkPending = {
+                Toast.makeText(this, "Pagamento registrado como pendente. A mesa permanece aberta.", Toast.LENGTH_LONG).show()
+                deliverFailedResult("PENDING_VERIFICATION", "Pagamento pendente de confirmação", tableNum)
+            }
+        )
+        sheet.show(supportFragmentManager, UndeterminedPaymentBottomSheet.TAG)
     }
 }

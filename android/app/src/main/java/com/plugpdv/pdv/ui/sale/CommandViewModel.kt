@@ -64,27 +64,30 @@ class CommandViewModel @Inject constructor(
                     val pId = groupKey.first ?: return@forEach
                     val obs = groupKey.second
                     val firstDto = itemDtos.first()
-                    val serverQty = itemDtos.sumOf { it.quantidade }
+                    val serverQty = itemDtos.sumOf { it.quantidade ?: 0 }
 
-                    var productName = firstDto.nestedProduct?.name ?: firstDto.nome
-                    var productPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct.selling_price != 0.0) {
-                        firstDto.nestedProduct.selling_price
-                    } else {
-                        firstDto.preco_unitario
+                    val localProduct = catalogDao.getProductById(pId)
+
+                    var productName = localProduct?.name
+                    if (productName.isNullOrEmpty()) {
+                        productName = firstDto.nestedProduct?.name ?: firstDto.nome
                     }
 
-                    if (productName.isNullOrEmpty() || productPrice == 0.0) {
-                        val localProduct = catalogDao.getProductById(pId)
-                        if (localProduct != null) {
-                            if (productName.isNullOrEmpty()) productName = localProduct.name
-                            if (productPrice == 0.0) productPrice = localProduct.selling_price
+                    var productPrice = localProduct?.selling_price
+                    if (productPrice == null || productPrice == 0.0) {
+                        val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
+                            firstDto.nestedProduct?.selling_price ?: 0.0
+                        } else {
+                            firstDto.preco_unitario ?: 0.0
                         }
+                        val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
+                        productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
                     }
 
                     val fakeProduct = Product(
                         id = pId,
                         name = productName,
-                        selling_price = productPrice
+                        selling_price = productPrice ?: 0.0
                     )
                     uiItems.add(TableItem(product = fakeProduct, quantity = serverQty).apply {
                         id = firstDto.id

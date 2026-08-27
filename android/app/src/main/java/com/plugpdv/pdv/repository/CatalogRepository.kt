@@ -21,7 +21,16 @@ class CatalogRepository @Inject constructor(
         try {
             val response = apiService.getCatalogs("Bearer $token")
             val catalogs = response.catalogs ?: emptyList()
-            val productsList = catalogs.flatMap { it.products ?: emptyList() }
+            val cm = com.plugpdv.pdv.utils.CurrencyManager.getInstance()
+            val productsList = catalogs.flatMap { it.products ?: emptyList() }.map { p ->
+                val currency = if (!p.price_currency.isNullOrEmpty()) p.price_currency!! else cm.getBaseCurrency()
+                p.selling_price = cm.toBrl(p.selling_price ?: 0.0, currency)
+                
+                if (!p.group?.name.isNullOrEmpty() && p.category.isNullOrEmpty()) {
+                    p.category = p.group?.name
+                }
+                p
+            }
 
             withContext(Dispatchers.IO) {
                 catalogDao.deleteAll()

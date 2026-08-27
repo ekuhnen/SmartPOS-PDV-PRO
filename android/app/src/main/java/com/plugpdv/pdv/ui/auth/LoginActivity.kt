@@ -47,19 +47,14 @@ class LoginActivity : BaseActivity() {
             hasBlockReason = true
         }
 
-        // Copia o FCM Token para a área de transferência para facilitar o teste
+        // Obtém o FCM Token apenas para fins de registro e log
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 val token = task.result
                 Log.d("FCM_TOKEN", "Token: $token")
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("FCM Token", token)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "FCM Token copiado para a área de transferência!", Toast.LENGTH_LONG).show()
             } else {
                 val exception = task.exception
                 Log.e("FCM_ERROR", "Falha ao obter token", exception)
-                Toast.makeText(this, "Erro FCM: ${exception?.message}", Toast.LENGTH_LONG).show()
             }
         }
 

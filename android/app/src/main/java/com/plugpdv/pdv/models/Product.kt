@@ -4,6 +4,12 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.google.gson.annotations.SerializedName
 import java.io.Serializable
+import androidx.room.Embedded
+
+data class GroupInfo(
+    var id: String? = null,
+    var name: String? = null
+) : Serializable
 
 @Entity(tableName = "products")
 data class Product(
@@ -22,5 +28,9 @@ data class Product(
     var selling_price: Double? = 0.0,
     
     var stock: Int? = 0,
-    var image_url: String? = null
+    var image_url: String? = null,
+    
+    var price_currency: String? = null,
+    @Embedded(prefix = "group_")
+    var group: GroupInfo? = null
 ) : Serializable

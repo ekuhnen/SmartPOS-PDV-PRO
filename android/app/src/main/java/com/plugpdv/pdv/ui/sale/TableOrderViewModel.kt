@@ -40,10 +40,12 @@ class TableOrderViewModel @Inject constructor(
         // Reset sync trackers when opening a new table
         pendingAdditions.clear()
         previousServerQuantities.clear()
-        syncTable()
+        // Se a mesa foi recém-aberta (sem itens), aguarda consistência do servidor
+        val isNewlyOpened = table.items.isEmpty() && !table.comandaId.isNullOrEmpty()
+        syncTable(isNewlyOpened)
     }
 
-    fun syncTable() {
+    fun syncTable(isNewlyOpened: Boolean = false) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
         if (currentTable.id.isNullOrEmpty()) return
@@ -51,6 +53,11 @@ class TableOrderViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+                
+                // Pequeno delay para mesas recém-abertas para garantir consistência no servidor
+                if (isNewlyOpened) {
+                    kotlinx.coroutines.delay(500)
+                }
                 
                 val cId = currentTable.comandaId
                 if (!cId.isNullOrEmpty()) {
@@ -79,35 +86,43 @@ class TableOrderViewModel @Inject constructor(
                             val obs = groupKey.second
                             seenProducts.add(pId)
                             
-                            val serverQty = itemDtos.sumOf { it.quantidade }
+                            val serverQty = itemDtos.sumOf { it.quantidade ?: 0 }
                             val trackingKey = pId + (obs ?: "")
                             val prevQty = previousServerQuantities[trackingKey] ?: 0
                             
                             if (serverQty > prevQty) {
                                 val consumed = serverQty - prevQty
-                                pendingAdditions[pId] = (pendingAdditions[pId] ?: 0).minus(consumed).coerceAtLeast(0)
+                                pendingAdditions[pId] = ((pendingAdditions[pId] ?: 0) - consumed).coerceAtLeast(0)
                             }
                             previousServerQuantities[trackingKey] = serverQty
                             
                             val finalQty = serverQty + (if (obs == null) pendingAdditions[pId] ?: 0 else 0)
                             
                             val firstDto = itemDtos.first()
-                            var productName = firstDto.nestedProduct?.name ?: firstDto.nome
-                            var productPrice = if (firstDto.nestedProduct?.selling_price != 0.0) firstDto.nestedProduct?.selling_price else firstDto.preco_unitario
+                            val localProduct = catalogDao.getProductById(pId)
 
-                            // Fallback to local database if names/prices are missing from API
-                            if (productName.isNullOrEmpty() || productPrice == null || productPrice == 0.0) {
-                                val localProduct = catalogDao.getProductById(pId)
-                                if (localProduct != null) {
-                                    if (productName.isNullOrEmpty()) productName = localProduct.name
-                                    if (productPrice == null || productPrice == 0.0) productPrice = localProduct.selling_price
+                            var productName = localProduct?.name
+                            if (productName.isNullOrEmpty()) {
+                                productName = firstDto.nestedProduct?.name ?: firstDto.nome
+                            }
+
+                            var productPrice = localProduct?.selling_price
+                            if (productPrice == null || productPrice == 0.0) {
+                                val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
+                                    firstDto.nestedProduct?.selling_price ?: 0.0
+                                } else if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
+                                    firstDto.preco_unitario
+                                } else {
+                                    firstDto.subtotal ?: 0.0
                                 }
+                                val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
+                                productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
                             }
 
                             val product = Product(
                                 id = pId, 
                                 name = productName, 
-                                selling_price = productPrice
+                                selling_price = productPrice ?: 0.0
                             )
                             val item = TableItem(product = product, quantity = finalQty).apply {
                                 id = firstDto.id
@@ -143,23 +158,32 @@ class TableOrderViewModel @Inject constructor(
                                 val pId = groupKey.first ?: return@forEach
                                 val obs = groupKey.second
                                 val firstDto = itemDtos.first()
-                                val serverQty = itemDtos.sumOf { it.quantidade }
+                                val serverQty = itemDtos.sumOf { it.quantidade ?: 0 }
 
-                                var productName = firstDto.nestedProduct?.name ?: firstDto.nome
-                                var productPrice = if (firstDto.nestedProduct?.selling_price != 0.0) firstDto.nestedProduct?.selling_price else firstDto.preco_unitario
+                                val localProduct = catalogDao.getProductById(pId)
 
-                                if (productName.isNullOrEmpty() || productPrice == null || productPrice == 0.0) {
-                                    val localProduct = catalogDao.getProductById(pId)
-                                    if (localProduct != null) {
-                                        if (productName.isNullOrEmpty()) productName = localProduct.name
-                                        if (productPrice == null || productPrice == 0.0) productPrice = localProduct.selling_price
+                                var productName = localProduct?.name
+                                if (productName.isNullOrEmpty()) {
+                                    productName = firstDto.nestedProduct?.name ?: firstDto.nome
+                                }
+
+                                var productPrice = localProduct?.selling_price
+                                if (productPrice == null || productPrice == 0.0) {
+                                    val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
+                                        firstDto.nestedProduct?.selling_price ?: 0.0
+                                    } else if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
+                                        firstDto.preco_unitario
+                                    } else {
+                                        firstDto.subtotal ?: 0.0
                                     }
+                                    val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
+                                    productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
                                 }
 
                                 val product = Product(
                                     id = pId, 
                                     name = productName, 
-                                    selling_price = productPrice
+                                    selling_price = productPrice ?: 0.0
                                 )
                                 items.add(TableItem(product = product, quantity = serverQty).apply { 
                                     id = firstDto.id 

@@ -78,7 +78,7 @@ class ProductAdapter(private val listener: (Product) -> Unit) : ListAdapter<Prod
             }
             
             available.forEach { rate ->
-                val converted = sellingPrice * rate.taxa
+                val converted = cm.fromBrl(sellingPrice, rate.codigo)
                 currenciesList.add(rate.codigo to cm.formatExplicit(converted, rate.codigo))
             }
 

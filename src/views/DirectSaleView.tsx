@@ -4,6 +4,7 @@ import { Product, Catalog } from '../types';
 import { Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2, Loader2 } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { waitForSifenCdc } from '../lib/waitForSifenCdc';
 
 export const DirectSaleView: React.FC = () => {
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
@@ -68,7 +69,7 @@ export const DirectSaleView: React.FC = () => {
     if (cart.length === 0) return;
     setIsCheckingOut(true);
     try {
-      await salesService.registerSale({
+      const response = await salesService.registerSale({
         customer_name: "Consumidor",
         discount: 0,
         city: "São Paulo",
@@ -78,6 +79,18 @@ export const DirectSaleView: React.FC = () => {
           quantity: item.quantity
         }))
       });
+      
+      // Polling curto para obter o CDC do SIFEN
+      if (response && response.id) {
+        console.log("Venda concluída, aguardando CDC fiscal do SIFEN...");
+        const { cdc, timedOut } = await waitForSifenCdc(response.id);
+        if (cdc) {
+          console.log("SIFEN CDC obtido no frontend:", cdc);
+        } else if (timedOut) {
+          console.warn("Timeout ao aguardar SIFEN CDC");
+        }
+      }
+
       setShowSuccess(true);
       setCart([]);
       setTimeout(() => setShowSuccess(false), 3000);

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PlugPDV</string>
+    <string name="login_title">EIKÉMA APAPYTERE-PE</string>
+    <string name="email">Ñanduti veve</string>
+    <string name="password">Ñe\'ẽñemí</string>
+    <string name="fill_all_fields">Emyenyhẽ opaite tenda</string>
+    <string name="welcome">Tereguahãporãite, %s</string>
+    <string name="invalid_credentials">Javy: Mbojakuaaha noĩporãi</string>
+    <string name="network_error">Ñanduti javy: %s</string>
+    <string name="cashier_closed_msg">Viru ryru oñemboty. Tekotevẽ oñeipe\'a.</string>
+    <string name="exchange_updated">Tepy pyhaháva: %s</string>
+
+    <string name="search_product">Eheka tembiapo...</string>
+    <string name="total">Mbytepa</string>
+    <string name="finish_sale">EMBOPAPA ÑEMU</string>
+    <string name="cart_empty">Ajaka nandi</string>
+    <string name="product_added">%s oñemoĩma</string>
+    <string name="all_categories">Opavave</string>
+
+    <string name="checkout">Ñembopyaha</string>
+    <string name="total_to_pay">Mbyte Oñembopyaha Va’erã</string>
+    <string name="order_summary">Tembiapo Mbyky</string>
+    <string name="go_to_payment">HAHA ÑEMBOPYAHA-PE</string>
+    <string name="select_payment">Eiporavo Ñembopyaha Rape</string>
+    <string name="credit">Tepyñembyaty</string>
+    <string name="debit">Kuatiaviru</string>
+    <string name="pix">PIX</string>
+    <string name="cash">Viru</string>
+    <string name="subtotal">Subtotal</string>
+    <string name="tax">Impuesto</string>
+
+    <string name="payments_made">Ñembopyaha Ojejapóva</string>
+    <string name="comanda_total">Comanda Mbytepa</string>
+    <string name="total_paid">Oñembopyaháma</string>
+    <string name="remaining_balance">Saldo Restante</string>
+    <string name="total_to_pay_now">Mbyte Oñembopyaha Va’erã Ko’áğa</string>
+    <string name="partial_payment_approved">Ñembopyaha vore oñemoneĩma!</string>
+</resources>

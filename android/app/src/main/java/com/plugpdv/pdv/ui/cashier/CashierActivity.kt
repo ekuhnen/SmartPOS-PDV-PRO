@@ -21,6 +21,7 @@ import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.PrinterHelper
 import dagger.hilt.android.AndroidEntryPoint
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
 import java.util.*
 
 @AndroidEntryPoint
@@ -115,9 +116,15 @@ class CashierActivity : BaseActivity() {
         finish()
     }
 
+    private fun getDefaultInitialAmount(currencyCode: String): String {
+        val cap = com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider().getCapability(currencyCode)
+        return if (cap.displayDecimals == 0) "0" else "0${cap.decimalSeparator}00"
+    }
+
     private fun updateCurrencyLabel() {
         val code = CurrencyManager.getInstance().selectedCurrency
         binding.tvAmountLabel.text = "${getString(R.string.amount_label)} ($code)"
+        binding.etAmount.setText(getDefaultInitialAmount(code))
     }
 
     private fun observeViewModel() {
@@ -155,9 +162,9 @@ class CashierActivity : BaseActivity() {
         viewModel.currentSessionId.observe(this) { id ->
             val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
             if (id != null) {
-                prefs.edit().putString("SESSION_ID", id).apply()
+                prefs.edit().putString(Constants.SESSION_ID, id).apply()
             } else {
-                prefs.edit().remove("SESSION_ID").apply()
+                prefs.edit().remove(Constants.SESSION_ID).apply()
             }
         }
 
@@ -177,16 +184,23 @@ class CashierActivity : BaseActivity() {
     }
 
     private fun handleSuccess(action: String) {
-        val amountStr = binding.etAmount.text.toString()
         val currency = CurrencyManager.getInstance().selectedCurrency
+        val provider = com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider()
         
-        val receiptText = "${getString(R.string.receipt_title, action.uppercase())}\n" +
-                         "VALOR: $currency $amountStr\n" +
-                         getString(R.string.receipt_date, Date().toString())
+        val amountStr = binding.etAmount.text.toString()
+        val cleanDigits = amountStr.replace("[^0-9]".toRegex(), "").toLongOrNull() ?: 0L
+        val formattedWithSymbol = provider.formatMinorUnits(cleanDigits, currency)
         
-        PrinterHelper.printReceipt(this, receiptText)
+        val ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(this, com.plugpdv.pdv.utils.LanguageManager.getLanguage(this))
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(this)
+        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
+        val receiptText = "${ctx.getString(R.string.receipt_title, action.uppercase())}\n" +
+                         "${ctx.getString(R.string.print_amount_label)} $formattedWithSymbol\n" +
+                         ctx.getString(R.string.receipt_date, dateStr)
+        
+        PrinterHelper.printReceipt(ctx, receiptText)
         Toast.makeText(this, R.string.operation_success, Toast.LENGTH_SHORT).show()
-        binding.etAmount.setText("0,00")
+        binding.etAmount.setText(getDefaultInitialAmount(currency))
 
         if (action.lowercase() == "abrir") {
             val intent = Intent(this, DirectSaleActivity::class.java).apply {
@@ -219,15 +233,22 @@ class CashierActivity : BaseActivity() {
             else -> R.string.confirm_op_title_close
         }
         
-        val amountStr = binding.etAmount.text.toString().ifEmpty { "0,00" }
         val currency = CurrencyManager.getInstance().selectedCurrency
+        val provider = com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider()
+        val cap = provider.getCapability(currency)
+
+        val amountStr = binding.etAmount.text.toString().ifEmpty { getDefaultInitialAmount(currency) }
+        val cleanDigits = amountStr.replace("[^0-9]".toRegex(), "").toLongOrNull() ?: 0L
+        val formattedWithSymbol = provider.formatMinorUnits(cleanDigits, currency)
+
+        val divisor = Math.pow(10.0, cap.displayDecimals.toDouble())
+        val valorDouble = if (divisor > 0) cleanDigits.toDouble() / divisor else cleanDigits.toDouble()
 
         AlertDialog.Builder(this)
             .setTitle(titleRes)
-            .setMessage(getString(R.string.confirm_op_msg, "$currency $amountStr"))
+            .setMessage(getString(R.string.confirm_op_msg, formattedWithSymbol))
             .setPositiveButton(R.string.confirm) { _, _ ->
-                val valor = amountStr.replace("[^0-9]".toRegex(), "").toDoubleOrNull() ?: 0.0
-                token?.let { viewModel.performOperation(it, action, valor / 100.0) }
+                token?.let { viewModel.performOperation(it, action, valorDouble) }
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
@@ -242,18 +263,44 @@ class CashierActivity : BaseActivity() {
                 binding.etAmount.removeTextChangedListener(this)
                 val cleanString = s.toString().replace("[^0-9]".toRegex(), "")
                 if (cleanString.isNotEmpty()) {
-                    val parsed = cleanString.toDouble()
-                    val formatted = NumberFormat.getCurrencyInstance(Locale("pt", "BR")).format(parsed / 100)
-                    val readable = formatted.replace("[R$]".toRegex(), "").trim()
-                    current = readable
-                    binding.etAmount.setText(readable)
-                    binding.etAmount.setSelection(readable.length)
+                    val currency = CurrencyManager.getInstance().selectedCurrency
+                    val provider = com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider()
+                    val cap = provider.getCapability(currency)
+                    val minorUnits = cleanString.toLongOrNull() ?: 0L
+
+                    val formattedNumber = if (cap.displayDecimals > 0) {
+                        val divisor = Math.pow(10.0, cap.displayDecimals.toDouble()).toLong()
+                        val integerPart = minorUnits / divisor
+                        val decimalPart = (minorUnits % divisor).toString().padStart(cap.displayDecimals, '0')
+                        val integerFormatted = formatIntegerWithSeparator(integerPart, cap.thousandsSeparator)
+                        "$integerFormatted${cap.decimalSeparator}$decimalPart"
+                    } else {
+                        formatIntegerWithSeparator(minorUnits, cap.thousandsSeparator)
+                    }
+
+                    current = formattedNumber
+                    binding.etAmount.setText(formattedNumber)
+                    binding.etAmount.setSelection(formattedNumber.length)
                 } else {
                     current = ""
                     binding.etAmount.setText("")
                 }
                 binding.etAmount.addTextChangedListener(this)
             }
+        }
+
+        private fun formatIntegerWithSeparator(number: Long, separator: String): String {
+            val str = number.toString()
+            val builder = StringBuilder()
+            var count = 0
+            for (i in str.length - 1 downTo 0) {
+                builder.append(str[i])
+                count++
+                if (count % 3 == 0 && i != 0) {
+                    builder.append(separator)
+                }
+            }
+            return builder.reverse().toString()
         }
     }
 }

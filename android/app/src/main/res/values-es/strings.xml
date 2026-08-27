@@ -19,7 +19,7 @@
     <string name="all_categories">Todos</string>
     
     <string name="cashier_ops">Operaciones de Caja</string>
-    <string name="amount_label">Valor ($)</string>
+    <string name="amount_label">Valor</string>
     <string name="open_cashier">ABRIR CAJA</string>
     <string name="sangria">RETIRO (SANGRIA)</string>
     <string name="close_cashier">CERRAR CAJA</string>
@@ -61,4 +61,60 @@
     <string name="dashboard_btn">PANEL DE OPERACIONES</string>
     <string name="subtotal">Subtotal</string>
     <string name="tax">Impuesto</string>
+
+    <string name="payments_made">Pagos Realizados</string>
+    <string name="comanda_total">Total de la Comanda</string>
+    <string name="total_paid">Ya Pagado</string>
+    <string name="remaining_balance">Saldo Restante</string>
+    <string name="total_to_pay_now">Total a Pagar Ahora</string>
+    <string name="partial_payment_approved">¡Pago parcial aprobado!</string>
+
+    <!-- Strings de Impresión (Print Strings - Español) -->
+    <string name="print_thank_you">¡GRACIAS POR SU PREFERENCIA!</string>
+    <string name="print_pickup_ticket">CUPON DE RETIRO</string>
+    <string name="print_date_label">FECHA:</string>
+    <string name="print_operator_label">OPERADOR:</string>
+    <string name="print_qty_label">CANT:</string>
+    <string name="print_copy_via">Via %1$d/%2$d</string>
+    <string name="print_unit_price_label">UNIT:</string>
+    <string name="print_subtotal_label">SUBTOTAL:</string>
+    <string name="print_total_purchase_label">TOTAL COMPRA:</string>
+    <string name="print_payment_method_label">FORMA:</string>
+    <string name="print_present_at_counter">PRESENTE EN EL MOSTRADOR PARA RETIRO</string>
+    <string name="print_audit_report_title">INFORME DE AUDITORIA PDV</string>
+    <string name="print_offline_mode_label">[MODO OFFLINE - REGISTRO LOCAL]</string>
+    <string name="print_period_label">Periodo:</string>
+    <string name="print_emission_label">Emision:</string>
+    <string name="print_open_balances_title">SALDOS PENDIENTES (COBRANZA):</string>
+    <string name="print_no_pending_tables">Ninguna mesa con saldo pendiente.</string>
+    <string name="print_table_word">Mesa</string>
+    <string name="print_pending_balance_label">Saldo Pendiente:</string>
+    <string name="print_total_pending_label">TOTAL PENDIENTE:</string>
+    <string name="print_products_sold_title">PRODUCTOS VENDIDOS:</string>
+    <string name="print_no_products_sold">Ningun producto vendido en el periodo.</string>
+    <string name="print_payment_summary_title">RESUMEN POR PAGO:</string>
+    <string name="print_currency_summary_title">RESUMEN POR MONEDA:</string>
+    <string name="print_total_sales_label">TOTAL DE VENTAS:</string>
+    <string name="print_electronic_invoice_title">*** FACTURA ELECTRONICA ***</string>
+    <string name="print_simulated_doc">(DOCUMENTO SIMULADO)</string>
+    <string name="print_number_label">Nº:</string>
+    <string name="print_issuer_label">EMISOR:</string>
+    <string name="print_total_label">TOTAL:</string>
+    <string name="print_issuance_in_process">** EMISION EN PROCESAMIENTO **</string>
+    <string name="print_invoice_email_notice">Recibira el documento en el correo registrado.</string>
+    <string name="print_customer_label">CLIENTE:</string>
+    <string name="print_table_label">MESA:</string>
+    <string name="print_paid_amount_label">VALOR PAGADO:</string>
+    <string name="print_change_label">CAMBIO:</string>
+    <string name="print_service_fee_label">PROPINA / SERVICIO:</string>
+    <string name="print_payment_receipt_title">COMPROBANTE DE PAGO</string>
+    <string name="print_split_people">DIVIDIDO POR %d PERSONAS</string>
+    <string name="print_value_per_person">VALOR POR PERSONA:</string>
+    <string name="print_printing">Imprimiendo cupon...</string>
+    <string name="print_error">Error al imprimir: %s</string>
+    <string name="print_not_detected">Impresora no detectada o no compatible.</string>
+    <string name="print_amount_label">VALOR:</string>
+    <string name="print_transaction_label">TRANSACCION:</string>
+    <string name="print_doc_label">DOC:</string>
+    <string name="print_sn_label">S/N:</string>
 </resources>

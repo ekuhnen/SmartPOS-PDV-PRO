@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.models.CommandActionRequest
+import com.plugpdv.pdv.models.MesaItemDto
 import com.plugpdv.pdv.models.Product
 import com.plugpdv.pdv.models.Sector
 import com.plugpdv.pdv.models.Table
@@ -68,10 +69,21 @@ class MesaViewModel @Inject constructor(
     private val _openSuccess = MutableLiveData(false)
     val openSuccess: LiveData<Boolean> = _openSuccess
 
+    private val _openedComandaId = MutableLiveData<String?>(null)
+    val openedComandaId: LiveData<String?> = _openedComandaId
+
+    private val _sessionExpired = MutableLiveData<Boolean>(false)
+    val sessionExpired: LiveData<Boolean> = _sessionExpired
+
+    fun consumeSessionExpired() {
+        _sessionExpired.value = false
+    }
+
     fun fetchTables(token: String) {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+                _error.value = null
                 
                 // Process any pending transfers first
                 queueManager.processQueue(apiService)
@@ -87,35 +99,40 @@ class MesaViewModel @Inject constructor(
                     sector.mesas.orEmpty().map { mesaDto ->
                         Table(number = mesaDto.numero).apply {
                             id = mesaDto.id
-                            sectorName = sector.nome
-                            sectorId = sector.id
-                            status = mapStatus(mesaDto.status)
-                            if (status == Table.Status.OCCUPIED && mesaDto.comanda_id != null) {
+                            sectorName = sector.nome.orEmpty()
+                            sectorId = sector.id.orEmpty()
+                            status = mapStatus(mesaDto.status, mesaDto.comanda_id, mesaDto.itens)
+                            if ((status == Table.Status.OCCUPIED || !mesaDto.comanda_id.isNullOrEmpty()) && mesaDto.comanda_id != null) {
                                 comandaId = mesaDto.comanda_id
-                                people_count = mesaDto.pessoas_qtd
+                                people_count = mesaDto.pessoas_qtd ?: 1
                                 mesaDto.itens?.forEach { itemDto ->
-                                    var productName = itemDto.nestedProduct?.name ?: itemDto.nome
-                                    var productPrice = if (itemDto.nestedProduct?.selling_price != null && itemDto.nestedProduct.selling_price != 0.0) {
-                                        itemDto.nestedProduct.selling_price
-                                    } else {
-                                        itemDto.preco_unitario
+                                    val prodId = (itemDto.produto_id ?: itemDto.nestedProduct?.id).orEmpty()
+                                    val localProduct = if (prodId.isNotEmpty()) catalogDao.getProductById(prodId) else null
+
+                                    var productName = localProduct?.name
+                                    if (productName.isNullOrEmpty()) {
+                                        productName = itemDto.nestedProduct?.name ?: itemDto.nome
                                     }
 
-                                    val prodId = itemDto.produto_id.orEmpty()
-                                    if (productName.isNullOrEmpty() || productPrice == 0.0) {
-                                        val localProduct = if (prodId.isNotEmpty()) catalogDao.getProductById(prodId) else null
-                                        if (localProduct != null) {
-                                            if (productName.isNullOrEmpty()) productName = localProduct.name
-                                            if (productPrice == 0.0) productPrice = localProduct.selling_price
-                                        }
+                                    var productPrice = localProduct?.selling_price
+                                    if (productPrice == null || productPrice == 0.0) {
+                                         val rawPrice = if (itemDto.nestedProduct?.selling_price != null && itemDto.nestedProduct?.selling_price != 0.0) {
+                                             itemDto.nestedProduct?.selling_price ?: 0.0
+                                         } else if (itemDto.preco_unitario != null && itemDto.preco_unitario != 0.0) {
+                                             itemDto.preco_unitario
+                                         } else {
+                                             itemDto.subtotal ?: 0.0
+                                         }
+                                         val currency = itemDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
+                                         productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
                                     }
 
                                     val fakeProduct = Product(
                                         id = prodId,
                                         name = productName,
-                                        selling_price = productPrice
+                                        selling_price = productPrice ?: 0.0
                                     )
-                                    val item = TableItem(product = fakeProduct, quantity = itemDto.quantidade).apply {
+                                    val item = TableItem(product = fakeProduct, quantity = itemDto.quantidade ?: 1).apply {
                                         id = itemDto.id
                                         observation = itemDto.observacao
                                         if (itemDto.status == "REMOVIDO" || itemDto.status == "CANCELADO") {
@@ -131,44 +148,94 @@ class MesaViewModel @Inject constructor(
                 }
                 _tables.value = newTables
                 TableManager.setTables(newTables)
+            } catch (e: retrofit2.HttpException) {
+                Log.e("MesaViewModel", "HTTP error fetching tables: ${e.code()} ${e.message()}", e)
+                if (e.code() == 401) {
+                    _sessionExpired.value = true
+                } else {
+                    _error.value = "Erro no servidor (Código: ${e.code()})"
+                }
+            } catch (e: java.io.IOException) {
+                Log.e("MesaViewModel", "Network error fetching tables", e)
+                _error.value = "Erro de conexão ao carregar mesas"
+            } catch (e: com.google.gson.JsonParseException) {
+                Log.e("MesaViewModel", "JSON parse error fetching tables", e)
+                _error.value = "Erro de compatibilidade nos dados de mesas"
             } catch (e: Exception) {
-                Log.e("MesaViewModel", "Failed to fetch tables", e)
-                _error.value = "Erro ao carregar mesas"
+                Log.e("MesaViewModel", "Unexpected error fetching tables", e)
+                _error.value = "Erro ao carregar mesas: ${e.localizedMessage}"
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    private fun mapStatus(status: String?): String {
-        return when (status) {
-            "OCUPADA" -> Table.Status.OCCUPIED
-            "BLOQUEADA" -> Table.Status.RESERVED
-            else -> Table.Status.AVAILABLE
+    private fun mapStatus(status: String?, comandaId: String?, items: List<MesaItemDto>?): String {
+        val upper = status?.uppercase() ?: ""
+        if (upper.contains("OCUPADA") || upper.contains("CONSUMO") || upper.contains("PAGAMENTO") || upper.contains("BUSY") || upper.contains("OCCUPIED")) {
+            return Table.Status.OCCUPIED
         }
+        if (upper.contains("BLOQUEADA") || upper.contains("RESERVADA") || upper.contains("RESERVED")) {
+            return Table.Status.RESERVED
+        }
+        if (!comandaId.isNullOrEmpty() || (!items.isNullOrEmpty() && items.any { it.status != "CANCELADO" && it.status != "REMOVIDO" })) {
+            return Table.Status.OCCUPIED
+        }
+        return Table.Status.AVAILABLE
     }
 
     fun openTable(token: String, table: Table, customerName: String) {
+        if (!table.comandaId.isNullOrEmpty()) {
+            _openedComandaId.value = table.comandaId
+            _openSuccess.value = true
+            return
+        }
+
         val request = CommandActionRequest().apply {
             action = "abrir"
             mesaId = table.id
-            people_count = 1 // Default to 1 if not specified
-            observation = customerName // Mapping customerName to observation
+            people_count = 1
+            nome_cliente = customerName
         }
 
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                retryIO { apiService.manageComanda("Bearer $token", request) }
-                _openSuccess.value = true
-                fetchTables(token)
+                val response = retryIO { apiService.manageComanda("Bearer $token", request) }
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val comandaId = body?.get("id") as? String
+                    Log.d("MesaViewModel", "Mesa aberta com sucesso. ComandaId: $comandaId")
+                    if (!comandaId.isNullOrEmpty()) {
+                        _openedComandaId.value = comandaId
+                        _openSuccess.value = true
+                    } else {
+                        Log.e("MesaViewModel", "API retornou sucesso mas o ID da comanda veio vazio: $body")
+                        _error.value = "Erro: ID da comanda não retornado pela API"
+                    }
+                } else {
+                    val errorCode = response.code()
+                    val errorBody = response.errorBody()?.string() ?: ""
+                    Log.e("MesaViewModel", "Falha ao abrir mesa: $errorCode - $errorBody")
+                    if (errorCode == 401) {
+                        _error.value = "Sessão expirada. Por favor, faça login novamente."
+                    } else {
+                        _error.value = "Erro ao abrir mesa (Código: $errorCode)"
+                    }
+                }
             } catch (e: Exception) {
-                _error.value = "Erro ao abrir mesa"
+                Log.e("MesaViewModel", "Failed to open table due to exception", e)
+                _error.value = "Erro ao abrir mesa: ${e.message}"
             } finally {
                 _isLoading.value = false
-                _openSuccess.value = false
             }
         }
+    }
+
+    /** Consome o evento de sucesso para evitar re-navegação em recriações do Fragment */
+    fun consumeOpenSuccess() {
+        _openSuccess.value = false
+        _openedComandaId.value = null
     }
 
     fun transferTable(token: String, origin: Table, destination: Table) {

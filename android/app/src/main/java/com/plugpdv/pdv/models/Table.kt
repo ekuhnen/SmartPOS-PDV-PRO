@@ -29,7 +29,15 @@ data class Table(
         items.filter { !it.removed }.forEach {
             itemsTotal += (it.product.selling_price ?: 0.0) * it.quantity
         }
-        return itemsTotal - paidAmount
+        return (itemsTotal - paidAmount).coerceAtLeast(0.0)
+    }
+
+    fun getChangeAmount(): Double {
+        var itemsTotal = 0.0
+        items.filter { !it.removed }.forEach {
+            itemsTotal += (it.product.selling_price ?: 0.0) * it.quantity
+        }
+        return (paidAmount - itemsTotal).coerceAtLeast(0.0)
     }
 
     fun calculateTotal(): Double {

@@ -89,10 +89,14 @@
                 android:id="@+id/btnLogin"
                 style="@style/Widget.SmartPos.Button"
                 android:layout_width="match_parent"
-                android:layout_height="60dp"
+                android:layout_height="56dp"
                 android:layout_marginTop="32dp"
                 android:text="@string/login_title"
-                android:textSize="18sp" />
+                android:textSize="14sp"
+                android:maxLines="1"
+                app:autoSizeTextType="uniform"
+                app:autoSizeMinTextSize="11sp"
+                app:autoSizeMaxTextSize="15sp" />
 
 
 

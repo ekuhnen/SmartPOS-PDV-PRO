@@ -15,14 +15,27 @@ android {
         applicationId "com.plugpdv.pdv"
         minSdk 24
         targetSdk 35
-        versionCode 5
-        versionName "1.5.1"
+        versionCode 11
+        versionName "1.11.1"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += [
+                    "room.schemaLocation": "$projectDir/schemas".toString(),
+                    "room.incremental": "true"
+                ]
+            }
+        }
+
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
         }
+    }
+
+    sourceSets {
+        androidTest.assets.srcDirs += files("$projectDir/schemas")
     }
 
     signingConfigs {
@@ -52,6 +65,7 @@ android {
     buildFeatures {
         viewBinding true
         aidl true
+        buildConfig true
     }
     
     packaging {
@@ -59,6 +73,10 @@ android {
             useLegacyPackaging = true
             excludes += ['**/riscv64/**']
         }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
     }
 }
 
@@ -92,8 +110,17 @@ dependencies {
     implementation 'androidx.fragment:fragment-ktx:1.6.2'
 
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito.kotlin:mockito-kotlin:5.2.1'
+    testImplementation 'org.robolectric:robolectric:4.11.1'
+    testImplementation 'org.xerial:sqlite-jdbc:3.45.1.0'
+    testImplementation 'androidx.test:core:1.5.0'
+    testImplementation 'androidx.test.ext:junit:1.1.5'
+    testImplementation "androidx.room:room-testing:2.6.1"
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
+    androidTestImplementation "androidx.room:room-testing:2.6.1"
 
     // QR Code Scanner
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
@@ -134,5 +161,23 @@ dependencies {
     implementation "io.github.jan-tennert.supabase:gotrue-kt:2.4.3"
     implementation "io.ktor:ktor-client-okhttp:2.3.9"
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3"
+
+    // Google Play In-App Updates
+    implementation 'com.google.android.play:app-update-ktx:2.1.0'
+
+    // WorkManager & Hilt Work
+    def work_version = "2.9.0"
+    def hilt_work_version = "1.2.0"
+    implementation "androidx.work:work-runtime-ktx:$work_version"
+    implementation "androidx.hilt:hilt-work:$hilt_work_version"
+    kapt "androidx.hilt:hilt-compiler:$hilt_work_version"
 }
+
+kapt {
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas".toString())
+        arg("room.incremental", "true")
+    }
+}
+
 

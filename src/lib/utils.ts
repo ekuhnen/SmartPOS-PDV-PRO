@@ -5,10 +5,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const formatCurrency = (value: number) => {
+export const formatCurrency = (value: number, currencyCode: string = 'BRL') => {
+  const displayDecimals = (currencyCode === 'PYG' || currencyCode === 'ARS') ? 0 : 2;
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
-    currency: 'BRL',
+    currency: currencyCode,
+    minimumFractionDigits: displayDecimals,
+    maximumFractionDigits: displayDecimals,
   }).format(value);
 };
 

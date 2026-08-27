@@ -21,8 +21,9 @@ class TableHistoryBottomSheet : BottomSheetDialogFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
+            val tableId = it.getString("TABLE_ID")
             val tableNumber = it.getInt("TABLE_NUMBER")
-            table = TableManager.getTableByNumber(tableNumber)
+            table = TableManager.getTable(tableId, tableNumber)
         }
         if (table == null) {
             dismiss()
@@ -84,8 +85,14 @@ class TableHistoryBottomSheet : BottomSheetDialogFragment() {
     companion object {
         @JvmStatic
         fun newInstance(tableNumber: Int): TableHistoryBottomSheet {
+            return newInstance(null, tableNumber)
+        }
+
+        @JvmStatic
+        fun newInstance(tableId: String?, tableNumber: Int): TableHistoryBottomSheet {
             return TableHistoryBottomSheet().apply {
                 arguments = Bundle().apply {
+                    putString("TABLE_ID", tableId)
                     putInt("TABLE_NUMBER", tableNumber)
                 }
             }

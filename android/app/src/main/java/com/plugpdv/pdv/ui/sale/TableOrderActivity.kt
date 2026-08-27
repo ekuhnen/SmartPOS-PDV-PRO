@@ -37,9 +37,11 @@ class TableOrderActivity : BaseActivity() {
         binding = ActivityTableOrderBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        val tableId = intent.getStringExtra("TABLE_ID")
         val tableNumber = intent.getIntExtra("TABLE_NUMBER", 0)
+        val sectorId = intent.getStringExtra("SECTOR_ID")
         token = intent.getStringExtra("ACCESS_TOKEN")
-        table = TableManager.getTableByNumber(tableNumber)
+        table = TableManager.getTable(tableId, tableNumber, sectorId)
 
         if (table == null || token == null) {
             finish()
@@ -48,7 +50,7 @@ class TableOrderActivity : BaseActivity() {
 
         setSupportActionBar(binding.toolbar)
         supportActionBar?.let {
-            var title = "Mesa ${table!!.number}"
+            var title = if (!table!!.sectorName.isNullOrEmpty()) "Mesa ${table!!.number} (${table!!.sectorName})" else "Mesa ${table!!.number}"
             if (!table!!.customerName.isNullOrEmpty() && table!!.customerName != "null") {
                 title += " - ${table!!.customerName}"
             }
@@ -102,7 +104,7 @@ class TableOrderActivity : BaseActivity() {
         }
 
         if (intent.getBooleanExtra("AUTO_CHECKOUT", false)) {
-            TableCheckoutBottomSheet.newInstance(table!!.number, token!!).show(supportFragmentManager, "checkout")
+            TableCheckoutBottomSheet.newInstance(table!!.id, table!!.number, token!!).show(supportFragmentManager, "checkout")
         }
     }
 
@@ -133,11 +135,11 @@ class TableOrderActivity : BaseActivity() {
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_history -> {
-                TableHistoryBottomSheet.newInstance(table!!.number).show(supportFragmentManager, "history")
+                TableHistoryBottomSheet.newInstance(table!!.id, table!!.number).show(supportFragmentManager, "history")
                 true
             }
             R.id.action_close_account -> {
-                TableCheckoutBottomSheet.newInstance(table!!.number, token!!).show(supportFragmentManager, "checkout")
+                TableCheckoutBottomSheet.newInstance(table!!.id, table!!.number, token!!).show(supportFragmentManager, "checkout")
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -199,7 +201,7 @@ class TableOrderActivity : BaseActivity() {
     }
 
     fun updateUI() {
-        binding.tvTotal.text = CurrencyManager.getInstance().format(table?.getPendingBalance() ?: 0.0)
+        binding.tvTotal.text = CurrencyManager.getInstance().format(table?.calculateTotal() ?: 0.0)
         orderAdapter.notifyDataSetChanged()
         productAdapter.notifyDataSetChanged()
     }

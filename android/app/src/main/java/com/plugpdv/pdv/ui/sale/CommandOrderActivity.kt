@@ -107,7 +107,7 @@ class CommandOrderActivity : BaseActivity() {
                         status = com.plugpdv.pdv.models.Table.Status.OCCUPIED
                     )
                     com.plugpdv.pdv.utils.TableManager.updateTable(fakeTable)
-                    com.plugpdv.pdv.ui.sale.TableCheckoutBottomSheet.newInstance(fakeTableId, token!!).show(supportFragmentManager, "checkout")
+                    com.plugpdv.pdv.ui.sale.TableCheckoutBottomSheet.newInstance(fakeTable.id, fakeTableId, token!!).show(supportFragmentManager, "checkout")
                 } else {
                     Toast.makeText(this, "Aguarde o carregamento", Toast.LENGTH_SHORT).show()
                 }

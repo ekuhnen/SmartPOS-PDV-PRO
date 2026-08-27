@@ -11,6 +11,8 @@ data class ExchangeResponse(
 ) {
     data class CurrencyRate(
         val codigo: String,
-        val taxa: Double
+        val taxa: Double,
+        val base: String? = null,
+        val atualizado_em: String? = null
     )
 }

@@ -36,8 +36,14 @@ object PrinterHelper {
         }
     }
 
+    private fun getLocalizedContext(context: Context): Context {
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
+        return com.plugpdv.pdv.utils.LanguageManager.updateResources(context, lang)
+    }
+
     @JvmStatic
     fun printReceipt(context: Context, content: String) {
+        val ctx = getLocalizedContext(context)
         val printer = HardwareFactory.getPrinter(context)
 
         if (printer != null) {
@@ -45,6 +51,7 @@ object PrinterHelper {
                 printer.init()
                 printer.reset()
 
+                val thanksText = ctx.getString(R.string.print_thank_you)
                 if (printer is KozenPrinter) {
                     printer.setAlignment(1)
                     printer.setFontSize(26f)
@@ -57,7 +64,7 @@ object PrinterHelper {
                     printer.printText(content)
                     printer.printText("--------------------------------")
                     printer.setAlignment(1)
-                    printer.printText("OBRIGADO PELA PREFERENCIA")
+                    printer.printText(thanksText)
                     printer.close()
                 } else {
                     printer.setAlignment(1)
@@ -68,17 +75,17 @@ object PrinterHelper {
                     printer.printText(content)
                     printer.printText("\n--------------------------------\n")
                     printer.setAlignment(1)
-                    printer.printText("   OBRIGADO PELA PREFERENCIA    \n")
+                    printer.printText("   $thanksText   \n")
                     printer.lineFeed(3)
                     printer.close()
                 }
 
-                showToast(context, "Imprimindo Cupom...")
+                showToast(context, ctx.getString(R.string.print_printing))
             } catch (e: Exception) {
-                showToast(context, "Erro na impressão: ${e.message}")
+                showToast(context, String.format(ctx.getString(R.string.print_error), e.message))
             }
         } else {
-            showToast(context, "Impressora não detectada ou não suportada.")
+            showToast(context, ctx.getString(R.string.print_not_detected))
         }
     }
 
@@ -96,8 +103,10 @@ object PrinterHelper {
         operatorName: String?,
         saleId: String
     ) {
+        val ctx = getLocalizedContext(context)
         val printer = HardwareFactory.getPrinter(context)
-        val dateStr = SimpleDateFormat("dd/MM/yyyy  HH:mm", Locale.getDefault()).format(Date())
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
+        val dateStr = SimpleDateFormat("dd/MM/yyyy  HH:mm", Locale(lang)).format(Date())
         val cm = CurrencyManager.getInstance()
 
         if (printer != null) {
@@ -115,77 +124,149 @@ object PrinterHelper {
                         val ticketQty = 1
                         val ticketSubtotal = unitPrice * ticketQty
 
-                    // --- Cabeçalho ---
-                    printer.setAlignment(1)
-                    printer.setBold(true)
-                    printer.setFontSize(28f)
-                    printer.printText("PlugPDV\n")
-                    printer.setFontSize(24f)
-                    printer.setBold(false)
-                    printer.printText("   CUPOM DE RETIRADA   \n")
-                    printer.setAlignment(0)
-                    printer.printText("DATA: $dateStr\n")
-                    if (!operatorName.isNullOrBlank()) {
-                        printer.printText("OPERADOR: $operatorName\n")
-                    }
-                    
-                    printer.lineFeed(1)
+                        // --- Cabeçalho ---
+                        printer.setAlignment(1)
+                        printer.setBold(true)
+                        printer.setFontSize(22f)
+                        printer.printText("PlugPDV\n")
+                        printer.setFontSize(18f)
+                        printer.setBold(false)
+                        printer.printText("${ctx.getString(R.string.print_pickup_ticket)}\n")
+                        printer.setAlignment(0)
+                        printer.printText("${ctx.getString(R.string.print_date_label)} $dateStr\n")
+                        if (!operatorName.isNullOrBlank()) {
+                            printer.printText("${ctx.getString(R.string.print_operator_label)} $operatorName\n")
+                        }
 
-                    // --- Detalhes do Item ---
-                    printer.setAlignment(1)
-                    printer.setBold(true)
-                    printer.sendRaw(byteArrayOf(0x1D, 0x42, 1)) // Inverte para fundo preto
-                    printer.setFontSize(36f)
-                    printer.printText(" $productName \n")
-                    printer.setFontSize(24f)
-                    printer.sendRaw(byteArrayOf(0x1D, 0x42, 0)) // Volta para fundo branco
-                    printer.setBold(false)
-                    
-                    printer.setAlignment(0)
-                    printer.printText("QTD: $ticketQty (Via $i/$totalItemQty)   UNIT: ${cm.format(unitPrice)}\n")
-                    printer.printText("SUBTOTAL: ${cm.format(ticketSubtotal)}\n")
+                        // --- Detalhes do Item ---
+                        printer.setAlignment(1)
+                        printer.setBold(true)
+                        printer.sendRaw(byteArrayOf(0x1D, 0x42, 1)) // Inverte para fundo preto
+                        printer.setFontSize(24f)
+                        printer.printText(" $productName \n")
+                        printer.setFontSize(18f)
+                        printer.sendRaw(byteArrayOf(0x1D, 0x42, 0)) // Volta para fundo branco
+                        printer.setBold(false)
+                        
+                        printer.setAlignment(0)
+                        val copyStr = ctx.getString(R.string.print_copy_via, i, totalItemQty)
+                        printer.printText("${ctx.getString(R.string.print_qty_label)} $ticketQty ($copyStr)  ${ctx.getString(R.string.print_unit_price_label)} ${cm.format(unitPrice)}\n")
+                        printer.printText("${ctx.getString(R.string.print_subtotal_label)} ${cm.format(ticketSubtotal)}\n")
 
-                    // --- QR Code Detalhado ---
-                    val safeOpName = (operatorName ?: "N/A").replace("-", " ")
-                    val safeProdName = productName.replace("-", " ")
-                    // Formato: saleId-date-operator-prodId-prodName-qty-unitPrice-subtotal-via
-                    val qrData = "$saleId-$dateStr-$safeOpName-$productId-$safeProdName-${ticketQty}-${cm.format(unitPrice)}-${cm.format(ticketSubtotal)}-via$i"
-                    
-                    printer.setAlignment(1)
-                    val qrBitmap = generateQRCodeBitmap(qrData, 250)
-                    if (qrBitmap != null) {
-                        printer.printImage(qrBitmap)
-                    } else {
-                        printer.printQRCode(qrData, 8)
-                    }
+                        // --- QR Code Detalhado ---
+                        val safeOpName = (operatorName ?: "N/A").replace("-", " ")
+                        val safeProdName = productName.replace("-", " ")
+                        val qrData = "$saleId-$dateStr-$safeOpName-$productId-$safeProdName-${ticketQty}-${cm.format(unitPrice)}-${cm.format(ticketSubtotal)}-via$i"
+                        
+                        printer.setAlignment(1)
+                        val qrBitmap = generateQRCodeBitmap(qrData, 160)
+                        if (qrBitmap != null) {
+                            printer.printImage(qrBitmap)
+                        } else {
+                            printer.printQRCode(qrData, 5)
+                        }
 
-                    // --- Rodapé do Item ---
-                    printer.lineFeed(1)
-                    printer.setAlignment(0)
-                    printer.setBold(true)
-                    printer.printText("TOTAL COMPRA: ${cm.format(total)} $currency\n")
-                    printer.setBold(false)
-                    printer.printText("FORMA: $paymentMethod\n")
-                    
-                    printer.lineFeed(1)
-                    printer.setAlignment(1)
-                    printer.printText("APRESENTE ESTE CUPOM\n")
-                    printer.printText("NO BALCÃO PARA RETIRADA\n")
-                    
-                    // Espaço para corte entre os tickets
-                    printer.lineFeed(4)
+                        // --- Rodapé do Item ---
+                        printer.setAlignment(0)
+                        printer.setBold(true)
+                        printer.printText("${ctx.getString(R.string.print_total_purchase_label)} ${cm.format(total)} $currency\n")
+                        printer.setBold(false)
+                        printer.printText("${ctx.getString(R.string.print_payment_method_label)} $paymentMethod\n")
+                        
+                        printer.setAlignment(1)
+                        printer.printText("${ctx.getString(R.string.print_present_at_counter)}\n")
+                        
+                        // Espaço para corte entre os tickets
+                        printer.lineFeed(2)
                     }
                 }
 
                 printer.close()
 
-                showToast(context, "Cupom impresso com sucesso!")
+                showToast(context, ctx.getString(R.string.print_printing))
             } catch (e: Exception) {
-                showToast(context, "Erro na impressão: ${e.message}")
+                showToast(context, String.format(ctx.getString(R.string.print_error), e.message))
             }
         } else {
-            showToast(context, "Impressora não detectada. Cupom não impresso.", Toast.LENGTH_LONG)
+            showToast(context, ctx.getString(R.string.print_not_detected))
         }
+    }
+
+    /**
+     * Imprime relatório de auditoria completo (online/offline, saldos por mesa, pagamento, moeda)
+     */
+    @JvmStatic
+    fun printAuditReport(
+        context: Context,
+        reportSummary: com.plugpdv.pdv.models.ReportSummary,
+        operatorName: String?
+    ) {
+        val ctx = getLocalizedContext(context)
+        val cm = CurrencyManager.getInstance()
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
+        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
+        val sb = StringBuilder()
+
+        sb.append("================================\n")
+        sb.append("   ${ctx.getString(R.string.print_audit_report_title)}   \n")
+        if (reportSummary.isOfflineData) {
+            sb.append("   ${ctx.getString(R.string.print_offline_mode_label)}\n")
+        }
+        sb.append("================================\n\n")
+        sb.append(ctx.getString(R.string.print_period_label)).append(" ").append(reportSummary.dateFilterLabel).append("\n")
+        sb.append(ctx.getString(R.string.print_emission_label)).append(" ").append(dateStr).append("\n")
+        if (!operatorName.isNullOrEmpty()) {
+            sb.append(ctx.getString(R.string.print_operator_label)).append(" ").append(operatorName).append("\n")
+        }
+        sb.append("--------------------------------\n\n")
+
+        // 1. MESAS / COMANDAS EM ABERTO PARA COBRANÇA
+        sb.append(ctx.getString(R.string.print_open_balances_title)).append("\n")
+        if (reportSummary.occupiedTables.isEmpty()) {
+            sb.append(ctx.getString(R.string.print_no_pending_tables)).append("\n")
+        } else {
+            reportSummary.occupiedTables.forEach { item ->
+                val clientStr = if (!item.customerName.isNullOrEmpty()) " (${item.customerName})" else ""
+                sb.append(String.format("${ctx.getString(R.string.print_table_word)} %-3d%s\n", item.number, clientStr))
+                sb.append(String.format("  ${ctx.getString(R.string.print_pending_balance_label)} %s\n", cm.format(item.pendingAmountBrl)))
+            }
+            sb.append("--------------------------------\n")
+            sb.append(String.format("${ctx.getString(R.string.print_total_pending_label)} %s\n", cm.format(reportSummary.totalPendingTablesAmountBrl)))
+        }
+        sb.append("--------------------------------\n\n")
+
+        // 2. PRODUTOS VENDIDOS
+        sb.append(ctx.getString(R.string.print_products_sold_title)).append("\n")
+        val allItems = reportSummary.sales.flatMap { it.items ?: emptyList() }
+        val grouped = allItems.groupBy { it.productName ?: "Prod ${it.productId}" }
+        if (grouped.isEmpty()) {
+            sb.append(ctx.getString(R.string.print_no_products_sold)).append("\n")
+        } else {
+            grouped.forEach { (name, list) ->
+                val qty = list.sumOf { it.quantity }
+                sb.append(String.format("%-22s x%d\n", name.take(22), qty))
+            }
+        }
+        sb.append("--------------------------------\n\n")
+
+        // 3. RESUMO POR FORMA DE PAGAMENTO
+        sb.append(ctx.getString(R.string.print_payment_summary_title)).append("\n")
+        reportSummary.paymentSummaries.forEach { pm ->
+            sb.append(String.format("%-18s %13s\n", pm.name.take(18), cm.format(pm.total)))
+        }
+        sb.append("--------------------------------\n\n")
+
+        // 4. RESUMO POR MOEDA
+        sb.append(ctx.getString(R.string.print_currency_summary_title)).append("\n")
+        reportSummary.currencySummaries.forEach { cs ->
+            val currCode = cs.currencyCode ?: "BRL"
+            sb.append(String.format("%-12s %19s\n", currCode, cm.formatExplicit(cs.total, currCode)))
+        }
+        sb.append("================================\n")
+        sb.append(String.format("${ctx.getString(R.string.print_total_sales_label)} %s\n", cm.format(reportSummary.totalSalesAmountBrl)))
+        sb.append("================================\n\n\n\n")
+
+        printReceipt(context, sb.toString())
     }
 
     /**
@@ -198,23 +279,24 @@ object PrinterHelper {
         currency: String,
         operatorName: String?
     ) {
-        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+        val ctx = getLocalizedContext(context)
+        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
+        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
         val facturaNum = "FAC-${System.currentTimeMillis() % 100000}"
         val cm = CurrencyManager.getInstance()
 
         val content = buildString {
-            append("*** FACTURA ELETRÔNICA ***\n")
-            append("(DOCUMENTO SIMULADO)\n")
+            append("${ctx.getString(R.string.print_electronic_invoice_title)}\n")
+            append("${ctx.getString(R.string.print_simulated_doc)}\n")
             append("--------------------------------\n")
-            append("Nº: $facturaNum\n")
-            append("DATA: $dateStr\n")
-            if (!operatorName.isNullOrBlank()) append("EMISSOR: $operatorName\n")
+            append("${ctx.getString(R.string.print_number_label)} $facturaNum\n")
+            append("${ctx.getString(R.string.print_date_label)} $dateStr\n")
+            if (!operatorName.isNullOrBlank()) append("${ctx.getString(R.string.print_issuer_label)} $operatorName\n")
             append("--------------------------------\n")
-            append("TOTAL: ${cm.format(total)} $currency\n")
+            append("${ctx.getString(R.string.print_total_label)} ${cm.format(total)} $currency\n")
             append("--------------------------------\n")
-            append("** EMISSÃO EM PROCESSAMENTO **\n")
-            append("Você receberá o documento\n")
-            append("no e-mail cadastrado.\n")
+            append("${ctx.getString(R.string.print_issuance_in_process)}\n")
+            append("${ctx.getString(R.string.print_invoice_email_notice)}\n")
         }
 
         printReceipt(context, content)

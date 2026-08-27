@@ -5,18 +5,17 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
-import com.plugpdv.pdv.database.LocalSaleDao
-import com.plugpdv.pdv.database.LocalSaleEntity
 import com.plugpdv.pdv.database.TaxEntity
 import com.plugpdv.pdv.models.SaleItem
 import com.plugpdv.pdv.models.SaleRequest
 import com.plugpdv.pdv.models.SaleResponse
 import com.plugpdv.pdv.models.ServiceFeeConfig
+import com.plugpdv.pdv.outbox.SaleSyncScheduler
+import com.plugpdv.pdv.repository.SaleOutboxRepository
 import com.plugpdv.pdv.repository.TaxRepository
-import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.Constants
+import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.ServiceFeeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
@@ -24,7 +23,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 sealed class SaleResult {
-    data class Success(val response: com.plugpdv.pdv.models.SaleResponse) : SaleResult()
+    data class Success(val response: SaleResponse) : SaleResult()
     data class Error(val message: String) : SaleResult()
 }
 
@@ -33,7 +32,8 @@ class DirectCheckoutViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val apiService: PosApiService,
     private val taxRepository: TaxRepository,
-    private val localSaleDao: LocalSaleDao
+    private val saleOutboxRepository: SaleOutboxRepository,
+    private val saleSyncScheduler: SaleSyncScheduler
 ) : ViewModel() {
 
     private val _cartItems = MutableLiveData<List<SaleViewModel.CartItem>>(emptyList())
@@ -54,8 +54,8 @@ class DirectCheckoutViewModel @Inject constructor(
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
 
-    private val _serviceFeeConfig = MutableLiveData<com.plugpdv.pdv.models.ServiceFeeConfig?>(null)
-    val serviceFeeConfig: LiveData<com.plugpdv.pdv.models.ServiceFeeConfig?> = _serviceFeeConfig
+    private val _serviceFeeConfig = MutableLiveData<ServiceFeeConfig?>(null)
+    val serviceFeeConfig: LiveData<ServiceFeeConfig?> = _serviceFeeConfig
 
     private val _serviceFeeAmount = MutableLiveData(0.0)
     val serviceFeeAmount: LiveData<Double> = _serviceFeeAmount
@@ -74,7 +74,6 @@ class DirectCheckoutViewModel @Inject constructor(
         if (cached != null) {
             applyServiceFeeConfig(cached)
         }
-        // A recarga da API será feita no init() quando o token explícito for passado
 
         taxRepository.getActiveTaxesLiveData().observeForever {
             _activeTaxes.value = it ?: emptyList()
@@ -88,10 +87,6 @@ class DirectCheckoutViewModel @Inject constructor(
         Log.d("DirectCheckoutVM", "Config aplicada: allowOverride=${config.allowOverride}, fixedEnabled=${config.fixedEnabled}")
     }
 
-    /**
-     * Relê o service_fee diretamente da API /api-taxes sem depender do cache.
-     * Isso garante que allow_override aparecerá mesmo se o cache estiver vazio.
-     */
     private fun reloadServiceFeeConfig(tokenOverride: String? = null) {
         val prefs = context.getSharedPreferences(Constants.PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val token = tokenOverride ?: prefs.getString(Constants.TOKEN, null) ?: run {
@@ -204,43 +199,22 @@ class DirectCheckoutViewModel @Inject constructor(
             try {
                 _isLoading.value = true
 
-                // 1. Salvar localmente ANTES de chamar a API
-                val localSale = LocalSaleEntity(
-                    localId = localId,
-                    timestamp = System.currentTimeMillis(),
-                    total = finalToPay,
-                    currency = currency,
-                    paymentMethod = method,
-                    operatorId = operatorId,
-                    operatorName = operatorName,
-                    sessionId = sessionId,
-                    itemsJson = Gson().toJson(items),
-                    syncedToApi = false
-                )
-                localSaleDao.insert(localSale)
-                Log.d("DirectCheckoutViewModel", "Venda salva localmente. localId: $localId")
+                // 1. Salvar snapshot imutável da venda na Outbox (Room) ANTES de liberar a UI
+                saleOutboxRepository.enqueueSale(saleRequest, currency, localId)
+                Log.d("DirectCheckoutViewModel", "Venda salva na Outbox com sucesso. localId: $localId")
 
-                // 2. Libera a tela IMEDIATAMENTE ("Piscou, imprimiu")
+                // 2. Libera a tela IMEDIATAMENTE ("Piscou, imprimiu") apenas após confirmação do salvamento local
                 val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = method)
                 _saleResult.value = SaleResult.Success(fakeResponse)
 
-                // 3. Tenta subir para a nuvem em background de forma independente da tela
-                @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        Log.d("DirectCheckoutViewModel", "Registrando venda na API (Background)...")
-                        val response = apiService.registerSale("Bearer $token", saleRequest)
-                        localSaleDao.markAsSynced(localId, response.id ?: "")
-                        Log.d("DirectCheckoutViewModel", "Venda registrada com sucesso na API! ID: ${response.id}")
-                    } catch (e: Exception) {
-                        Log.e("DirectCheckoutViewModel", "Sync de background falhou, ficará offline: ${e.message}")
-                    }
-                }
+                // 3. Agenda sincronização via WorkManager (durável, retoma se o app fechar/reiniciar)
+                saleSyncScheduler.scheduleSync(context)
 
             } catch (e: Exception) {
-                Log.e("DirectCheckoutViewModel", "Erro fatal ao salvar localmente: ${e.message}")
+                Log.e("DirectCheckoutViewModel", "Erro fatal ao salvar venda localmente na Outbox: ${e.message}")
                 e.printStackTrace()
-                _saleResult.value = SaleResult.Error("Falha crítica ao salvar venda: ${e.message}")
+                // Requisito 15: se o Room não conseguir persistir localmente, exibe erro e permite nova tentativa
+                _saleResult.value = SaleResult.Error("Falha crítica ao salvar venda localmente: ${e.message}")
             } finally {
                 _isLoading.value = false
             }
