@@ -62,9 +62,109 @@ class CurrencyManager private constructor() {
     }
 
     /**
+     * Retorna a taxa relativa ao BRL para uma moeda como BigDecimal exato.
+     * Retorna null se não houver taxa registrada (fail-closed).
+     */
+    fun getRateForCurrencyExact(code: String): java.math.BigDecimal? {
+        val upper = code.uppercase()
+        if (upper == "BRL") return java.math.BigDecimal.ONE
+        val currentRates = rates?.moedas ?: return null
+        for (rate in currentRates) {
+            if (rate.codigo.equals(upper, ignoreCase = true)) {
+                return if (rate.taxa != 0.0) java.math.BigDecimal.valueOf(rate.taxa) else null
+            }
+        }
+        return null
+    }
+
+    /**
+     * Normaliza todas as cotações para a moeda-base especificada (Option A).
+     * Retorna mapa determinístico de strings decimais canônicas.
+     */
+    fun getNormalizedSnapshotForBase(baseCurrency: String): Map<String, String> {
+        val upperBase = baseCurrency.uppercase()
+        val result = mutableMapOf<String, String>()
+        val baseRateToBrl = getRateForCurrencyExact(upperBase) ?: java.math.BigDecimal.ONE
+
+        result[upperBase] = "1"
+        if (upperBase != "BRL") {
+            val brlPerBase = java.math.BigDecimal.ONE.divide(baseRateToBrl, 6, java.math.RoundingMode.HALF_UP)
+            result["BRL"] = brlPerBase.stripTrailingZeros().toPlainString()
+        }
+
+        rates?.moedas?.forEach { r ->
+            val code = r.codigo.uppercase()
+            if (code != upperBase) {
+                val rRateToBrl = java.math.BigDecimal.valueOf(r.taxa)
+                val ratePerBase = rRateToBrl.divide(baseRateToBrl, 6, java.math.RoundingMode.HALF_UP)
+                result[code] = ratePerBase.stripTrailingZeros().toPlainString()
+            }
+        }
+        return result
+    }
+
+    /**
+     * Converte valor financeiro com precisão estrita BigDecimal, fail-closed e normalização.
+     */
+    fun convertMoneyExact(
+        amount: java.math.BigDecimal,
+        fromCurrency: String,
+        toCurrency: String,
+        baseCurrency: String? = null
+    ): Result<MoneyQuote> {
+        val fromUpper = fromCurrency.uppercase()
+        val toUpper = toCurrency.uppercase()
+        val targetBase = (baseCurrency ?: getBaseCurrency()).uppercase()
+
+        if (fromUpper == toUpper) {
+            val quote = MoneyQuote(
+                transactionAmount = MoneyDecimal.roundToCurrency(amount, toUpper),
+                transactionCurrency = toUpper,
+                baseAmount = MoneyDecimal.roundToCurrency(amount, targetBase),
+                baseCurrency = targetBase,
+                fxRate = java.math.BigDecimal.ONE,
+                snapshot = getNormalizedSnapshotForBase(targetBase)
+            )
+            return Result.success(quote)
+        }
+
+        val rateFromBrl = getRateForCurrencyExact(fromUpper)
+            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $fromUpper"))
+        val rateToBrl = getRateForCurrencyExact(toUpper)
+            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $toUpper"))
+
+        // Cross-rate: unidades de toCurrency por 1 unidade de fromCurrency
+        val crossRate = rateToBrl.divide(rateFromBrl, 8, java.math.RoundingMode.HALF_UP)
+        val convertedAmount = amount.multiply(crossRate)
+
+        // Se a moeda de destino for a moeda da transação e a origem a base:
+        val fxRateForBase = if (fromUpper == targetBase) crossRate else {
+            val rateTargetBaseBrl = getRateForCurrencyExact(targetBase) ?: java.math.BigDecimal.ONE
+            rateToBrl.divide(rateTargetBaseBrl, 8, java.math.RoundingMode.HALF_UP)
+        }
+
+        val baseAmount = if (fromUpper == targetBase) {
+            MoneyDecimal.roundToCurrency(amount, targetBase)
+        } else {
+            val amountInBrl = amount.divide(rateFromBrl, 8, java.math.RoundingMode.HALF_UP)
+            val rateTargetBaseBrl = getRateForCurrencyExact(targetBase) ?: java.math.BigDecimal.ONE
+            MoneyDecimal.roundToCurrency(amountInBrl.multiply(rateTargetBaseBrl), targetBase)
+        }
+
+        val quote = MoneyQuote(
+            transactionAmount = MoneyDecimal.roundToCurrency(convertedAmount, toUpper),
+            transactionCurrency = toUpper,
+            baseAmount = baseAmount,
+            baseCurrency = targetBase,
+            fxRate = fxRateForBase.stripTrailingZeros(),
+            snapshot = getNormalizedSnapshotForBase(targetBase)
+        )
+        return Result.success(quote)
+    }
+
+    /**
      * Retorna a taxa relativa ao BRL para uma moeda.
      * Na API de câmbio, a base de todas as cotações é "BRL".
-     * Exemplo: BRL=1.0, PYG=1189.82, USD=0.20
      */
     fun getRateForCurrency(code: String): Double {
         if (code.equals("BRL", ignoreCase = true)) return 1.0
@@ -79,7 +179,6 @@ class CurrencyManager private constructor() {
 
     /**
      * Converte QUALQUER valor da moeda 'fromCurrency' para BRL.
-     * Exemplo: 15.000 PYG / 1189.82 = 12.6069 BRL
      */
     fun toBrl(amount: Double, fromCurrency: String): Double {
         if (fromCurrency.equals("BRL", ignoreCase = true)) return amount
@@ -89,7 +188,6 @@ class CurrencyManager private constructor() {
 
     /**
      * Converte QUALQUER valor em BRL para a moeda 'toCurrency'.
-     * Exemplo: 12.6069 BRL * 1189.82 = 15.000 PYG
      */
     fun fromBrl(amountInBrl: Double, toCurrency: String): Double {
         if (toCurrency.equals("BRL", ignoreCase = true)) return amountInBrl

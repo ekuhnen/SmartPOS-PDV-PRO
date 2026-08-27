@@ -8,6 +8,8 @@ data class SaleRequest(
     val items: List<SaleItem>,
     @SerializedName("payment_method") val paymentMethod: String,
     val currency: String = "BRL",
+    @SerializedName("payment_currency") val paymentCurrency: String? = null,
+    @SerializedName("exchange_rates_snapshot") val exchangeRatesSnapshot: Map<String, String>? = null,
     @SerializedName("caixa_session_id") var caixa_session_id: String? = null,
     @SerializedName("operator_id") var operatorId: String? = null,
     @SerializedName("operator_name") var operatorName: String? = null,

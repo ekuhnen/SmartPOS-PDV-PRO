@@ -9,6 +9,7 @@ import com.plugpdv.pdv.models.*
 import com.plugpdv.pdv.repository.TaxRepository
 import android.content.Context
 import com.plugpdv.pdv.utils.CurrencyManager
+import com.plugpdv.pdv.utils.MoneyDecimal
 import com.plugpdv.pdv.utils.PaymentMethod
 import com.plugpdv.pdv.utils.ServiceFeeManager
 import com.plugpdv.pdv.utils.TableManager
@@ -229,11 +230,10 @@ class CheckoutViewModel @Inject constructor(
             try {
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
                 val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
-                val serverPaidInCurrency = if (detail.totalPago > 0) detail.totalPago else detail.pagamentos.sumOf { it.valor }
-                val serverPaidBrl = cm.toBrl(serverPaidInCurrency, currentCurrency)
+                val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
 
-                if (serverPaidBrl > 0) {
-                    currentTable.paidAmount = serverPaidBrl
+                if (serverPaidBase > 0) {
+                    currentTable.paidAmount = serverPaidBase
                     TableManager.updateTable(currentTable)
                 }
 
@@ -373,19 +373,38 @@ class CheckoutViewModel @Inject constructor(
         calculateFinalAmount()
     }
 
-    private fun buildCommitRequest(method: PaymentMethod, manualAmount: Double? = null): CommandCheckoutCommitRequest {
+    private fun buildCommitRequest(
+        method: PaymentMethod,
+        manualAmount: Double? = null,
+        manualCurrency: String? = null,
+        manualBaseAmount: Double? = null
+    ): CommandCheckoutCommitRequest {
         val currentTable = table ?: throw IllegalStateException("Table is null")
         val cm = CurrencyManager.getInstance()
-        val currentCurrency = cm.selectedCurrency
+        val baseCurrency = cm.getBaseCurrency()
+        val currentCurrency = manualCurrency ?: cm.selectedCurrency
 
-        val amountToPay = manualAmount ?: _uiState.value.finalToPay
-        val baseAmountToPay = if (manualAmount != null) {
-            cm.convertToBrl(manualAmount)
+        val amountToPayBigDecimal = if (manualAmount != null) {
+            MoneyDecimal.of(manualAmount)
         } else {
-            _uiState.value.currentToPay
+            MoneyDecimal.of(_uiState.value.finalToPay)
         }
 
-        val isFinalPayment = (currentTable.getPendingBalance() - baseAmountToPay) <= 0.01
+        val baseAmountBigDecimal = if (manualBaseAmount != null) {
+            MoneyDecimal.of(manualBaseAmount)
+        } else {
+            MoneyDecimal.of(_uiState.value.currentToPay)
+        }
+
+        val quote = cm.convertMoneyExact(
+            amountToPayBigDecimal,
+            currentCurrency,
+            currentCurrency,
+            baseCurrency
+        ).getOrNull()
+
+        val normalizedSnapshot = cm.getNormalizedSnapshotForBase(baseCurrency)
+        val isFinalPayment = (currentTable.getPendingBalance() - baseAmountBigDecimal.toDouble()) <= 0.01
 
         val shouldRegisterSale = when (_uiState.value.splitMode) {
             0 -> true
@@ -411,14 +430,17 @@ class CheckoutViewModel @Inject constructor(
             comandaId = currentTable.comandaId ?: "",
             mesaId = currentTable.id,
             forma = method.apiValue,
-            valor = amountToPay,
+            valor = amountToPayBigDecimal,
             moeda = currentCurrency,
+            valorBase = baseAmountBigDecimal,
+            baseCurrency = baseCurrency,
+            fxRate = quote?.fxRate ?: java.math.BigDecimal.ONE,
+            exchangeRatesSnapshot = normalizedSnapshot,
             shouldRegisterSale = shouldRegisterSale,
             saleItems = saleItems,
-            discount = 0.0,
-            serviceFee = sfAmount2,
-            serviceFeeKind = sfKind2,
-            valorBase = baseAmountToPay
+            discount = java.math.BigDecimal.ZERO,
+            serviceFee = MoneyDecimal.of(sfAmount2),
+            serviceFeeKind = sfKind2
         )
     }
 
@@ -428,12 +450,7 @@ class CheckoutViewModel @Inject constructor(
         manualCurrency: String? = null,
         manualBaseAmount: Double? = null
     ): String {
-        val request = buildCommitRequest(method, manualAmount)
-        val finalRequest = if (manualAmount != null && manualCurrency != null && manualBaseAmount != null) {
-            request.copy(valor = manualAmount, moeda = manualCurrency, valorBase = manualBaseAmount)
-        } else {
-            request
-        }
+        val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount)
         val key = java.util.UUID.randomUUID().toString()
         val gson = com.google.gson.Gson()
 
@@ -525,12 +542,7 @@ class CheckoutViewModel @Inject constructor(
 
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val request = buildCommitRequest(method, manualAmount)
-                val finalRequest = if (manualAmount != null && manualCurrency != null && manualBaseAmount != null) {
-                    request.copy(valor = manualAmount, moeda = manualCurrency, valorBase = manualBaseAmount)
-                } else {
-                    request
-                }
+                val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount)
                 val key = java.util.UUID.randomUUID().toString()
 
                 val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
@@ -544,7 +556,7 @@ class CheckoutViewModel @Inject constructor(
                 )
 
                 outboxDao.insert(entity)
-                Log.d("CheckoutViewModel", "Operação de checkout DINHEIRO K=$key enfileirada no Room")
+                Log.d("CheckoutViewModel", "Operação de checkout manual K=$key persistida na Outbox (PENDING)")
 
                 outboxSyncManager.triggerSync()
                 saleSyncScheduler.scheduleSync(context)
@@ -556,15 +568,18 @@ class CheckoutViewModel @Inject constructor(
                         paymentSuccess = false,
                         isPendingSync = true,
                         isPayButtonBlocked = true,
-                        blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
+                        blockReason = "Pagamento aguardando sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
                         lastPaymentAmount = amountToPay
                     )
                 }
             } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "Erro ao registrar checkout em dinheiro: ${e.message}")
+                Log.e("CheckoutViewModel", "Erro ao registrar checkout localmente: ${e.message}")
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao registrar checkout: ${e.message}")
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        error = "Erro ao registrar pagamento na Outbox: ${e.message}"
+                    )
                 }
             }
         }

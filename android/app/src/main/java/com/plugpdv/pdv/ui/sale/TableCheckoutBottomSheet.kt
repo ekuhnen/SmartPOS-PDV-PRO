@@ -258,7 +258,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 else -> payment.forma
             }
             rowBinding.tvLabel.text = formaLabel
-            rowBinding.tvValue.text = cm.format(payment.valor)
+            rowBinding.tvValue.text = cm.formatExplicit(payment.valor, payment.moeda)
             context?.let { ctx ->
                 rowBinding.tvValue.setTextColor(ctx.getColor(R.color.success))
             }

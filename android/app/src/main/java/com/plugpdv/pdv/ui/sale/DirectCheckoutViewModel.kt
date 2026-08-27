@@ -177,7 +177,10 @@ class DirectCheckoutViewModel @Inject constructor(
         } ?: emptyList()
 
         val finalToPay = manualAmount ?: (_finalTotal.value ?: 0.0)
-        val currency = CurrencyManager.getInstance().selectedCurrency
+        val cm = CurrencyManager.getInstance()
+        val currency = cm.selectedCurrency
+        val baseCurrency = cm.getBaseCurrency()
+        val snapshot = cm.getNormalizedSnapshotForBase(baseCurrency)
 
         val saleRequest = SaleRequest(
             customerName = "Consumidor Final",
@@ -185,6 +188,8 @@ class DirectCheckoutViewModel @Inject constructor(
             items = items,
             paymentMethod = method,
             currency = currency,
+            paymentCurrency = currency,
+            exchangeRatesSnapshot = snapshot,
             caixa_session_id = sessionId,
             operatorId = operatorId,
             operatorName = operatorName,

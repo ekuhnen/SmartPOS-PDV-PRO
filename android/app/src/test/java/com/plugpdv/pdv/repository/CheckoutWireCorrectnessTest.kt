@@ -37,9 +37,9 @@ class CheckoutWireCorrectnessTest {
         assertTrue(json.contains("\"valor_base\":50.0"))
 
         val deserialized = gson.fromJson(json, CommandCheckoutCommitRequest::class.java)
-        assertEquals(350000.0, deserialized.valor, 0.001)
+        assertEquals(350000.0, deserialized.valor.toDouble(), 0.001)
         assertEquals("PYG", deserialized.moeda)
-        assertEquals(50.0, deserialized.valorBase!!, 0.001)
+        assertEquals(50.0, deserialized.valorBase!!.toDouble(), 0.001)
     }
 
     @Test
