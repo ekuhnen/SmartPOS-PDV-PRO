@@ -36,4 +36,7 @@ interface PaymentAttemptDao {
 
     @Query("SELECT * FROM payment_attempts ORDER BY startedAt DESC LIMIT 50")
     fun getRecentAttemptsFlow(): Flow<List<PaymentAttemptEntity>>
+
+    @Query("DELETE FROM payment_attempts WHERE reference = :reference")
+    suspend fun deleteByReference(reference: String)
 }

@@ -63,4 +63,7 @@ interface OutboxDao {
 
     @Query("SELECT MIN(createdAt) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     suspend fun getOldestPendingTimestamp(): Long?
+
+    @Query("DELETE FROM outbox_operations WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

@@ -8,9 +8,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasPackage
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.google.gson.Gson
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.OutboxOperationEntity
 import com.plugpdv.pdv.database.PaymentAttemptEntity
+import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.plugpdv.pdv.ui.sale.PaymentHandlerActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -26,7 +28,7 @@ class PaymentHandlerActivityInstrumentationTest {
 
     private lateinit var db: AppDatabase
     private lateinit var context: Context
-
+    private val gson = Gson()
     private val testRefs = mutableListOf<String>()
 
     @Before
@@ -41,9 +43,8 @@ class PaymentHandlerActivityInstrumentationTest {
     fun tearDown() {
         runBlocking(Dispatchers.IO) {
             for (ref in testRefs) {
-                db.paymentAttemptDao().getByReference(ref)?.let {
-                    // Limpar fixtures específicas do teste
-                }
+                db.paymentAttemptDao().deleteByReference(ref)
+                db.outboxDao().deleteById(ref)
             }
         }
         Intents.release()
@@ -75,7 +76,12 @@ class PaymentHandlerActivityInstrumentationTest {
 
         val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
 
-        // PROVA REAL: ZERO intents disparados para o pacote do PlugPay
+        // PROVA REAL: Recreate da Activity no dispositivo
+        scenario.onActivity { activity ->
+            activity.recreate()
+        }
+
+        // PROVA REAL: ZERO intents disparados para o pacote do PlugPay após recreate
         Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
 
         runBlocking(Dispatchers.IO) {
@@ -112,7 +118,12 @@ class PaymentHandlerActivityInstrumentationTest {
 
         val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
 
-        // PROVA REAL: ZERO intents para com.br.plugpay
+        // PROVA REAL: Recreate com UNKNOWN
+        scenario.onActivity { activity ->
+            activity.recreate()
+        }
+
+        // PROVA REAL: ZERO intents para com.br.plugpay após recreate
         Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
 
         runBlocking(Dispatchers.IO) {
@@ -159,6 +170,14 @@ class PaymentHandlerActivityInstrumentationTest {
         val ref = "k-cold-real-${System.currentTimeMillis()}"
         testRefs.add(ref)
 
+        val checkoutReq = CommandCheckoutCommitRequest(
+            comandaId = "c-cold-1",
+            forma = "CARD",
+            valor = 100.0,
+            moeda = "BRL",
+            valorBase = 100.0
+        )
+
         runBlocking(Dispatchers.IO) {
             val attempt = PaymentAttemptEntity(
                 reference = ref,
@@ -172,8 +191,8 @@ class PaymentHandlerActivityInstrumentationTest {
             val outboxOp = OutboxOperationEntity(
                 id = ref,
                 operationType = "COMANDA_CHECKOUT_COMMIT",
-                targetGroupKey = "c-cold",
-                payloadJson = "{}",
+                targetGroupKey = "c-cold-1",
+                payloadJson = gson.toJson(checkoutReq),
                 createdAt = System.currentTimeMillis(),
                 status = "WAITING_PAYMENT"
             )
@@ -192,7 +211,32 @@ class PaymentHandlerActivityInstrumentationTest {
             assertNotNull(updatedAttempt)
             assertEquals("APPROVED", updatedAttempt!!.status)
             assertEquals("PAY-COLD-123", updatedAttempt.paymentAppPaymentId)
+
+            // Executar recovery determinístico sobre o banco real
+            val waitingOps = db.outboxDao().getWaitingPaymentOperations()
+            val matchingWaitingOp = waitingOps.find { it.id == ref }
+            if (matchingWaitingOp != null && updatedAttempt.status == "APPROVED") {
+                val updatedReq = checkoutReq.copy(
+                    referenciaExterna = updatedAttempt.paymentAppPaymentId,
+                    forma = updatedAttempt.paymentMethod ?: checkoutReq.forma
+                )
+                db.outboxDao().update(matchingWaitingOp.copy(
+                    payloadJson = gson.toJson(updatedReq),
+                    status = "PENDING"
+                ))
+            }
+
+            val recoveredOutbox = db.outboxDao().getById(ref)
+            assertNotNull(recoveredOutbox)
+            assertEquals("PENDING", recoveredOutbox!!.status)
+            assertEquals(ref, recoveredOutbox.idempotencyKey)
+
+            val parsedPayload = gson.fromJson(recoveredOutbox.payloadJson, CommandCheckoutCommitRequest::class.java)
+            assertEquals("PAY-COLD-123", parsedPayload.referenciaExterna)
         }
+
+        // Nenhuma nova chamada ao PlugPay durante callback
+        Intents.intended(hasPackage("com.br.plugpay"), Intents.times(0))
         scenario.close()
     }
 

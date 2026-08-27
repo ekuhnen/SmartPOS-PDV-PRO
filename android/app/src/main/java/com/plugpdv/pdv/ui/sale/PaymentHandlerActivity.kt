@@ -412,6 +412,11 @@ class PaymentHandlerActivity : BaseActivity() {
     }
 
     private fun showUndeterminedPaymentDialog(attempt: PaymentAttemptEntity, tableNum: String?) {
+        if (isFinishing || isDestroyed) return
+        val existing = supportFragmentManager.findFragmentByTag(UndeterminedPaymentBottomSheet.TAG)
+        if (existing != null) {
+            return
+        }
         val sheet = UndeterminedPaymentBottomSheet.newInstance(
             attempt = attempt,
             onRetryCheck = {
