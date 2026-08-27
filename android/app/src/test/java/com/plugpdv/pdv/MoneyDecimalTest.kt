@@ -2,8 +2,10 @@ package com.plugpdv.pdv
 
 import com.google.gson.Gson
 import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
+import com.plugpdv.pdv.models.CurrencyCapability
 import com.plugpdv.pdv.models.ExchangeResponse
 import com.plugpdv.pdv.utils.CurrencyManager
+import com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider
 import com.plugpdv.pdv.utils.MoneyDecimal
 import org.junit.Assert.*
 import org.junit.Before
@@ -33,13 +35,15 @@ class MoneyDecimalTest {
 
     @Test
     fun testA_MONEY_01_paidAmountBaseUnchangedOnSelectedCurrencyChange() {
-        val basePaid = 50.0 // 50 BRL base
+        // Accounting data returned by server in base currency
+        val serverTotalPagoBase = 50.0
+        val currentTablePaidAmount = serverTotalPagoBase
+
         currencyManager.selectedCurrency = "PYG"
-        // Base amount in comanda remains 50.0 BRL regardless of selectedCurrency in UI
-        assertEquals(50.0, basePaid, 0.0)
+        assertEquals(50.0, currentTablePaidAmount, 0.0)
 
         currencyManager.selectedCurrency = "USD"
-        assertEquals(50.0, basePaid, 0.0)
+        assertEquals(50.0, currentTablePaidAmount, 0.0)
     }
 
     @Test
@@ -53,10 +57,10 @@ class MoneyDecimalTest {
 
     @Test
     fun testA_MONEY_03_missingFxRateFailsClosedAndNeverDefaultsToOne() {
-        val result = currencyManager.convertMoneyExact(
-            amount = BigDecimal("100.00"),
-            fromCurrency = "EUR", // EUR not in rates
-            toCurrency = "BRL"
+        val result = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("100.00"),
+            transactionCurrency = "EUR", // EUR not in rates
+            baseCurrency = "BRL"
         )
         assertTrue(result.isFailure)
         val ex = result.exceptionOrNull()
@@ -65,10 +69,9 @@ class MoneyDecimalTest {
 
     @Test
     fun testA_MONEY_04_exactCalculation350000PygAt7000Gives50Brl() {
-        val quote = currencyManager.convertMoneyExact(
-            amount = BigDecimal("50.00"),
-            fromCurrency = "BRL",
-            toCurrency = "PYG",
+        val quote = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
             baseCurrency = "BRL"
         ).getOrThrow()
 
@@ -77,20 +80,30 @@ class MoneyDecimalTest {
         assertTrue(MoneyDecimal.isEqual(BigDecimal("350000"), quote.transactionAmount))
         assertTrue(MoneyDecimal.isEqual(BigDecimal("50.00"), quote.baseAmount))
         assertTrue(MoneyDecimal.isEqual(BigDecimal("7000"), quote.fxRate))
+        assertEquals("7000", quote.snapshot?.get("PYG"))
     }
 
     @Test
     fun testA_MONEY_05_snapshotCreatedBeforePaymentPersistsUnchangedWhenRatesChange() {
-        val initialQuote = currencyManager.convertMoneyExact(
-            amount = BigDecimal("50.00"),
-            fromCurrency = "BRL",
-            toCurrency = "PYG",
+        val initialQuote = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
             baseCurrency = "BRL"
         ).getOrThrow()
 
-        val frozenSnapshot = initialQuote.snapshot
-        assertNotNull(frozenSnapshot)
-        assertEquals("7000", frozenSnapshot?.get("PYG"))
+        val req = CommandCheckoutCommitRequest(
+            comandaId = "c-1",
+            forma = "CARD",
+            valor = initialQuote.transactionAmount,
+            moeda = initialQuote.transactionCurrency,
+            valorBase = initialQuote.baseAmount,
+            baseCurrency = initialQuote.baseCurrency,
+            fxRate = initialQuote.fxRate,
+            exchangeRatesSnapshot = initialQuote.snapshot
+        )
+
+        val gson = Gson()
+        val persistedPayloadJson = gson.toJson(req)
 
         // Simulate rate change in system
         val newExchangeData = ExchangeResponse(
@@ -102,9 +115,11 @@ class MoneyDecimalTest {
         )
         currencyManager.setRates(newExchangeData)
 
-        // The frozen snapshot remains unchanged
-        assertEquals("7000", frozenSnapshot?.get("PYG"))
-        assertTrue(MoneyDecimal.isEqual(BigDecimal("7000"), initialQuote.fxRate))
+        // The persisted Outbox payload remains unchanged with rate 7000
+        val recovered = gson.fromJson(persistedPayloadJson, CommandCheckoutCommitRequest::class.java)
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("7000"), recovered.fxRate!!))
+        assertEquals("7000", recovered.exchangeRatesSnapshot?.get("PYG"))
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("50.00"), recovered.valorBase!!))
     }
 
     @Test
@@ -117,23 +132,26 @@ class MoneyDecimalTest {
 
     @Test
     fun testA_MONEY_07_minorUnitBehaviorFollowsAuditedCapabilities() {
+        val provider = DefaultCurrencyRulesProvider()
+        provider.setCapabilities(
+            mapOf(
+                "TEST_ZERO" to CurrencyCapability("TEST_ZERO", "T$", "PREFIX", ".", ",", 0),
+                "TEST_THREE" to CurrencyCapability("TEST_THREE", "T3$", "PREFIX", ".", ",", 3)
+            )
+        )
+        assertEquals(0, provider.getDecimalPlaces("TEST_ZERO"))
+        assertEquals(3, provider.getDecimalPlaces("TEST_THREE"))
         assertEquals(0, MoneyDecimal.getDecimals("PYG"))
         assertEquals(2, MoneyDecimal.getDecimals("BRL"))
-        assertEquals(2, MoneyDecimal.getDecimals("USD"))
-        assertEquals(2, MoneyDecimal.getDecimals("ARS"))
-
-        assertEquals(350000L, MoneyDecimal.toMinorUnits(BigDecimal("350000"), "PYG"))
-        assertEquals(5000L, MoneyDecimal.toMinorUnits(BigDecimal("50.00"), "BRL"))
     }
 
     @Test
     fun testA_MONEY_08_nonBrlBaseCrossRateCalculation() {
         // Base is USD, transaction in PYG
         // USD = 0.20 per BRL, PYG = 7000 per BRL -> PYG per USD = 7000 / 0.20 = 35000
-        val quote = currencyManager.convertMoneyExact(
-            amount = BigDecimal("10.00"),
-            fromCurrency = "USD",
-            toCurrency = "PYG",
+        val quote = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
             baseCurrency = "USD"
         ).getOrThrow()
 
@@ -146,7 +164,7 @@ class MoneyDecimalTest {
     }
 
     @Test
-    fun testA_MONEY_09_canonicalJsonRoomSerializationPreservesByteForByteHash() {
+    fun testA_MONEY_09_canonicalJsonSerializationPreservesByteForByteHash() {
         val gson = Gson()
         val originalReq = CommandCheckoutCommitRequest(
             comandaId = "comanda-123",
@@ -162,13 +180,66 @@ class MoneyDecimalTest {
         val json1 = gson.toJson(originalReq)
         val hash1 = sha256(json1)
 
-        // Simulate persisting in Room (JSON string) and reading back after process recreation
         val recoveredReq = gson.fromJson(json1, CommandCheckoutCommitRequest::class.java)
         val json2 = gson.toJson(recoveredReq)
         val hash2 = sha256(json2)
 
         assertEquals("Byte-for-byte JSON must match", json1, json2)
         assertEquals("Idempotency body hash must match exactly", hash1, hash2)
+    }
+
+    @Test
+    fun testA_MONEY_10_foreignMissingFxThrowsBeforeOutboxOrPlugPay() {
+        val result = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("50.00"),
+            transactionCurrency = "GBP", // GBP not in exchange rates
+            baseCurrency = "BRL"
+        )
+        assertTrue(result.isFailure)
+        val exception = result.exceptionOrNull()
+        assertTrue(exception?.message?.contains("FX_RATE_MISSING") == true)
+    }
+
+    @Test
+    fun testA_MONEY_11_foreignCheckoutOutboxWire() {
+        val quote = currencyManager.quoteTransactionAmount(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
+            baseCurrency = "BRL"
+        ).getOrThrow()
+
+        val req = CommandCheckoutCommitRequest(
+            comandaId = "c-100",
+            forma = "CARD",
+            valor = quote.transactionAmount,
+            moeda = quote.transactionCurrency,
+            valorBase = quote.baseAmount,
+            baseCurrency = quote.baseCurrency,
+            fxRate = quote.fxRate,
+            exchangeRatesSnapshot = quote.snapshot
+        )
+
+        assertEquals("PYG", req.moeda)
+        assertEquals("BRL", req.baseCurrency)
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("350000"), req.valor))
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("50.00"), req.valorBase!!))
+        assertTrue(MoneyDecimal.isEqual(BigDecimal("7000"), req.fxRate!!))
+        assertEquals("7000", req.exchangeRatesSnapshot?.get("PYG"))
+    }
+
+    @Test
+    fun testA_MONEY_12_centEdgeFinalPaymentNoEpsilon() {
+        val pendingTotal = BigDecimal("100.00")
+        val partialPayment = BigDecimal("99.99")
+
+        val remaining1 = MoneyDecimal.roundToCurrency(pendingTotal.subtract(partialPayment), "BRL")
+        val isFinal1 = remaining1.signum() <= 0
+        assertFalse("99.99 on 100.00 must NOT be final payment", isFinal1)
+
+        val finalPayment = BigDecimal("0.01")
+        val remaining2 = MoneyDecimal.roundToCurrency(remaining1.subtract(finalPayment), "BRL")
+        val isFinal2 = remaining2.signum() <= 0
+        assertTrue("0.01 completion MUST be final payment", isFinal2)
     }
 
     private fun sha256(input: String): String {

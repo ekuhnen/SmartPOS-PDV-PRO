@@ -359,29 +359,34 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
                     lifecycleScope.launch {
-                        val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
-                        pendingCheckoutOperationId = operationKey
+                        try {
+                            val operationKey = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
+                            pendingCheckoutOperationId = operationKey
 
-                        val cm = CurrencyManager.getInstance()
-                        val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-                        val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
+                            val cm = CurrencyManager.getInstance()
+                            val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                            val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
-                        val activeTaxes = viewModel.uiState.value.activeTaxes
-                        val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
+                            val activeTaxes = viewModel.uiState.value.activeTaxes
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
 
-                        val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
-                            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, operationKey)
-                            putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, operationKey)
-                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
-                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
-                            putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
-                            putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
-                            putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
-                            putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
-                            putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
-                            putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
+                            val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
+                                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, operationKey)
+                                putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, operationKey)
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
+                                putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
+                                putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
+                                putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
+                                putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
+                                putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
+                            }
+                            paymentLauncher.launch(intent)
+                        } catch (e: Exception) {
+                            Log.e("TableCheckoutBottomSheet", "Erro ao preparar checkout: ${e.message}")
+                            Toast.makeText(context, "Erro ao iniciar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
                         }
-                        paymentLauncher.launch(intent)
                     }
                 }
             }

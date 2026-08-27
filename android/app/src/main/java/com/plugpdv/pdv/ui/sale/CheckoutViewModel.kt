@@ -390,21 +390,23 @@ class CheckoutViewModel @Inject constructor(
             MoneyDecimal.of(_uiState.value.finalToPay)
         }
 
-        val baseAmountBigDecimal = if (manualBaseAmount != null) {
-            MoneyDecimal.of(manualBaseAmount)
-        } else {
-            MoneyDecimal.of(_uiState.value.currentToPay)
-        }
-
-        val quote = cm.convertMoneyExact(
+        val quote = cm.quoteTransactionAmount(
             amountToPayBigDecimal,
             currentCurrency,
-            currentCurrency,
             baseCurrency
-        ).getOrNull()
+        ).getOrElse {
+            throw IllegalStateException(it.message ?: "FX_RATE_MISSING")
+        }
 
-        val normalizedSnapshot = cm.getNormalizedSnapshotForBase(baseCurrency)
-        val isFinalPayment = (currentTable.getPendingBalance() - baseAmountBigDecimal.toDouble()) <= 0.01
+        val pendingBase = MoneyDecimal.roundToCurrency(
+            MoneyDecimal.of(currentTable.getPendingBalance()),
+            baseCurrency
+        )
+        val remaining = MoneyDecimal.roundToCurrency(
+            pendingBase.subtract(quote.baseAmount),
+            baseCurrency
+        )
+        val isFinalPayment = remaining.signum() <= 0
 
         val shouldRegisterSale = when (_uiState.value.splitMode) {
             0 -> true
@@ -430,12 +432,12 @@ class CheckoutViewModel @Inject constructor(
             comandaId = currentTable.comandaId ?: "",
             mesaId = currentTable.id,
             forma = method.apiValue,
-            valor = amountToPayBigDecimal,
-            moeda = currentCurrency,
-            valorBase = baseAmountBigDecimal,
-            baseCurrency = baseCurrency,
-            fxRate = quote?.fxRate ?: java.math.BigDecimal.ONE,
-            exchangeRatesSnapshot = normalizedSnapshot,
+            valor = quote.transactionAmount,
+            moeda = quote.transactionCurrency,
+            valorBase = quote.baseAmount,
+            baseCurrency = quote.baseCurrency,
+            fxRate = quote.fxRate,
+            exchangeRatesSnapshot = quote.snapshot,
             shouldRegisterSale = shouldRegisterSale,
             saleItems = saleItems,
             discount = java.math.BigDecimal.ZERO,

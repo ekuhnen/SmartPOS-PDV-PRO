@@ -180,7 +180,7 @@ class DirectCheckoutViewModel @Inject constructor(
         val cm = CurrencyManager.getInstance()
         val currency = cm.selectedCurrency
         val baseCurrency = cm.getBaseCurrency()
-        val snapshot = cm.getNormalizedSnapshotForBase(baseCurrency)
+        val snapshot = cm.getNormalizedSnapshotForBase(baseCurrency).getOrNull()
 
         val saleRequest = SaleRequest(
             customerName = "Consumidor Final",

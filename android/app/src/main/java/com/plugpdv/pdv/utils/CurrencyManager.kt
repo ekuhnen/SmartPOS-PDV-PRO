@@ -79,12 +79,13 @@ class CurrencyManager private constructor() {
 
     /**
      * Normaliza todas as cotações para a moeda-base especificada (Option A).
-     * Retorna mapa determinístico de strings decimais canônicas.
+     * Retorna Result com mapa determinístico ou falha se a taxa da base for ausente.
      */
-    fun getNormalizedSnapshotForBase(baseCurrency: String): Map<String, String> {
+    fun getNormalizedSnapshotForBase(baseCurrency: String): Result<Map<String, String>> {
         val upperBase = baseCurrency.uppercase()
         val result = mutableMapOf<String, String>()
-        val baseRateToBrl = getRateForCurrencyExact(upperBase) ?: java.math.BigDecimal.ONE
+        val baseRateToBrl = getRateForCurrencyExact(upperBase)
+            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for base currency $upperBase"))
 
         result[upperBase] = "1"
         if (upperBase != "BRL") {
@@ -94,13 +95,67 @@ class CurrencyManager private constructor() {
 
         rates?.moedas?.forEach { r ->
             val code = r.codigo.uppercase()
-            if (code != upperBase) {
+            if (code != upperBase && r.taxa > 0.0) {
                 val rRateToBrl = java.math.BigDecimal.valueOf(r.taxa)
                 val ratePerBase = rRateToBrl.divide(baseRateToBrl, 6, java.math.RoundingMode.HALF_UP)
                 result[code] = ratePerBase.stripTrailingZeros().toPlainString()
             }
         }
-        return result
+        return Result.success(result)
+    }
+
+    /**
+     * Gera cotação monetária oficial e determinística para uma transação (MoneyQuote).
+     * Contrato: fx_rate = unidades de transactionCurrency por 1 unidade de baseCurrency.
+     * base_amount = transaction_amount / fx_rate.
+     */
+    fun quoteTransactionAmount(
+        transactionAmount: java.math.BigDecimal,
+        transactionCurrency: String,
+        baseCurrency: String
+    ): Result<MoneyQuote> {
+        val txUpper = transactionCurrency.uppercase()
+        val baseUpper = baseCurrency.uppercase()
+
+        val snapshotResult = getNormalizedSnapshotForBase(baseUpper)
+        if (snapshotResult.isFailure) {
+            return Result.failure(snapshotResult.exceptionOrNull() ?: IllegalStateException("FX_RATE_MISSING"))
+        }
+        val snapshot = snapshotResult.getOrThrow()
+
+        if (txUpper == baseUpper) {
+            val roundedTx = MoneyDecimal.roundToCurrency(transactionAmount, txUpper)
+            val roundedBase = MoneyDecimal.roundToCurrency(transactionAmount, baseUpper)
+            return Result.success(
+                MoneyQuote(
+                    transactionAmount = roundedTx,
+                    transactionCurrency = txUpper,
+                    baseAmount = roundedBase,
+                    baseCurrency = baseUpper,
+                    fxRate = java.math.BigDecimal.ONE,
+                    snapshot = snapshot
+                )
+            )
+        }
+
+        val rateBaseBrl = getRateForCurrencyExact(baseUpper)
+            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: Missing exchange rate for base currency $baseUpper"))
+        val rateTxBrl = getRateForCurrencyExact(txUpper)
+            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: Missing exchange rate for transaction currency $txUpper"))
+
+        // fx_rate = tx_per_BRL / base_per_BRL = unidades de txCurrency por 1 unidade de baseCurrency
+        val fxRate = rateTxBrl.divide(rateBaseBrl, 8, java.math.RoundingMode.HALF_UP)
+        val calculatedBase = transactionAmount.divide(fxRate, 8, java.math.RoundingMode.HALF_UP)
+
+        val quote = MoneyQuote(
+            transactionAmount = MoneyDecimal.roundToCurrency(transactionAmount, txUpper),
+            transactionCurrency = txUpper,
+            baseAmount = MoneyDecimal.roundToCurrency(calculatedBase, baseUpper),
+            baseCurrency = baseUpper,
+            fxRate = fxRate.stripTrailingZeros(),
+            snapshot = snapshot
+        )
+        return Result.success(quote)
     }
 
     /**
@@ -116,50 +171,31 @@ class CurrencyManager private constructor() {
         val toUpper = toCurrency.uppercase()
         val targetBase = (baseCurrency ?: getBaseCurrency()).uppercase()
 
-        if (fromUpper == toUpper) {
-            val quote = MoneyQuote(
-                transactionAmount = MoneyDecimal.roundToCurrency(amount, toUpper),
-                transactionCurrency = toUpper,
-                baseAmount = MoneyDecimal.roundToCurrency(amount, targetBase),
-                baseCurrency = targetBase,
-                fxRate = java.math.BigDecimal.ONE,
-                snapshot = getNormalizedSnapshotForBase(targetBase)
+        if (fromUpper == targetBase) {
+            // amount está na base -> converte para toCurrency (moeda da transação)
+            val rateBaseBrl = getRateForCurrencyExact(targetBase)
+                ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $targetBase"))
+            val rateTxBrl = getRateForCurrencyExact(toUpper)
+                ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $toUpper"))
+
+            val fxRate = if (fromUpper == toUpper) java.math.BigDecimal.ONE else rateTxBrl.divide(rateBaseBrl, 8, java.math.RoundingMode.HALF_UP)
+            val txAmount = amount.multiply(fxRate)
+            val snapshot = getNormalizedSnapshotForBase(targetBase).getOrElse { return Result.failure(it) }
+
+            return Result.success(
+                MoneyQuote(
+                    transactionAmount = MoneyDecimal.roundToCurrency(txAmount, toUpper),
+                    transactionCurrency = toUpper,
+                    baseAmount = MoneyDecimal.roundToCurrency(amount, targetBase),
+                    baseCurrency = targetBase,
+                    fxRate = fxRate.stripTrailingZeros(),
+                    snapshot = snapshot
+                )
             )
-            return Result.success(quote)
         }
 
-        val rateFromBrl = getRateForCurrencyExact(fromUpper)
-            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $fromUpper"))
-        val rateToBrl = getRateForCurrencyExact(toUpper)
-            ?: return Result.failure(IllegalStateException("FX_RATE_MISSING: No rate for $toUpper"))
-
-        // Cross-rate: unidades de toCurrency por 1 unidade de fromCurrency
-        val crossRate = rateToBrl.divide(rateFromBrl, 8, java.math.RoundingMode.HALF_UP)
-        val convertedAmount = amount.multiply(crossRate)
-
-        // Se a moeda de destino for a moeda da transação e a origem a base:
-        val fxRateForBase = if (fromUpper == targetBase) crossRate else {
-            val rateTargetBaseBrl = getRateForCurrencyExact(targetBase) ?: java.math.BigDecimal.ONE
-            rateToBrl.divide(rateTargetBaseBrl, 8, java.math.RoundingMode.HALF_UP)
-        }
-
-        val baseAmount = if (fromUpper == targetBase) {
-            MoneyDecimal.roundToCurrency(amount, targetBase)
-        } else {
-            val amountInBrl = amount.divide(rateFromBrl, 8, java.math.RoundingMode.HALF_UP)
-            val rateTargetBaseBrl = getRateForCurrencyExact(targetBase) ?: java.math.BigDecimal.ONE
-            MoneyDecimal.roundToCurrency(amountInBrl.multiply(rateTargetBaseBrl), targetBase)
-        }
-
-        val quote = MoneyQuote(
-            transactionAmount = MoneyDecimal.roundToCurrency(convertedAmount, toUpper),
-            transactionCurrency = toUpper,
-            baseAmount = baseAmount,
-            baseCurrency = targetBase,
-            fxRate = fxRateForBase.stripTrailingZeros(),
-            snapshot = getNormalizedSnapshotForBase(targetBase)
-        )
-        return Result.success(quote)
+        // amount está em fromCurrency -> cita na moeda de transação fromCurrency para a base targetBase
+        return quoteTransactionAmount(amount, fromUpper, targetBase)
     }
 
     /**
