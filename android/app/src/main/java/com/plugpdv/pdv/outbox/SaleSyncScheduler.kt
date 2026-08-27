@@ -44,4 +44,26 @@ class SaleSyncScheduler @Inject constructor() {
             Log.e(TAG, "Falha ao agendar WorkManager: ${e.message}", e)
         }
     }
+
+    fun scheduleRetry(context: Context, delayMs: Long) {
+        try {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val workRequest = OneTimeWorkRequestBuilder<SaleSyncWorker>()
+                .setConstraints(constraints)
+                .setInitialDelay(delayMs.coerceAtLeast(1000L), TimeUnit.MILLISECONDS)
+                .build()
+
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                SaleSyncWorker.UNIQUE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                workRequest
+            )
+            Log.d(TAG, "Reagendamento de retry da Outbox para daqui a ${delayMs}ms via WorkManager")
+        } catch (e: Exception) {
+            Log.e(TAG, "Falha ao agendar retry no WorkManager: ${e.message}", e)
+        }
+    }
 }

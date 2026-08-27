@@ -260,7 +260,8 @@ class CheckoutViewModel @Inject constructor(
             saleItems = saleItems,
             discount = 0.0,
             serviceFee = sfAmount2,
-            serviceFeeKind = sfKind2
+            serviceFeeKind = sfKind2,
+            valorBase = baseAmountToPay
         )
     }
 

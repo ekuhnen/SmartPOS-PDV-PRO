@@ -34,7 +34,8 @@ class OutboxSyncManager @Inject constructor(
     private val outboxDao: OutboxDao,
     private val paymentAttemptDao: com.plugpdv.pdv.database.PaymentAttemptDao,
     private val apiService: PosApiService,
-    private val syncMetricsTracker: SyncMetricsTracker
+    private val syncMetricsTracker: SyncMetricsTracker,
+    private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
 ) {
     private val gson: Gson = Gson()
 
@@ -227,6 +228,7 @@ class OutboxSyncManager @Inject constructor(
                     nextRetryAt = nextRetry,
                     status = "PENDING"
                 ))
+                saleSyncScheduler.scheduleRetry(context, backoffSec * 1000L)
                 Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} falhou no envio (tentativa $nextAttempt). Reagendando em ${backoffSec}s.")
             }
         }
@@ -324,7 +326,21 @@ class OutboxSyncManager @Inject constructor(
                 "COMANDA_CHECKOUT_COMMIT" -> {
                     val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
                     val response = apiService.commitComandaCheckout("Bearer $token", op.idempotencyKey, request)
-                    response.isSuccessful && response.body()?.success == true
+                    if (response.isSuccessful && response.body()?.success == true) {
+                        val commitRes = response.body()
+                        if (commitRes?.requiresReconciliation == true) {
+                            Log.w(TAG, "Operação de checkout K=${op.idempotencyKey} requer conciliação financeira.")
+                        }
+                        if (commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)) {
+                            val mesaId = commitRes?.mesaId ?: request.mesaId
+                            if (!mesaId.isNullOrEmpty()) {
+                                com.plugpdv.pdv.utils.TableManager.markTableAvailable(mesaId)
+                            }
+                        }
+                        true
+                    } else {
+                        false
+                    }
                 }
                 "SALE_DIRECT" -> {
                     val request = gson.fromJson(op.payloadJson, SaleRequest::class.java)

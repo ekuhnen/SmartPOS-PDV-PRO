@@ -14,7 +14,8 @@ data class CommandCheckoutCommitRequest(
     @SerializedName("sale_items") val saleItems: List<SaleItem>? = null,
     @SerializedName("discount") val discount: Double = 0.0,
     @SerializedName("service_fee") val serviceFee: Double = 0.0,
-    @SerializedName("service_fee_kind") val serviceFeeKind: String? = null
+    @SerializedName("service_fee_kind") val serviceFeeKind: String? = null,
+    @SerializedName("valor_base") val valorBase: Double? = null
 )
 
 data class ComandaCheckoutCommitResponse(
@@ -28,5 +29,6 @@ data class ComandaCheckoutCommitResponse(
     @SerializedName("mesa_status") val mesaStatus: String? = null,
     @SerializedName("total_paid") val totalPaid: Double = 0.0,
     @SerializedName("remaining_balance") val remainingBalance: Double = 0.0,
-    @SerializedName("closed") val closed: Boolean = false
+    @SerializedName("closed") val closed: Boolean = false,
+    @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false
 )
