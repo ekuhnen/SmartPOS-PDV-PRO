@@ -25,13 +25,21 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
+enum class MoneyAuthorityState {
+    LOADING,
+    READY,
+    LOAD_ERROR,
+    RECONCILIATION_REQUIRED
+}
+
 data class CheckoutUiState(
+    val moneyAuthorityState: MoneyAuthorityState = MoneyAuthorityState.LOADING,
     val isLoading: Boolean = false,
     val error: String? = null,
     val paymentSuccess: Boolean = false,
     val isPendingSync: Boolean = false,
-    val isPayButtonBlocked: Boolean = false,
-    val blockReason: String? = null,
+    val isPayButtonBlocked: Boolean = true,
+    val blockReason: String? = "Carregando dados financeiros...",
     val requiresReconciliation: Boolean = false,
     val currentToPay: Double = 0.0,
     val taxAmount: Double = 0.0,
@@ -227,6 +235,7 @@ class CheckoutViewModel @Inject constructor(
             moneyAuthorityLoaded = false
             comandaBaseCurrency = null
             _uiState.value = _uiState.value.copy(
+                moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
                 isPayButtonBlocked = true,
                 requiresReconciliation = true,
                 blockReason = "Moeda-base da comanda não definida no servidor"
@@ -234,6 +243,9 @@ class CheckoutViewModel @Inject constructor(
         } else {
             comandaBaseCurrency = detail.baseCurrency
             moneyAuthorityLoaded = true
+            _uiState.value = _uiState.value.copy(
+                moneyAuthorityState = MoneyAuthorityState.READY
+            )
         }
 
         val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
@@ -249,6 +261,13 @@ class CheckoutViewModel @Inject constructor(
         val currentToken = token ?: return
         val cId = currentTable.comandaId ?: return
 
+        _uiState.value = _uiState.value.copy(
+            moneyAuthorityState = MoneyAuthorityState.LOADING,
+            isPayButtonBlocked = true,
+            blockReason = if (_uiState.value.requiresReconciliation) _uiState.value.blockReason else "Carregando dados financeiros...",
+            error = null
+        )
+
         viewModelScope.launch {
             try {
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
@@ -260,6 +279,7 @@ class CheckoutViewModel @Inject constructor(
                 if (isComandaClosed) {
                     currentTable.id?.let { TableManager.markTableAvailable(it) }
                     _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = if (currentReconciliation) MoneyAuthorityState.RECONCILIATION_REQUIRED else MoneyAuthorityState.READY,
                         paymentsHistory = detail.pagamentos,
                         currentToPay = 0.0,
                         isPendingSync = false,
@@ -270,17 +290,27 @@ class CheckoutViewModel @Inject constructor(
                     )
                 } else {
                     _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = if (currentReconciliation) MoneyAuthorityState.RECONCILIATION_REQUIRED else MoneyAuthorityState.READY,
                         paymentsHistory = detail.pagamentos,
                         currentToPay = currentTable.getPendingBalance(),
                         isPendingSync = if (currentReconciliation) false else _uiState.value.isPendingSync,
-                        isPayButtonBlocked = if (currentReconciliation) true else _uiState.value.isPayButtonBlocked,
+                        isPayButtonBlocked = if (currentReconciliation) true else _uiState.value.isPendingSync,
                         requiresReconciliation = currentReconciliation,
-                        paymentSuccess = if (currentReconciliation) false else _uiState.value.paymentSuccess
+                        paymentSuccess = if (currentReconciliation) false else _uiState.value.paymentSuccess,
+                        blockReason = if (currentReconciliation) _uiState.value.blockReason else null
                     )
                 }
                 calculateFinalAmount()
             } catch (e: Exception) {
                 Log.e("CheckoutViewModel", "Falha ao buscar pagamentos da comanda: ${e.message}")
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Não foi possível carregar os dados financeiros da comanda.",
+                    error = "Não foi possível carregar os dados financeiros da comanda."
+                )
             }
         }
     }
@@ -490,6 +520,9 @@ class CheckoutViewModel @Inject constructor(
         manualBaseAmount: Double? = null,
         suppliedQuote: SelectedPaymentQuote? = null
     ): PreparedCheckoutResult {
+        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY) {
+            throw IllegalStateException("COMANDA_BASE_CURRENCY_NOT_LOADED: Base currency not loaded from backend")
+        }
         val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
         val key = java.util.UUID.randomUUID().toString()
         val gson = com.google.gson.Gson()
@@ -520,6 +553,7 @@ class CheckoutViewModel @Inject constructor(
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
         val gson = com.google.gson.Gson()
         val amountToPay = _uiState.value.finalToPay
+
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -576,6 +610,12 @@ class CheckoutViewModel @Inject constructor(
         manualBaseAmount: Double? = null,
         suppliedQuote: SelectedPaymentQuote? = null
     ) {
+        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY) {
+            _uiState.value = _uiState.value.copy(
+                error = "Não foi possível iniciar pagamento: dados financeiros da comanda não carregados"
+            )
+            return
+        }
         val gson = com.google.gson.Gson()
         val amountToPay = manualAmount ?: suppliedQuote?.transactionAmount?.toDouble() ?: _uiState.value.finalToPay
 

@@ -170,11 +170,22 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.tvTotalPaid.text = cm.format(totalPaid)
         b.tvPendingBalance.text = cm.format(pendingBalance)
         b.tvTotalToPay.text = cm.format(state.finalToPay)
-        b.btnPayLink.isEnabled = !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
-        if (state.requiresReconciliation) {
-            b.btnPayLink.text = "Pagamento aprovado requer conciliação"
-        } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
-            b.btnPayLink.text = state.blockReason
+        if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
+            b.btnPayLink.isEnabled = true
+            b.btnPayLink.text = "Tentar novamente"
+            b.btnPayLink.setOnClickListener { viewModel.fetchComandaPayments() }
+        } else {
+            b.btnPayLink.setOnClickListener { finalizePayment() }
+            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
+            if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
+                b.btnPayLink.text = "Carregando comanda..."
+            } else if (state.requiresReconciliation) {
+                b.btnPayLink.text = "Pagamento aprovado requer conciliação"
+            } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
+                b.btnPayLink.text = state.blockReason
+            } else {
+                b.btnPayLink.text = "Cobrar"
+            }
         }
 
         populatePaymentsHistory(state.paymentsHistory)
@@ -352,6 +363,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private fun finalizePayment() {
         val state = viewModel.uiState.value
+        if (state.moneyAuthorityState != MoneyAuthorityState.READY || !viewModel.moneyAuthorityLoaded || viewModel.comandaBaseCurrency.isNullOrBlank()) {
+            Toast.makeText(context, state.blockReason ?: "Dados financeiros da comanda não carregados", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (state.currentToPay <= 0) {
             Toast.makeText(context, "Valor inválido", Toast.LENGTH_SHORT).show()
             return

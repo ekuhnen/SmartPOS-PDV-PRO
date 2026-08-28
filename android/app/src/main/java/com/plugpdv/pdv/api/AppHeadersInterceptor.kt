@@ -44,7 +44,7 @@ class AppHeadersInterceptor(private val context: Context) : Interceptor {
         val appVersion = getAppVersionName(context)
         val requestBuilder = originalRequest.newBuilder()
             .header("X-App-Version", appVersion)
-            .header("X-Api-Version", "v2")
+            .header("X-Api-Version", "1")
             .header("X-Device-Id", DeviceIdProvider.get(context))
 
         // Se o request já possui X-Idempotency-Key gerado no toque, ele é mantido.

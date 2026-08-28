@@ -31,6 +31,7 @@ import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.robolectric.RobolectricTestRunner
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.math.BigDecimal
 
 @RunWith(RobolectricTestRunner::class)
@@ -1028,5 +1029,203 @@ class MoneyFinalGateTest {
 
         // 4. Zero sync scheduled
         verify(mockScheduler, never()).scheduleSync(any())
+    }
+
+    /**
+     * MESA-01: Table checkout starts with moneyAuthorityState = LOADING and pay button blocked.
+     */
+    @Test
+    fun testA_MESA_01_moneyAuthority_initialStateIsLoadingAndPayBlocked() {
+        val uiState = com.plugpdv.pdv.ui.sale.CheckoutUiState()
+        assertEquals(com.plugpdv.pdv.ui.sale.MoneyAuthorityState.LOADING, uiState.moneyAuthorityState)
+        assertTrue(uiState.isPayButtonBlocked)
+        assertEquals("Carregando dados financeiros...", uiState.blockReason)
+    }
+
+    /**
+     * MESA-02: Valid base_currency BRL sets moneyAuthorityState = READY and enables pay.
+     */
+    @Test
+    fun testA_MESA_02_moneyAuthority_successSetsReadyAndEnablesPay() {
+        val mockApi: PosApiService = mock()
+        val mockTaxRepo: TaxRepository = mock()
+        val mockOutboxDao: OutboxDao = mock()
+        val mockPaymentAttemptDao: PaymentAttemptDao = mock()
+        val mockOutboxSyncMgr: OutboxSyncManager = mock()
+        val mockSaleScheduler: SaleSyncScheduler = mock()
+
+        whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
+        whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
+
+        val vm = CheckoutViewModel(
+            context = context,
+            apiService = mockApi,
+            taxRepository = mockTaxRepo,
+            outboxDao = mockOutboxDao,
+            paymentAttemptDao = mockPaymentAttemptDao,
+            outboxSyncManager = mockOutboxSyncMgr,
+            saleSyncScheduler = mockSaleScheduler
+        )
+
+        val table = Table(
+            id = "mesa-1",
+            number = 1,
+            status = Table.Status.OCCUPIED,
+            comandaId = "123"
+        )
+
+        val detail = ComandaDetailResponse(
+            id = "123",
+            mesaId = "mesa-1",
+            status = "ABERTA",
+            total = 100.0,
+            baseCurrency = "BRL",
+            totalPagoBase = 0.0,
+            totalPago = 0.0,
+            pagamentos = emptyList()
+        )
+
+        val paid = vm.applyComandaMoneyDetail(detail, table)
+        assertEquals(0.0, paid, 0.001)
+        assertTrue(vm.moneyAuthorityLoaded)
+        assertEquals("BRL", vm.comandaBaseCurrency)
+        assertEquals(MoneyAuthorityState.READY, vm.uiState.value.moneyAuthorityState)
+    }
+
+    /**
+     * MESA-03: Network failure loading detail sets LOAD_ERROR, keeps pay blocked, but requiresReconciliation = false.
+     */
+    @Test
+    fun testA_MESA_03_moneyAuthority_networkErrorSetsLoadErrorAndBlockedNotReconciliation() {
+        runBlocking {
+            val mockApi: PosApiService = mock()
+            val mockTaxRepo: TaxRepository = mock()
+            val mockOutboxDao: OutboxDao = mock()
+            val mockPaymentAttemptDao: PaymentAttemptDao = mock()
+            val mockOutboxSyncMgr: OutboxSyncManager = mock()
+            val mockSaleScheduler: SaleSyncScheduler = mock()
+
+            whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
+            whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
+            whenever(mockApi.getComandaDetail(any(), any())).thenAnswer { throw java.io.IOException("Network Timeout") }
+
+            val vm = CheckoutViewModel(
+                context = context,
+                apiService = mockApi,
+                taxRepository = mockTaxRepo,
+                outboxDao = mockOutboxDao,
+                paymentAttemptDao = mockPaymentAttemptDao,
+                outboxSyncManager = mockOutboxSyncMgr,
+                saleSyncScheduler = mockSaleScheduler
+            )
+
+            val table = Table(
+                id = "mesa-1",
+                number = 1,
+                status = Table.Status.OCCUPIED,
+                comandaId = "123"
+            )
+
+            vm.init(table, "token123", "sess123", "op1", "OpName")
+            
+            var attempts = 0
+            while (vm.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+                org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                attempts++
+            }
+
+            assertFalse(vm.moneyAuthorityLoaded)
+            assertNull(vm.comandaBaseCurrency)
+            assertEquals(MoneyAuthorityState.LOAD_ERROR, vm.uiState.value.moneyAuthorityState)
+            assertTrue(vm.uiState.value.isPayButtonBlocked)
+            assertFalse(vm.uiState.value.requiresReconciliation)
+            assertEquals("Não foi possível carregar os dados financeiros da comanda.", vm.uiState.value.blockReason)
+        }
+    }
+
+    /**
+     * MESA-04: Blank base_currency sets RECONCILIATION_REQUIRED and requiresReconciliation = true.
+     */
+    @Test
+    fun testA_MESA_04_moneyAuthority_blankBaseCurrencySetsReconciliationRequired() {
+        val mockApi: PosApiService = mock()
+        val mockTaxRepo: TaxRepository = mock()
+        val mockOutboxDao: OutboxDao = mock()
+        val mockPaymentAttemptDao: PaymentAttemptDao = mock()
+        val mockOutboxSyncMgr: OutboxSyncManager = mock()
+        val mockSaleScheduler: SaleSyncScheduler = mock()
+
+        whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
+        whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
+
+        val vm = CheckoutViewModel(
+            context = context,
+            apiService = mockApi,
+            taxRepository = mockTaxRepo,
+            outboxDao = mockOutboxDao,
+            paymentAttemptDao = mockPaymentAttemptDao,
+            outboxSyncManager = mockOutboxSyncMgr,
+            saleSyncScheduler = mockSaleScheduler
+        )
+
+        val table = Table(
+            id = "mesa-1",
+            number = 1,
+            status = Table.Status.OCCUPIED,
+            comandaId = "123"
+        )
+
+        val detail = ComandaDetailResponse(
+            id = "123",
+            mesaId = "mesa-1",
+            status = "ABERTA",
+            total = 100.0,
+            baseCurrency = "",
+            totalPagoBase = 0.0,
+            totalPago = 0.0,
+            pagamentos = emptyList()
+        )
+
+        vm.applyComandaMoneyDetail(detail, table)
+        assertFalse(vm.moneyAuthorityLoaded)
+        assertNull(vm.comandaBaseCurrency)
+        assertEquals(MoneyAuthorityState.RECONCILIATION_REQUIRED, vm.uiState.value.moneyAuthorityState)
+        assertTrue(vm.uiState.value.isPayButtonBlocked)
+        assertTrue(vm.uiState.value.requiresReconciliation)
+    }
+
+    /**
+     * API-VERSION-01: Proves AppHeadersInterceptor injects explicit numeric X-Api-Version: 1.
+     */
+    @Test
+    fun testA_API_VERSION_01_appHeadersInterceptor_sendsExplicitNumericVersion1() {
+        val interceptor = com.plugpdv.pdv.api.AppHeadersInterceptor(context)
+
+        val request = okhttp3.Request.Builder()
+            .url("https://example.com/api/test")
+            .build()
+
+        var capturedRequest: okhttp3.Request? = null
+        val mockChain: okhttp3.Interceptor.Chain = mock()
+        whenever(mockChain.request()).thenReturn(request)
+        whenever(mockChain.proceed(any())).thenAnswer { invocation ->
+            capturedRequest = invocation.getArgument(0) as okhttp3.Request
+            okhttp3.Response.Builder()
+                .request(capturedRequest!!)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body("{}".toResponseBody())
+                .build()
+        }
+
+        interceptor.intercept(mockChain)
+
+        assertNotNull(capturedRequest)
+        val apiVersionHeader = capturedRequest!!.header("X-Api-Version")
+        assertEquals("1", apiVersionHeader)
+        // Must be strictly numeric
+        assertTrue("X-Api-Version must parse as integer", apiVersionHeader?.toIntOrNull() != null)
+        assertEquals(1, apiVersionHeader!!.toInt())
     }
 }
