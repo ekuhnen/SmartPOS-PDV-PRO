@@ -5,6 +5,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.TaxEntity
 import com.plugpdv.pdv.models.SaleItem
@@ -14,10 +15,14 @@ import com.plugpdv.pdv.models.ServiceFeeConfig
 import com.plugpdv.pdv.outbox.SaleSyncScheduler
 import com.plugpdv.pdv.repository.SaleOutboxRepository
 import com.plugpdv.pdv.repository.TaxRepository
+import com.plugpdv.pdv.repository.UnresolvedDirectPaymentState
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.ServiceFeeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
@@ -35,6 +40,8 @@ class DirectCheckoutViewModel @Inject constructor(
     private val saleOutboxRepository: SaleOutboxRepository,
     private val saleSyncScheduler: SaleSyncScheduler
 ) : ViewModel() {
+
+    private val gson = Gson()
 
     private val _cartItems = MutableLiveData<List<SaleViewModel.CartItem>>(emptyList())
     val cartItems: LiveData<List<SaleViewModel.CartItem>> = _cartItems
@@ -68,9 +75,23 @@ class DirectCheckoutViewModel @Inject constructor(
     private val _saleResult = MutableLiveData<SaleResult?>(null)
     val saleResult: LiveData<SaleResult?> = _saleResult
 
+    private val _latestReceiptSnapshot = MutableStateFlow<ReceiptMoneySnapshot?>(null)
+    val latestReceiptSnapshot: StateFlow<ReceiptMoneySnapshot?> = _latestReceiptSnapshot.asStateFlow()
+
+    private val _unresolvedPaymentState = MutableStateFlow<UnresolvedDirectPaymentState?>(null)
+    val unresolvedPaymentState: StateFlow<UnresolvedDirectPaymentState?> = _unresolvedPaymentState.asStateFlow()
+
+    private val _isPaymentBlocked = MutableStateFlow(false)
+    val isPaymentBlocked: StateFlow<Boolean> = _isPaymentBlocked.asStateFlow()
+
+    private val _requiresReconciliation = MutableStateFlow(false)
+    val requiresReconciliation: StateFlow<Boolean> = _requiresReconciliation.asStateFlow()
+
+    private val _blockReason = MutableStateFlow<String?>(null)
+    val blockReason: StateFlow<String?> = _blockReason.asStateFlow()
+
     init {
         val cached = ServiceFeeManager.getConfig(context)
-        Log.d("DirectCheckoutVM", "ServiceFeeConfig from cache: $cached")
         if (cached != null) {
             applyServiceFeeConfig(cached)
         }
@@ -79,6 +100,7 @@ class DirectCheckoutViewModel @Inject constructor(
             _activeTaxes.value = it ?: emptyList()
             calculateTotals()
         }
+        restoreDurableRecovery()
     }
 
     private fun applyServiceFeeConfig(config: ServiceFeeConfig) {
@@ -97,7 +119,6 @@ class DirectCheckoutViewModel @Inject constructor(
             try {
                 val response = apiService.getTaxes("Bearer $token")
                 val config = response.serviceFee
-                
                 if (config != null) {
                     ServiceFeeManager.saveConfig(context, config)
                     applyServiceFeeConfig(config)
@@ -109,10 +130,10 @@ class DirectCheckoutViewModel @Inject constructor(
         }
     }
 
-    fun init(items: List<SaleViewModel.CartItem>, tokenOverride: String? = null) {
+    fun init(items: List<SaleViewModel.CartItem>, token: String? = null) {
         _cartItems.value = items
         calculateTotals()
-        reloadServiceFeeConfig(tokenOverride)
+        reloadServiceFeeConfig(token)
     }
 
     fun overrideServiceFee(kind: String, value: Double = 0.0) {
@@ -141,8 +162,10 @@ class DirectCheckoutViewModel @Inject constructor(
         }
 
         var sfAmount = 0.0
+        val config = _serviceFeeConfig.value
         val kind = _serviceFeeKind.value
-        if (kind != null) {
+
+        if (config != null && kind != null) {
             when (kind) {
                 "fixed" -> {
                     val pct = _serviceFeeConfig.value?.fixedPercent ?: 0.0
@@ -172,14 +195,15 @@ class DirectCheckoutViewModel @Inject constructor(
 
     fun restoreDurableRecovery() {
         viewModelScope.launch {
-            try {
-                val recovered = saleOutboxRepository.recoverApprovedWaitingSalesAtomic()
-                if (recovered > 0) {
-                    Log.i("DirectCheckoutVM", "Recuperadas $recovered vendas órfãs WAITING_PAYMENT -> PENDING")
-                    saleSyncScheduler.scheduleSync(context)
-                }
-            } catch (e: Exception) {
-                Log.e("DirectCheckoutVM", "Erro na recuperação durável de vendas: ${e.message}")
+            val recovered = saleOutboxRepository.recoverApprovedWaitingSalesAtomic()
+            val unresolved = saleOutboxRepository.getUnresolvedDirectPaymentState()
+            _unresolvedPaymentState.value = unresolved
+            _isPaymentBlocked.value = unresolved?.isBlocked ?: false
+            _requiresReconciliation.value = unresolved?.requiresReconciliation ?: false
+            _blockReason.value = unresolved?.blockReason
+            if (recovered > 0) {
+                Log.d("DirectCheckoutVM", "Recuperadas $recovered vendas diretas aprovadas do Room")
+                saleSyncScheduler.scheduleSync(context)
             }
         }
     }
@@ -239,9 +263,29 @@ class DirectCheckoutViewModel @Inject constructor(
                 val updated = saleOutboxRepository.finalizeApprovedSaleAtomic(operationId, paymentId, method)
                 if (updated != null) {
                     Log.d("DirectCheckoutVM", "Venda direta K=$operationId promovida para PENDING após pagamento aprovado")
+                    
+                    val saleReq = runCatching { gson.fromJson(updated.payloadJson, SaleRequest::class.java) }.getOrNull()
+                    if (saleReq != null) {
+                        _latestReceiptSnapshot.value = ReceiptMoneySnapshot(
+                            operationId = operationId,
+                            transactionAmount = saleReq.total,
+                            transactionCurrency = saleReq.paymentCurrency ?: saleReq.currency,
+                            baseAmount = saleReq.convertedTotal ?: saleReq.total,
+                            baseCurrency = saleReq.currency,
+                            paymentMethod = method,
+                            items = saleReq.items,
+                            customerName = saleReq.customerName
+                        )
+                    }
+
                     saleSyncScheduler.scheduleSync(context)
                     val fakeResponse = SaleResponse(id = "LOCAL-$operationId", status = method)
                     _saleResult.value = SaleResult.Success(fakeResponse)
+                    
+                    _isPaymentBlocked.value = false
+                    _requiresReconciliation.value = false
+                    _blockReason.value = null
+                    _unresolvedPaymentState.value = null
                 } else {
                     Log.e("DirectCheckoutVM", "Venda direta K=$operationId não encontrada no Room")
                     _saleResult.value = SaleResult.Error("Venda não encontrada localmente: $operationId")
@@ -383,3 +427,14 @@ class DirectCheckoutViewModel @Inject constructor(
         }
     }
 }
+
+data class ReceiptMoneySnapshot(
+    val operationId: String,
+    val transactionAmount: java.math.BigDecimal,
+    val transactionCurrency: String,
+    val baseAmount: java.math.BigDecimal,
+    val baseCurrency: String,
+    val paymentMethod: String,
+    val items: List<SaleItem>,
+    val customerName: String?
+)

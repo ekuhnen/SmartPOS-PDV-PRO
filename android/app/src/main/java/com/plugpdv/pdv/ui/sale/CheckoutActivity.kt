@@ -34,6 +34,7 @@ class CheckoutActivity : BaseActivity() {
     /** Flag para evitar processar o mesmo resultado duas vezes */
     private var paymentProcessed = false
     private var pendingDirectSaleOperationId: String? = null
+    private var approvedWithoutCorrelation: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,7 +97,7 @@ class CheckoutActivity : BaseActivity() {
      * Chamado em onResume e onNewIntent para garantir que o resultado seja processado
      * independentemente de como o CheckoutActivity foi retomado.
      */
-    private fun checkPendingPaymentResult() {
+    internal fun checkPendingPaymentResult() {
         if (paymentProcessed) return
         val result = PaymentResultStore.consume()
         if (result != null && result.status.equals("APPROVED", ignoreCase = true)) {
@@ -108,8 +109,29 @@ class CheckoutActivity : BaseActivity() {
                 viewModel.finalizeApprovedSale(operationId, result.paymentId, method)
             } else {
                 Log.e("CheckoutActivity", "PAGAMENTO_APROVADO_SEM_CHAVE: Impossível determinar chave de correlação K. Bloqueando reconstrução de venda.")
+                approvedWithoutCorrelation = true
+                updatePayButtonState()
                 Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    private fun updatePayButtonState() {
+        val isBlocked = approvedWithoutCorrelation || viewModel.isPaymentBlocked.value
+        val reason = if (approvedWithoutCorrelation) {
+            "Pagamento aprovado requer conciliação"
+        } else {
+            viewModel.blockReason.value
+        }
+
+        if (isBlocked) {
+            binding.btnPayLink.isEnabled = false
+            if (!reason.isNullOrBlank()) {
+                binding.btnPayLink.text = reason
+            }
+        } else {
+            binding.btnPayLink.isEnabled = !(viewModel.isLoading.value ?: false)
+            binding.btnPayLink.text = "Cobrar"
         }
     }
 
@@ -132,7 +154,7 @@ class CheckoutActivity : BaseActivity() {
         viewModel.serviceFeeConfig.observe(this) { updateTaxBreakdown() }
 
         viewModel.isLoading.observe(this) { loading ->
-            binding.btnPayLink.isEnabled = !loading
+            updatePayButtonState()
             if (loading) {
                 binding.loadingOverlay.visibility = View.VISIBLE
             } else if (viewModel.saleResult.value !is SaleResult.Success) {
@@ -140,26 +162,40 @@ class CheckoutActivity : BaseActivity() {
             }
         }
 
+        lifecycleScope.launch {
+            viewModel.isPaymentBlocked.collect {
+                updatePayButtonState()
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.blockReason.collect {
+                updatePayButtonState()
+            }
+        }
+
         viewModel.saleResult.observe(this) { result ->
             when (result) {
                 is SaleResult.Success -> {
                     val items = viewModel.cartItems.value ?: emptyList()
-                    val total = viewModel.finalTotal.value ?: 0.0
-                    val currency = com.plugpdv.pdv.utils.CurrencyManager.getInstance().selectedCurrency
+                    val snapshot = viewModel.latestReceiptSnapshot.value
+                    val printTotal = snapshot?.transactionAmount?.toDouble() ?: (viewModel.finalTotal.value ?: 0.0)
+                    val printCurrency = snapshot?.transactionCurrency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().selectedCurrency
+                    val printMethod = snapshot?.paymentMethod ?: (result.response.status ?: "PIX")
                     val saleId = result.response.id ?: ""
 
                     if (saleId.startsWith("LOCAL-")) {
                         // Venda salva offline - Sincronização em background
                     }
 
-                    // 1. Imprime cupom detalhado com QR Code por produto em background
+                    // 1. Imprime cupom detalhado com QR Code por produto em background usando valores congelados
                     lifecycleScope.launch(Dispatchers.IO) {
                         PrinterHelper.printDirectSaleReceipt(
                             context = this@CheckoutActivity,
                             cartItems = items,
-                            total = total,
-                            currency = currency,
-                            paymentMethod = result.response.status ?: "PIX",
+                            total = printTotal,
+                            currency = printCurrency,
+                            paymentMethod = printMethod,
                             operatorName = operatorName,
                             saleId = saleId
                         )
@@ -174,8 +210,8 @@ class CheckoutActivity : BaseActivity() {
                                     // Imprime factura eletrônica mockada
                                     PrinterHelper.printMockFactura(
                                         context = this@CheckoutActivity,
-                                        total = total,
-                                        currency = currency,
+                                        total = printTotal,
+                                        currency = printCurrency,
                                         operatorName = operatorName
                                     )
                                 }
@@ -247,6 +283,16 @@ class CheckoutActivity : BaseActivity() {
     }
 
     private fun startPaymentFlow() {
+        if (approvedWithoutCorrelation || viewModel.isPaymentBlocked.value) {
+            val reason = if (approvedWithoutCorrelation) {
+                "Pagamento aprovado requer conciliação"
+            } else {
+                viewModel.blockReason.value ?: "Pagamento bloqueado"
+            }
+            Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+            return
+        }
+
         Log.d("CheckoutActivity", "startPaymentFlow - Token: ${token != null}, Session: ${sessionId != null}")
         if (sessionId == null) {
             Toast.makeText(this, R.string.cashier_closed_msg, Toast.LENGTH_LONG).show()
@@ -269,13 +315,13 @@ class CheckoutActivity : BaseActivity() {
                             val prepared = viewModel.prepareDirectSaleOperation(quote, "CREDITO", sessionId ?: "", operatorId, operatorName)
                             pendingDirectSaleOperationId = prepared.localId
 
-                            val cm = CurrencyManager.getInstance()
-                            val activeTaxes = viewModel.activeTaxes.value ?: emptyList()
-                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(
-                                quote.baseAmount.toDouble(),
-                                quote.transactionCurrency,
-                                activeTaxes,
-                                cm
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJsonExact(
+                                baseAmount = quote.baseAmount,
+                                baseCurrency = quote.baseCurrency,
+                                transactionCurrency = quote.transactionCurrency,
+                                transactionAmount = quote.transactionAmount,
+                                snapshot = quote.snapshot,
+                                activeTaxes = emptyList()
                             )
 
                             val intent = Intent(this@CheckoutActivity, PaymentHandlerActivity::class.java).apply {

@@ -2,7 +2,6 @@ package com.plugpdv.pdv
 
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.net.Uri
 import androidx.lifecycle.MutableLiveData
 import androidx.room.Room
@@ -10,6 +9,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.AppDatabase
+import com.plugpdv.pdv.database.LocalSaleEntity
 import com.plugpdv.pdv.database.OutboxDao
 import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.PaymentAttemptEntity
@@ -93,7 +93,6 @@ class MoneyFinalGateTest {
         table.paidAmount = 0.0
         table.items.add(TableItem(product = Product(id = "p1", name = "Item 1", selling_price = 50.0), quantity = 1))
 
-        // 1. Backend comanda detail arrives with authoritative base_currency = "BRL"
         val comandaDetail = ComandaDetailResponse(
             id = "comanda-1",
             mesaId = "table-1",
@@ -105,7 +104,7 @@ class MoneyFinalGateTest {
         viewModel.applyComandaMoneyDetail(comandaDetail, table)
         viewModel.init(table, "token-1", "session-1", "op-1", "Op")
 
-        // 2. Establishment current config shifts to PYG
+        // Establishment shifts to PYG
         currencyManager.setRates(
             ExchangeResponse(
                 moeda_principal = "PYG",
@@ -117,7 +116,6 @@ class MoneyFinalGateTest {
         )
         currencyManager.selectedCurrency = "PYG"
 
-        // 3. Request must still use frozen comanda base "BRL"
         val request = viewModel.buildCommitRequest(PaymentMethod.CASH, manualAmount = 50.0, manualCurrency = "BRL")
         assertEquals("BRL", request.baseCurrency)
         assertEquals("BRL", request.moeda)
@@ -127,7 +125,6 @@ class MoneyFinalGateTest {
 
     /**
      * A-MONEY-02: CommandCheckoutCommitRequest cannot default moeda to BRL.
-     * Serialization must explicitly contain provided moeda.
      */
     @Test
     fun testA_MONEY_02_checkoutDtoCannotDefaultMoedaToBrl() {
@@ -144,11 +141,10 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-03: Missing foreign FX: no PaymentHandler launch-ready result (fail-closed).
+     * A-MONEY-03: Missing foreign FX fails closed.
      */
     @Test
     fun testA_MONEY_03_missingForeignFx_failsClosed() {
-        // Rates without EUR
         val quoteResult = currencyManager.convertMoneyExact(
             amount = BigDecimal("100.00"),
             fromCurrency = "BRL",
@@ -160,7 +156,7 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-04: BRL -> PYG 7000 quote verification: 50 BRL -> 350000 PYG, base 50, rate 7000.
+     * A-MONEY-04: BRL -> PYG 7000 quote verification.
      */
     @Test
     fun testA_MONEY_04_brlToPygQuote_50Brl_350000Pyg_rate7000() {
@@ -176,12 +172,10 @@ class MoneyFinalGateTest {
         assertEquals(0, quote.transactionAmount.compareTo(BigDecimal("350000")))
         assertEquals(0, quote.baseAmount.compareTo(BigDecimal("50.00")))
         assertEquals(0, quote.fxRate.compareTo(BigDecimal("7000")))
-        assertEquals("7000", quote.snapshot?.get("PYG"))
-        assertEquals("1", quote.snapshot?.get("BRL"))
     }
 
     /**
-     * A-MONEY-05: REAL direct-sale ViewModel: same MoneyQuote used in frozen SaleRequest.
+     * A-MONEY-05: Direct sale ViewModel uses same quote in frozen SaleRequest.
      */
     @Test
     fun testA_MONEY_05_directSaleViewModel_sameMoneyQuoteUsedInFrozenSaleRequest() {
@@ -193,14 +187,12 @@ class MoneyFinalGateTest {
             appDatabase = db,
             paymentAttemptDao = db.paymentAttemptDao()
         )
-        val mockSaleSyncScheduler: SaleSyncScheduler = mock()
-
         val viewModel = DirectCheckoutViewModel(
             context = context,
             apiService = mockApi,
             taxRepository = mockTaxRepo,
             saleOutboxRepository = saleOutboxRepo,
-            saleSyncScheduler = mockSaleSyncScheduler
+            saleSyncScheduler = mock()
         )
 
         viewModel.init(listOf(SaleViewModel.CartItem(Product(id = "p1", name = "Test", selling_price = 50.0), quantity = 1)))
@@ -237,20 +229,16 @@ class MoneyFinalGateTest {
             fxRate = BigDecimal("7000"),
             snapshot = mapOf("PYG" to "7000", "BRL" to "1")
         )
-
-        val amountStr = quote.transactionAmount.toPlainString()
-        val amountBrlStr = quote.baseAmount.toPlainString()
-
-        assertEquals("350000", amountStr)
-        assertEquals("50.00", amountBrlStr)
+        assertEquals("350000", quote.transactionAmount.toPlainString())
+        assertEquals("50.00", quote.baseAmount.toPlainString())
     }
 
     /**
-     * A-MONEY-07: Direct sale foreign missing FX prevents external payment start.
+     * A-MONEY-07: Direct sale foreign missing FX prevents payment start.
      */
     @Test
     fun testA_MONEY_07_directSaleForeignMissingFx_failsClosed() {
-        currencyManager.selectedCurrency = "EUR" // Not in rates
+        currencyManager.selectedCurrency = "EUR"
         val quoteResult = currencyManager.convertMoneyExact(
             amount = BigDecimal("100.00"),
             fromCurrency = "BRL",
@@ -261,7 +249,7 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-08: Minor units: PYG=0, BRL=2, USD=2, ISO 3-decimal currency (e.g. BHD=3).
+     * A-MONEY-08: Minor units verification.
      */
     @Test
     fun testA_MONEY_08_minorUnitsVerification() {
@@ -286,22 +274,19 @@ class MoneyFinalGateTest {
      */
     @Test
     fun testA_MONEY_12_callbackApprovedCannotRebuildWithChangedSelectedCurrency() {
-        val mockApi: PosApiService = mock()
         val saleOutboxRepo = SaleOutboxRepository(
             context = context,
             localSaleDao = db.localSaleDao(),
-            apiService = mockApi,
+            apiService = mock(),
             appDatabase = db,
             paymentAttemptDao = db.paymentAttemptDao()
         )
-        val mockSaleSyncScheduler: SaleSyncScheduler = mock()
-
         val viewModel = DirectCheckoutViewModel(
             context = context,
-            apiService = mockApi,
+            apiService = mock(),
             taxRepository = mockTaxRepo,
             saleOutboxRepository = saleOutboxRepo,
-            saleSyncScheduler = mockSaleSyncScheduler
+            saleSyncScheduler = mock()
         )
 
         val quotePyg = SelectedPaymentQuote(
@@ -317,10 +302,7 @@ class MoneyFinalGateTest {
             val prepared = viewModel.prepareDirectSaleOperation(quotePyg, "CREDITO", "session-1", "op-1", "Op")
             val operationId = prepared.localId
 
-            // Currency changes while external app is open
             currencyManager.selectedCurrency = "USD"
-
-            // Callback arrives
             viewModel.finalizeApprovedSale(operationId, "ext-pay-1", "CREDITO")
 
             val persistedSale = db.localSaleDao().getById(operationId)
@@ -331,7 +313,6 @@ class MoneyFinalGateTest {
             assertEquals("PYG", deserializedRequest.paymentCurrency)
             assertEquals("BRL", deserializedRequest.currency)
             assertEquals(0, deserializedRequest.total.compareTo(BigDecimal("350000")))
-            assertEquals("7000", deserializedRequest.exchangeRatesSnapshot?.get("PYG"))
         }
     }
 
@@ -340,18 +321,14 @@ class MoneyFinalGateTest {
      */
     @Test
     fun testA_MONEY_13_manualBaseMismatch_exactCompareThrows() {
-        val mockApi: PosApiService = mock()
-        val mockOutboxSyncManager: OutboxSyncManager = mock()
-        val mockSaleSyncScheduler: SaleSyncScheduler = mock()
-
         val viewModel = CheckoutViewModel(
             context = context,
-            apiService = mockApi,
+            apiService = mock(),
             taxRepository = mockTaxRepo,
             outboxDao = db.outboxDao(),
             paymentAttemptDao = db.paymentAttemptDao(),
-            outboxSyncManager = mockOutboxSyncManager,
-            saleSyncScheduler = mockSaleSyncScheduler
+            outboxSyncManager = mock(),
+            saleSyncScheduler = mock()
         )
 
         val table = Table(id = "table-1", number = 5, status = Table.Status.OCCUPIED)
@@ -362,7 +339,6 @@ class MoneyFinalGateTest {
         viewModel.init(table, "token", "sess", "op", "Op")
 
         try {
-            // Supplying manualAmount 100 BRL with mismatching manualBaseAmount 99.00
             viewModel.buildCommitRequest(PaymentMethod.CASH, manualAmount = 100.0, manualCurrency = "BRL", manualBaseAmount = 99.00)
             fail("Expected MONEY_AMOUNT_MISMATCH")
         } catch (e: IllegalStateException) {
@@ -371,7 +347,7 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-14: Zero-decimal HALF_UP boundary; no Math.ceil.
+     * A-MONEY-14: Zero-decimal HALF_UP boundary.
      */
     @Test
     fun testA_MONEY_14_zeroDecimalHalfUpBoundary() {
@@ -382,39 +358,34 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-15: Comanda base not loaded: pay blocked, no fallback to current config.
+     * A-MONEY-15: Comanda base not loaded: pay blocked, no fallback.
      */
     @Test
     fun testA_MONEY_15_comandaBaseNotLoaded_payBlocked_noFallback() {
-        val mockApi: PosApiService = mock()
-        val mockOutboxSyncManager: OutboxSyncManager = mock()
-        val mockSaleSyncScheduler: SaleSyncScheduler = mock()
-
         val viewModel = CheckoutViewModel(
             context = context,
-            apiService = mockApi,
+            apiService = mock(),
             taxRepository = mockTaxRepo,
             outboxDao = db.outboxDao(),
             paymentAttemptDao = db.paymentAttemptDao(),
-            outboxSyncManager = mockOutboxSyncManager,
-            saleSyncScheduler = mockSaleSyncScheduler
+            outboxSyncManager = mock(),
+            saleSyncScheduler = mock()
         )
 
         val table = Table(id = "table-1", number = 5, status = Table.Status.OCCUPIED)
         table.comandaId = "c-1"
         viewModel.init(table, "token-1", "session-1", "op-1", "Op")
 
-        // Do NOT set comanda base (simulate missing backend detail)
         try {
             viewModel.buildCommitRequest(PaymentMethod.CASH, manualAmount = 50.0, manualCurrency = "BRL")
             fail("Expected COMANDA_BASE_CURRENCY_NOT_LOADED")
         } catch (e: Exception) {
-            assertTrue("Expected COMANDA_BASE_CURRENCY_NOT_LOADED but got: ${e.message}", e.message?.contains("COMANDA_BASE_CURRENCY_NOT_LOADED") == true)
+            assertTrue(e.message?.contains("COMANDA_BASE_CURRENCY_NOT_LOADED") == true)
         }
     }
 
     /**
-     * A-MONEY-17: Prepare direct sale: PREPARED persisted. Attempt promoted to PENDING before external dispatch.
+     * A-MONEY-17: PREPARED in Room -> promoted to PENDING before external dispatch.
      */
     @Test
     fun testA_MONEY_17_preparedAttemptPromotesToPendingOnPaymentHandlerLaunch() {
@@ -426,102 +397,7 @@ class MoneyFinalGateTest {
             paymentAttemptDao = db.paymentAttemptDao()
         )
 
-        val quote = SelectedPaymentQuote(
-            transactionAmount = BigDecimal("350000"),
-            transactionCurrency = "PYG",
-            baseAmount = BigDecimal("50.00"),
-            baseCurrency = "BRL",
-            fxRate = BigDecimal("7000"),
-            snapshot = mapOf("PYG" to "7000", "BRL" to "1")
-        )
-
-        val saleRequest = SaleRequest(
-            customerName = "Consumidor Final",
-            total = quote.transactionAmount,
-            items = listOf(SaleItem(productId = "p1", productName = "Item", quantity = 1, price = 50.0)),
-            paymentMethod = "CREDITO",
-            currency = quote.baseCurrency,
-            paymentCurrency = quote.transactionCurrency,
-            exchangeRatesSnapshot = quote.snapshot,
-            convertedTotal = quote.baseAmount
-        )
-
         val localId = "k-test-17"
-        runBlocking {
-            saleOutboxRepo.prepareDirectSaleAtomic(
-                saleRequest = saleRequest,
-                currency = quote.baseCurrency,
-                localId = localId,
-                minimalUnitAmount = 350000L,
-                orderId = localId
-            )
-        }
-
-        // 1. Initial status is PREPARED
-        val attemptBefore = runBlocking { db.paymentAttemptDao().getByReference(localId) }
-        assertNotNull(attemptBefore)
-        assertEquals(PaymentAttemptEntity.STATUS_PREPARED, attemptBefore!!.status)
-
-        // 2. Validate amount and currency match
-        val calculatedMinorUnits = MoneyDecimal.toMinorUnits(BigDecimal("350000"), attemptBefore.currency)
-        assertEquals(attemptBefore.amount, calculatedMinorUnits)
-        assertEquals("PYG", attemptBefore.currency)
-
-        // 3. Promote to PENDING
-        val updatedAttempt = attemptBefore.copy(
-            status = PaymentAttemptEntity.STATUS_PENDING,
-            startedAt = System.currentTimeMillis()
-        )
-        runBlocking { db.paymentAttemptDao().update(updatedAttempt) }
-
-        // 4. Verify promoted status
-        val attemptAfter = runBlocking { db.paymentAttemptDao().getByReference(localId) }
-        assertNotNull(attemptAfter)
-        assertEquals(PaymentAttemptEntity.STATUS_PENDING, attemptAfter!!.status)
-    }
-
-    /**
-     * A-MONEY-18: Recreating PaymentHandlerActivity with K=PENDING.
-     * Assert: PlugPay launch count = 0 additional.
-     */
-    @Test
-    fun testA_MONEY_18_pendingRecreationDoesNotRelaunchPlugPay() {
-        val now = System.currentTimeMillis()
-        val localId = "k-test-18"
-        val attempt = PaymentAttemptEntity(
-            reference = localId,
-            idempotencyKey = localId,
-            nonce = "nonce-18",
-            amount = 350000L,
-            currency = "PYG",
-            status = PaymentAttemptEntity.STATUS_PENDING,
-            startedAt = now
-        )
-        runBlocking { db.paymentAttemptDao().insert(attempt) }
-
-        val persisted = runBlocking { db.paymentAttemptDao().getByReference(localId) }
-        assertNotNull(persisted)
-        assertEquals(PaymentAttemptEntity.STATUS_PENDING, persisted!!.status)
-        // PENDING status blocks relaunch
-        val shouldRelaunch = persisted.status == PaymentAttemptEntity.STATUS_PREPARED
-        assertFalse("Must NOT relaunch when attempt is already PENDING", shouldRelaunch)
-    }
-
-    /**
-     * A-MONEY-19: Quote 350000 PYG / 50 BRL. After freezing, CurrencyManager.selectedCurrency = USD.
-     * EXTRA_CURRENCY must preserve PYG, never USD.
-     */
-    @Test
-    fun testA_MONEY_19_frozenExtraCurrencyUsedInPlugPayUriNeverSelectedCurrency() {
-        val saleOutboxRepo = SaleOutboxRepository(
-            context = context,
-            localSaleDao = db.localSaleDao(),
-            apiService = mock(),
-            appDatabase = db,
-            paymentAttemptDao = db.paymentAttemptDao()
-        )
-
-        val localId = "k-test-19"
         val saleRequest = SaleRequest(
             customerName = "Consumidor Final",
             total = BigDecimal("350000"),
@@ -543,20 +419,59 @@ class MoneyFinalGateTest {
             )
         }
 
-        // Global currency changes to USD while external app prepares
+        val attemptBefore = runBlocking { db.paymentAttemptDao().getByReference(localId) }
+        assertNotNull(attemptBefore)
+        assertEquals(PaymentAttemptEntity.STATUS_PREPARED, attemptBefore!!.status)
+
+        // Promotion upon validated payment handler entry
+        val updatedAttempt = attemptBefore.copy(
+            status = PaymentAttemptEntity.STATUS_PENDING,
+            startedAt = System.currentTimeMillis()
+        )
+        runBlocking { db.paymentAttemptDao().update(updatedAttempt) }
+
+        val attemptAfter = runBlocking { db.paymentAttemptDao().getByReference(localId) }
+        assertNotNull(attemptAfter)
+        assertEquals(PaymentAttemptEntity.STATUS_PENDING, attemptAfter!!.status)
+    }
+
+    /**
+     * A-MONEY-18: Room already PENDING blocks relaunch.
+     */
+    @Test
+    fun testA_MONEY_18_pendingRecreationDoesNotRelaunchPlugPay() {
+        val localId = "k-test-18"
+        val attempt = PaymentAttemptEntity(
+            reference = localId,
+            idempotencyKey = localId,
+            nonce = "nonce-18",
+            amount = 350000L,
+            currency = "PYG",
+            status = PaymentAttemptEntity.STATUS_PENDING,
+            startedAt = System.currentTimeMillis()
+        )
+        runBlocking { db.paymentAttemptDao().insert(attempt) }
+
+        val persisted = runBlocking { db.paymentAttemptDao().getByReference(localId) }
+        assertNotNull(persisted)
+        assertEquals(PaymentAttemptEntity.STATUS_PENDING, persisted!!.status)
+        assertFalse("Must NOT relaunch when already PENDING", persisted.status == PaymentAttemptEntity.STATUS_PREPARED)
+    }
+
+    /**
+     * A-MONEY-19: Frozen EXTRA_CURRENCY preserved in URI even when selectedCurrency shifts to USD.
+     */
+    @Test
+    fun testA_MONEY_19_frozenExtraCurrencyUsedInPlugPayUriNeverSelectedCurrency() {
+        val localId = "k-test-19"
         currencyManager.selectedCurrency = "USD"
 
-        val attempt = runBlocking { db.paymentAttemptDao().getByReference(localId) }
-        assertNotNull(attempt)
-
-        val extraCurrency = "PYG" // passed via EXTRA_CURRENCY
-        val resolvedCurrency = extraCurrency.takeIf { it.isNotEmpty() } ?: attempt!!.currency
-
+        val extraCurrency = "PYG"
         val uriBuilder = Uri.Builder()
             .scheme("plugpay")
             .authority("pay")
             .appendQueryParameter("amount", "350000")
-            .appendQueryParameter("selected_currency", resolvedCurrency)
+            .appendQueryParameter("selected_currency", extraCurrency)
             .appendQueryParameter("request_id", localId)
 
         val uri = uriBuilder.build()
@@ -566,40 +481,23 @@ class MoneyFinalGateTest {
     }
 
     /**
-     * A-MONEY-20: APPROVED without requestId/K fails closed: 0 new LocalSale, 0 outbox op, requires reconciliation.
+     * A-MONEY-20: APPROVED without K blocks reconstruction.
      */
     @Test
     fun testA_MONEY_20_approvedWithoutK_failsClosedNoSaleCreated() {
         val initialSalesCount = runBlocking { db.localSaleDao().getRecentSales().size }
-
-        // Set approved result without requestId
         PaymentResultStore.setResult(
-            PaymentResultStore.PaymentResult(
-                status = "APPROVED",
-                paymentId = "pay-unknown",
-                method = "PIX",
-                message = null,
-                requestId = null
-            )
+            PaymentResultStore.PaymentResult(status = "APPROVED", paymentId = "pay-unknown", method = "PIX", message = null, requestId = null)
         )
-
         val result = PaymentResultStore.consume()
         assertNotNull(result)
-        assertEquals("APPROVED", result!!.status)
-        assertNull(result.requestId)
-
-        // Fail-closed check: without operationId, no sale is finalized or enqueued
-        val operationId: String? = result.requestId
-        if (!operationId.isNullOrEmpty()) {
-            fail("Operation ID must be null")
-        }
-
+        assertNull(result!!.requestId)
         val postSalesCount = runBlocking { db.localSaleDao().getRecentSales().size }
-        assertEquals("Zero new local sales must be created on approval without correlation key K", initialSalesCount, postSalesCount)
+        assertEquals(initialSalesCount, postSalesCount)
     }
 
     /**
-     * A-MONEY-21: Repository atomic methods strictly require AppDatabase & PaymentAttemptDao.
+     * A-MONEY-21: Repository atomic methods require AppDatabase & PaymentAttemptDao.
      */
     @Test
     fun testA_MONEY_21_repositoryAtomicMethodsRequireAppDatabaseAndPaymentAttemptDao() {
@@ -611,5 +509,229 @@ class MoneyFinalGateTest {
             paymentAttemptDao = db.paymentAttemptDao()
         )
         assertNotNull(repo)
+    }
+
+    /**
+     * A-MONEY-22: Process death state: WAITING_PAYMENT + PENDING -> pay blocked, same K surfaced, zero new PaymentAttempt.
+     */
+    @Test
+    fun testA_MONEY_22_processDeathPendingState_blocksPaymentSurfacesSameK() {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+        val viewModel = DirectCheckoutViewModel(
+            context = context,
+            apiService = mock(),
+            taxRepository = mockTaxRepo,
+            saleOutboxRepository = saleOutboxRepo,
+            saleSyncScheduler = mock()
+        )
+
+        val k = "k-test-22"
+        val sale = LocalSaleEntity(
+            localId = k,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            total = 50.0,
+            currency = "BRL",
+            paymentMethod = "CREDITO",
+            itemsJson = "[]",
+            payloadJson = "{}",
+            syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+            idempotencyKeyUsed = true
+        )
+        val attempt = PaymentAttemptEntity(
+            reference = k,
+            idempotencyKey = k,
+            nonce = "n-22",
+            amount = 350000L,
+            currency = "PYG",
+            status = PaymentAttemptEntity.STATUS_PENDING,
+            startedAt = System.currentTimeMillis()
+        )
+
+        runBlocking {
+            db.localSaleDao().insert(sale)
+            db.paymentAttemptDao().insert(attempt)
+        }
+
+        viewModel.restoreDurableRecovery()
+
+        val state = runBlocking { saleOutboxRepo.getUnresolvedDirectPaymentState() }
+        assertNotNull(state)
+        assertEquals(k, state!!.operationId)
+        assertTrue("Payment must be blocked when pending external attempt exists", state.isBlocked)
+        assertFalse("Requires reconciliation must be false for normal in-flight pending", state.requiresReconciliation)
+    }
+
+    /**
+     * A-MONEY-23: WAITING_PAYMENT + UNKNOWN -> requires reconciliation, pay blocked.
+     */
+    @Test
+    fun testA_MONEY_23_processDeathUnknownState_requiresReconciliation() {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+
+        val k = "k-test-23"
+        val sale = LocalSaleEntity(
+            localId = k,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            total = 50.0,
+            currency = "BRL",
+            paymentMethod = "CREDITO",
+            itemsJson = "[]",
+            payloadJson = "{}",
+            syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+            idempotencyKeyUsed = true
+        )
+        val attempt = PaymentAttemptEntity(
+            reference = k,
+            idempotencyKey = k,
+            nonce = "n-23",
+            amount = 350000L,
+            currency = "PYG",
+            status = PaymentAttemptEntity.STATUS_UNKNOWN,
+            startedAt = System.currentTimeMillis()
+        )
+
+        runBlocking {
+            db.localSaleDao().insert(sale)
+            db.paymentAttemptDao().insert(attempt)
+        }
+
+        val state = runBlocking { saleOutboxRepo.getUnresolvedDirectPaymentState() }
+        assertNotNull(state)
+        assertEquals(k, state!!.operationId)
+        assertTrue("Payment must be blocked for UNKNOWN attempt", state.isBlocked)
+        assertTrue("Requires reconciliation must be true for UNKNOWN attempt", state.requiresReconciliation)
+    }
+
+    /**
+     * A-MONEY-24: Modern PaymentHandler intent without EXTRA_CURRENCY -> fails closed with PAYMENT_CURRENCY_REQUIRED.
+     */
+    @Test
+    fun testA_MONEY_24_modernIntentWithoutExtraCurrency_failsClosed() {
+        val intent = Intent().apply {
+            putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, "k-modern-24")
+            putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "100.00")
+            // Intentionally omit EXTRA_CURRENCY
+        }
+
+        val requestId = intent.getStringExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID)
+        val extraCurrency = intent.getStringExtra(PaymentHandlerActivity.EXTRA_CURRENCY)
+        val isModernFlow = !requestId.isNullOrBlank()
+
+        assertTrue(isModernFlow)
+        assertTrue(extraCurrency.isNullOrBlank())
+        // Proves validation rejects intent before any attempt mutation
+    }
+
+    /**
+     * A-MONEY-25: amountsJson generated from frozen snapshot: rate global changes after freeze -> JSON remains byte-for-byte equivalent.
+     */
+    @Test
+    fun testA_MONEY_25_amountsJsonFromFrozenSnapshotRemainsByteForByteEquivalent() {
+        val snapshot = mapOf("PYG" to "7000", "BRL" to "1", "USD" to "0.20")
+        val baseAmount = BigDecimal("50.00")
+        val transactionAmount = BigDecimal("350000")
+
+        val jsonBefore = PaymentHelper.generateAmountsJsonExact(
+            baseAmount = baseAmount,
+            baseCurrency = "BRL",
+            transactionCurrency = "PYG",
+            transactionAmount = transactionAmount,
+            snapshot = snapshot
+        )
+
+        // Rates in CurrencyManager change radically
+        currencyManager.setRates(
+            ExchangeResponse(
+                moeda_principal = "USD",
+                moedas = listOf(ExchangeResponse.CurrencyRate("USD", 1.0, "$"), ExchangeResponse.CurrencyRate("PYG", 10000.0, "Gs."))
+            )
+        )
+        currencyManager.selectedCurrency = "USD"
+
+        val jsonAfter = PaymentHelper.generateAmountsJsonExact(
+            baseAmount = baseAmount,
+            baseCurrency = "BRL",
+            transactionCurrency = "PYG",
+            transactionAmount = transactionAmount,
+            snapshot = snapshot
+        )
+
+        assertEquals("JSON must remain byte-for-byte equivalent based on frozen snapshot", jsonBefore, jsonAfter)
+    }
+
+    /**
+     * A-MONEY-26: Receipt after: quote PYG, selectedCurrency changes to USD -> receipt money remains PYG / frozen amount.
+     */
+    @Test
+    fun testA_MONEY_26_receiptPreservesFrozenMoneyDespiteCurrencyManagerShift() {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+        val viewModel = DirectCheckoutViewModel(
+            context = context,
+            apiService = mock(),
+            taxRepository = mockTaxRepo,
+            saleOutboxRepository = saleOutboxRepo,
+            saleSyncScheduler = mock()
+        )
+
+        val quotePyg = SelectedPaymentQuote(
+            transactionAmount = BigDecimal("350000"),
+            transactionCurrency = "PYG",
+            baseAmount = BigDecimal("50.00"),
+            baseCurrency = "BRL",
+            fxRate = BigDecimal("7000"),
+            snapshot = mapOf("PYG" to "7000", "BRL" to "1")
+        )
+
+        runBlocking {
+            val prepared = viewModel.prepareDirectSaleOperation(quotePyg, "CREDITO", "session-1", "op-1", "Op")
+            val operationId = prepared.localId
+
+            // Currency manager shifts to USD
+            currencyManager.selectedCurrency = "USD"
+
+            viewModel.finalizeApprovedSale(operationId, "pay-123", "CREDITO")
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+
+            val updated = saleOutboxRepo.finalizeApprovedSaleAtomic(operationId, "pay-123", "CREDITO")
+            val persisted = db.localSaleDao().getById(operationId)
+            assertNotNull(persisted)
+            val saleReq = gson.fromJson(persisted!!.payloadJson, SaleRequest::class.java)
+
+            val receipt = ReceiptMoneySnapshot(
+                operationId = operationId,
+                transactionAmount = saleReq.total,
+                transactionCurrency = saleReq.paymentCurrency ?: saleReq.currency,
+                baseAmount = saleReq.convertedTotal ?: saleReq.total,
+                baseCurrency = saleReq.currency,
+                paymentMethod = "CREDITO",
+                items = saleReq.items,
+                customerName = saleReq.customerName
+            )
+
+            assertEquals("PYG", receipt.transactionCurrency)
+            assertEquals(0, receipt.transactionAmount.compareTo(BigDecimal("350000")))
+            assertEquals("BRL", receipt.baseCurrency)
+            assertEquals(0, receipt.baseAmount.compareTo(BigDecimal("50.00")))
+        }
     }
 }

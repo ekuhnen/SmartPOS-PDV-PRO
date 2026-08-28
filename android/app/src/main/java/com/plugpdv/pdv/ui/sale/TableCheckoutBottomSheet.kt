@@ -373,9 +373,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                             val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                             val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
-                            val activeTaxes = viewModel.uiState.value.activeTaxes
-                            val finalBase = (prepared.request.valorBase ?: prepared.request.valor).toDouble()
-                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(finalBase, quote.transactionCurrency, activeTaxes, cm)
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJsonExact(
+                                baseAmount = prepared.request.valorBase ?: prepared.request.valor,
+                                baseCurrency = prepared.request.baseCurrency ?: quote.baseCurrency,
+                                transactionCurrency = quote.transactionCurrency,
+                                transactionAmount = prepared.request.valor,
+                                snapshot = prepared.request.exchangeRatesSnapshot ?: quote.snapshot,
+                                activeTaxes = emptyList()
+                            )
 
                             val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
                                 putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.operationKey)

@@ -70,8 +70,18 @@ class PaymentHandlerActivity : BaseActivity() {
             handlePaymentCallback(data)
         } else {
             val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+            val idempotencyKey = intent.getStringExtra(EXTRA_IDEMPOTENCY_KEY)
             val tableNum = intent.getIntExtra(EXTRA_TABLE_NUMBER, -1)
             val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
+
+            val isModernFlow = !requestId.isNullOrBlank() || !idempotencyKey.isNullOrBlank()
+            val extraCurrency = intent.getStringExtra(EXTRA_CURRENCY)
+
+            if (isModernFlow && extraCurrency.isNullOrBlank()) {
+                Log.e(TAG, "PAYMENT_CURRENCY_REQUIRED: Fluxo moderno requer EXTRA_CURRENCY explícito.")
+                deliverFailedResult("PAYMENT_CURRENCY_REQUIRED", "Moeda da transação é obrigatória", if (tableNum != -1) tableNum.toString() else null, tableId)
+                return
+            }
 
             lifecycleScope.launch {
                 val existingAttempt = if (!requestId.isNullOrEmpty()) {
@@ -124,7 +134,12 @@ class PaymentHandlerActivity : BaseActivity() {
         tableNumber: Int,
         tableId: String?
     ) {
-        val extraCurrency = intent.getStringExtra(EXTRA_CURRENCY) ?: existingAttempt.currency
+        val extraCurrency = intent.getStringExtra(EXTRA_CURRENCY)
+        if (extraCurrency.isNullOrBlank()) {
+            Log.e(TAG, "PAYMENT_CURRENCY_REQUIRED: Intent extra currency is null or blank for prepared attempt")
+            deliverFailedResult("PAYMENT_CURRENCY_REQUIRED", "Moeda da transação é obrigatória", if (tableNumber != -1) tableNumber.toString() else null, tableId)
+            return
+        }
         if (!extraCurrency.equals(existingAttempt.currency, ignoreCase = true)) {
             Log.e(TAG, "PAYMENT_QUOTE_MISMATCH: Intent currency $extraCurrency != attempt currency ${existingAttempt.currency}")
             deliverFailedResult("PAYMENT_QUOTE_MISMATCH", "Discrepância na moeda da cotação", if (tableNumber != -1) tableNumber.toString() else null, tableId)

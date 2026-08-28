@@ -72,6 +72,7 @@ class PaymentHandlerActivityInstrumentationTest {
             putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
             putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, ref)
             putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "50.00")
+            putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, "BRL")
         }
 
         val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
@@ -114,6 +115,7 @@ class PaymentHandlerActivityInstrumentationTest {
         val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
             putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
             putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "75.00")
+            putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, "BRL")
         }
 
         val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)
@@ -156,6 +158,7 @@ class PaymentHandlerActivityInstrumentationTest {
         val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
             putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, ref)
             putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, "120.00")
+            putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, "BRL")
         }
 
         val scenario = ActivityScenario.launch<PaymentHandlerActivity>(intent)

@@ -35,6 +35,15 @@ enum class StopReason {
     NO_PROGRESS
 }
 
+data class UnresolvedDirectPaymentState(
+    val operationId: String,
+    val saleStatus: String,
+    val attemptStatus: String?,
+    val isBlocked: Boolean,
+    val requiresReconciliation: Boolean,
+    val blockReason: String?
+)
+
 @Singleton
 class SaleOutboxRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -192,6 +201,48 @@ class SaleOutboxRepository @Inject constructor(
                 }
             }
             recovered
+        }
+    }
+
+    suspend fun getUnresolvedDirectPaymentState(): UnresolvedDirectPaymentState? {
+        val waitingSales = localSaleDao.getWaitingPaymentSales()
+        if (waitingSales.isEmpty()) return null
+
+        val latestWaitingSale = waitingSales.maxByOrNull { it.createdAt } ?: return null
+        val attempt = paymentAttemptDao.getByReference(latestWaitingSale.localId)
+
+        return when (attempt?.status) {
+            PaymentAttemptEntity.STATUS_PENDING -> {
+                UnresolvedDirectPaymentState(
+                    operationId = latestWaitingSale.localId,
+                    saleStatus = latestWaitingSale.syncStatus,
+                    attemptStatus = attempt.status,
+                    isBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Pagamento em andamento aguardando confirmação externa"
+                )
+            }
+            PaymentAttemptEntity.STATUS_UNKNOWN -> {
+                UnresolvedDirectPaymentState(
+                    operationId = latestWaitingSale.localId,
+                    saleStatus = latestWaitingSale.syncStatus,
+                    attemptStatus = attempt.status,
+                    isBlocked = true,
+                    requiresReconciliation = true,
+                    blockReason = "Pagamento em estado indeterminado requer conciliação"
+                )
+            }
+            PaymentAttemptEntity.STATUS_PREPARED -> {
+                UnresolvedDirectPaymentState(
+                    operationId = latestWaitingSale.localId,
+                    saleStatus = latestWaitingSale.syncStatus,
+                    attemptStatus = attempt.status,
+                    isBlocked = false,
+                    requiresReconciliation = false,
+                    blockReason = null
+                )
+            }
+            else -> null
         }
     }
 

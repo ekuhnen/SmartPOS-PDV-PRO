@@ -398,9 +398,106 @@ class DurableRoomRecoveryAndroidTest {
         }
     }
 
+    /**
+     * A-MONEY-22 (Instrumented): Unresolved payment state on device Room returns isBlocked=true for PENDING.
+     */
+    @Test
+    fun testA_MONEY_22_instrumented_unresolvedPendingBlocksPayment() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k = "k-instr-22"
+            val sale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                total = 50.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val attempt = PaymentAttemptEntity(
+                reference = k,
+                idempotencyKey = k,
+                nonce = "n-22",
+                amount = 350000L,
+                currency = "PYG",
+                status = PaymentAttemptEntity.STATUS_PENDING,
+                startedAt = System.currentTimeMillis()
+            )
+
+            db.localSaleDao().insert(sale)
+            db.paymentAttemptDao().insert(attempt)
+
+            val unresolved = repository.getUnresolvedDirectPaymentState()
+            assertNotNull(unresolved)
+            assertEquals(k, unresolved!!.operationId)
+            assertTrue(unresolved.isBlocked)
+            assertFalse(unresolved.requiresReconciliation)
+        }
+    }
+
+    /**
+     * A-MONEY-23 (Instrumented): Unresolved payment state on device Room returns requiresReconciliation=true for UNKNOWN.
+     */
+    @Test
+    fun testA_MONEY_23_instrumented_unresolvedUnknownRequiresReconciliation() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k = "k-instr-23"
+            val sale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                total = 50.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val attempt = PaymentAttemptEntity(
+                reference = k,
+                idempotencyKey = k,
+                nonce = "n-23",
+                amount = 350000L,
+                currency = "PYG",
+                status = PaymentAttemptEntity.STATUS_UNKNOWN,
+                startedAt = System.currentTimeMillis()
+            )
+
+            db.localSaleDao().insert(sale)
+            db.paymentAttemptDao().insert(attempt)
+
+            val unresolved = repository.getUnresolvedDirectPaymentState()
+            assertNotNull(unresolved)
+            assertEquals(k, unresolved!!.operationId)
+            assertTrue(unresolved.isBlocked)
+            assertTrue(unresolved.requiresReconciliation)
+        }
+    }
+
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
 }
+
 

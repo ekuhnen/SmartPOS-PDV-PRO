@@ -2,69 +2,86 @@ package com.plugpdv.pdv.utils
 
 import com.plugpdv.pdv.database.TaxEntity
 import org.json.JSONObject
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Locale
 
 object PaymentHelper {
 
     /**
-     * Calcula o valor final exato para TODAS as moedas, aplicando o imposto correto
-     * de forma independente para cada moeda.
-     *
-     * @param inputAmountBrl O valor informado no bottomsheet (em BRL, que inclui o imposto da moeda atual)
-     * @param selectedCurrency A moeda que estava selecionada quando o valor foi informado
-     * @param activeTaxes A lista de impostos ativos no sistema
-     * @param currencyManager O gerenciador de moedas para as taxas de câmbio
-     * @return String JSON com os valores finais já calculados para cada moeda
+     * Geração determinística de amountsJson baseada EXCLUSIVAMENTE em BigDecimals
+     * e no snapshot congelado de taxas de câmbio (sem segunda consulta ao CurrencyManager,
+     * sem Double, sem Math.ceil e sem hardcode de moedas).
      */
+    fun generateAmountsJsonExact(
+        baseAmount: BigDecimal,
+        baseCurrency: String,
+        transactionCurrency: String,
+        transactionAmount: BigDecimal,
+        snapshot: Map<String, String>?,
+        activeTaxes: List<TaxEntity> = emptyList()
+    ): String {
+        val json = JSONObject()
+
+        // 1. A moeda da transação selecionada DEVE ter exatamente o valor cotado
+        val transDecimals = MoneyDecimal.getDisplayDecimals(transactionCurrency)
+        val transRounded = MoneyDecimal.roundToCurrency(transactionAmount, transactionCurrency)
+        val transFormatted = if (transDecimals == 0) {
+            transRounded.toBigInteger().toString()
+        } else {
+            transRounded.setScale(transDecimals, RoundingMode.HALF_UP).toPlainString()
+        }
+        json.put(transactionCurrency.uppercase(Locale.ROOT), transFormatted)
+
+        // 2. Moeda base da comanda / venda direta
+        val baseDecimals = MoneyDecimal.getDisplayDecimals(baseCurrency)
+        val baseRounded = MoneyDecimal.roundToCurrency(baseAmount, baseCurrency)
+        val baseFormatted = if (baseDecimals == 0) {
+            baseRounded.toBigInteger().toString()
+        } else {
+            baseRounded.setScale(baseDecimals, RoundingMode.HALF_UP).toPlainString()
+        }
+        json.put(baseCurrency.uppercase(Locale.ROOT), baseFormatted)
+
+        // 3. Demais moedas do snapshot congelado (sem nova consulta ao CurrencyManager)
+        if (snapshot != null) {
+            for ((currencyCode, rateStr) in snapshot) {
+                val code = currencyCode.uppercase(Locale.ROOT)
+                if (code == transactionCurrency.uppercase(Locale.ROOT) || code == baseCurrency.uppercase(Locale.ROOT)) {
+                    continue
+                }
+                val rate = runCatching { BigDecimal(rateStr) }.getOrNull()
+                if (rate != null && rate > BigDecimal.ZERO) {
+                    val converted = baseAmount.multiply(rate)
+                    val decimals = MoneyDecimal.getDisplayDecimals(code)
+                    val rounded = MoneyDecimal.roundToCurrency(converted, code)
+                    val formatted = if (decimals == 0) {
+                        rounded.toBigInteger().toString()
+                    } else {
+                        rounded.setScale(decimals, RoundingMode.HALF_UP).toPlainString()
+                    }
+                    json.put(code, formatted)
+                }
+            }
+        }
+
+        return json.toString()
+    }
+
+    @Deprecated("Substituído por generateAmountsJsonExact para eliminar ponto flutuante e chamadas redundantes de FX")
     fun generateAmountsJson(
         inputAmountBrl: Double,
         selectedCurrency: String,
         activeTaxes: List<TaxEntity>,
         currencyManager: CurrencyManager
     ): String {
-        // 1. Descobrir qual era o imposto aplicado no valor de entrada
-        val selectedTaxPercent = activeTaxes
-            .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
-            .sumOf { it.percentage }
-
-        // 2. Extrair a "Base Limpa" em BRL (valor sem nenhum imposto)
-        val baseBrl = inputAmountBrl / (1.0 + (selectedTaxPercent / 100.0))
-
-        val json = JSONObject()
-
-        // 3. Recalcular para BRL puro
-        val brlTaxPercent = activeTaxes
-            .filter { it.currency.equals("BRL", ignoreCase = true) }
-            .sumOf { it.percentage }
-        val finalBrl = baseBrl * (1.0 + (brlTaxPercent / 100.0))
-        json.put("BRL", String.format(Locale.US, "%.2f", finalBrl))
-
-        // 4. Recalcular para as outras moedas disponíveis
-        currencyManager.getAvailableCurrencies().forEach { rate ->
-            val code = rate.codigo.uppercase()
-            
-            // Imposto específico da moeda alvo
-            val taxPercent = activeTaxes
-                .filter { it.currency.equals(code, ignoreCase = true) }
-                .sumOf { it.percentage }
-
-            // Aplica o imposto dessa moeda em cima da base BRL
-            val finalBrlForCurrency = baseBrl * (1.0 + (taxPercent / 100.0))
-            
-            // Converte pela taxa de câmbio
-            var converted = finalBrlForCurrency * rate.taxa
-
-            // Arredondamento e formatação de acordo com regras de moedas sem decimal
-            val isNoFraction = code == "PYG" || code == "ARS"
-            val formatted = if (isNoFraction) {
-                converted = Math.ceil(converted)
-                String.format(Locale.US, "%.0f", converted)
-            } else {
-                String.format(Locale.US, "%.2f", converted)
-            }
-            json.put(code, formatted)
-        }
-
-        return json.toString()
+        return generateAmountsJsonExact(
+            baseAmount = BigDecimal.valueOf(inputAmountBrl),
+            baseCurrency = "BRL",
+            transactionCurrency = selectedCurrency,
+            transactionAmount = BigDecimal.valueOf(inputAmountBrl),
+            snapshot = null,
+            activeTaxes = activeTaxes
+        )
     }
 }
