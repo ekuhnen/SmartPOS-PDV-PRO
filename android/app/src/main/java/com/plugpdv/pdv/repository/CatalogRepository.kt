@@ -2,7 +2,9 @@ package com.plugpdv.pdv.repository
 
 import android.util.Log
 import androidx.lifecycle.LiveData
+import androidx.room.withTransaction
 import com.plugpdv.pdv.api.PosApiService
+import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.CatalogDao
 import com.plugpdv.pdv.models.Product
 import kotlinx.coroutines.Dispatchers
@@ -13,7 +15,8 @@ import javax.inject.Singleton
 @Singleton
 class CatalogRepository @Inject constructor(
     private val catalogDao: CatalogDao,
-    private val apiService: PosApiService
+    private val apiService: PosApiService,
+    private val appDatabase: AppDatabase
 ) {
     val allProducts: LiveData<List<Product>> = catalogDao.allProductsLiveData
 
@@ -33,8 +36,10 @@ class CatalogRepository @Inject constructor(
             }
 
             withContext(Dispatchers.IO) {
-                catalogDao.deleteAll()
-                catalogDao.insertAll(productsList)
+                appDatabase.withTransaction {
+                    catalogDao.deleteAll()
+                    catalogDao.insertAll(productsList)
+                }
             }
         } catch (e: Exception) {
             Log.e("CatalogRepository", "Failed to sync catalog", e)

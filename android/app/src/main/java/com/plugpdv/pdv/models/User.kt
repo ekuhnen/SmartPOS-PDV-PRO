@@ -7,5 +7,6 @@ data class User(
 )
 
 data class UserMetadata(
-    val full_name: String? = null
+    val full_name: String? = null,
+    val invited_by: String? = null
 )

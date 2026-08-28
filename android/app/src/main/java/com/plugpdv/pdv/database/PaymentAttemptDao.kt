@@ -39,4 +39,7 @@ interface PaymentAttemptDao {
 
     @Query("DELETE FROM payment_attempts WHERE reference = :reference")
     suspend fun deleteByReference(reference: String)
+
+    @Query("SELECT COUNT(*) FROM payment_attempts WHERE status IN ('PREPARED', 'PENDING', 'UNKNOWN', 'NEEDS_RECONCILIATION')")
+    suspend fun getUnresolvedCount(): Int
 }

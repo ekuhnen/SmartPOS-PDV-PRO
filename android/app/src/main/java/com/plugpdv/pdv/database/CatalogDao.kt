@@ -15,6 +15,9 @@ interface CatalogDao {
     @Query("SELECT * FROM products WHERE id = :id")
     suspend fun getProductById(id: String): Product?
 
+    @Query("SELECT * FROM products")
+    suspend fun getAll(): List<Product>
+
     @Query("DELETE FROM products")
     suspend fun deleteAll()
 }

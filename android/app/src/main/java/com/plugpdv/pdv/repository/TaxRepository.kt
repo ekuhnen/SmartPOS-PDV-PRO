@@ -3,6 +3,8 @@ package com.plugpdv.pdv.repository
 import android.util.Log
 import androidx.lifecycle.LiveData
 import com.plugpdv.pdv.api.PosApiService
+import androidx.room.withTransaction
+import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.TaxDao
 import com.plugpdv.pdv.database.TaxEntity
 import javax.inject.Inject
@@ -19,7 +21,8 @@ interface TaxRepository {
 @Singleton
 class DefaultTaxRepository @Inject constructor(
     private val taxDao: TaxDao,
-    private val apiService: PosApiService
+    private val apiService: PosApiService,
+    private val appDatabase: AppDatabase
 ) : TaxRepository {
 
     override fun getActiveTaxesLiveData(): LiveData<List<TaxEntity>> {
@@ -39,8 +42,10 @@ class DefaultTaxRepository @Inject constructor(
                     active = rate.active
                 }
             }
-            taxDao.deleteAll()
-            taxDao.insertAll(entities)
+            appDatabase.withTransaction {
+                taxDao.deleteAll()
+                taxDao.insertAll(entities)
+            }
             Log.d("TaxRepository", "Taxas sincronizadas com sucesso: ${entities.size} registros.")
         } catch (e: Exception) {
             Log.e("TaxRepository", "Erro ao sincronizar taxas: ${e.message}")

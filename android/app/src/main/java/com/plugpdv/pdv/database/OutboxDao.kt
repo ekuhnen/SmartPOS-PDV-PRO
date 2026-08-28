@@ -66,4 +66,7 @@ interface OutboxDao {
 
     @Query("DELETE FROM outbox_operations WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("SELECT COUNT(*) FROM outbox_operations WHERE status NOT IN ('SYNCED', 'COMPLETED')")
+    suspend fun getUnresolvedCount(): Int
 }

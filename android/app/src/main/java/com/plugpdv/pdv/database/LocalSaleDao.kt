@@ -47,4 +47,7 @@ interface LocalSaleDao {
 
     @Query("SELECT * FROM local_sales ORDER BY createdAt DESC LIMIT 50")
     suspend fun getRecentSales(): List<LocalSaleEntity>
+
+    @Query("SELECT COUNT(*) FROM local_sales WHERE syncedToApi = 0 OR syncStatus != 'SYNCED'")
+    suspend fun getUnresolvedCount(): Int
 }

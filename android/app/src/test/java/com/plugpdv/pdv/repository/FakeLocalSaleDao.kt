@@ -109,4 +109,8 @@ open class FakeLocalSaleDao : LocalSaleDao {
     override suspend fun getRecentSales(): List<LocalSaleEntity> {
         return sales.sortedByDescending { it.createdAt }.take(50)
     }
+
+    override suspend fun getUnresolvedCount(): Int {
+        return sales.count { !it.syncedToApi || it.syncStatus != LocalSaleEntity.STATUS_SYNCED }
+    }
 }

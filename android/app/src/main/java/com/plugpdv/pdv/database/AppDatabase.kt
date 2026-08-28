@@ -34,6 +34,14 @@ abstract class AppDatabase : RoomDatabase() {
         tableDao().deleteAll()
     }
 
+    suspend fun hasUnresolvedDurableWork(context: Context): Boolean {
+        if (localSaleDao().getUnresolvedCount() > 0) return true
+        if (paymentAttemptDao().getUnresolvedCount() > 0) return true
+        if (outboxDao().getUnresolvedCount() > 0) return true
+        if (com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.isReconciliationRequired(context)) return true
+        return false
+    }
+
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null

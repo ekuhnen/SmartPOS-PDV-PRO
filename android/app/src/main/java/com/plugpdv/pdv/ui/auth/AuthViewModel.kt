@@ -18,6 +18,7 @@ import com.plugpdv.pdv.repository.TaxRepository
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.DeviceIdProvider
 import com.plugpdv.pdv.utils.KillSwitchManager
+import com.plugpdv.pdv.utils.TenantBindingStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.SupabaseClient
@@ -74,10 +75,44 @@ class AuthViewModel @Inject constructor(
                     
                     val response = apiService.login(LoginRequest(email, password))
                     val token = response.access_token ?: throw Exception("Token null")
-                    
-                    Log.d("AuthViewModel", "Login OK! Limpando apenas caches reconstruíveis do banco local...")
-                    // Requisito 5: Preserva local_sales e outbox_operations, limpando apenas catálogo, taxas e mesas.
-                    database.clearRebuildableCaches()
+
+                    // ── TENANT GUARD ─────────────────────────────────────────────────────────
+                    // owner_id é a ÚNICA fonte canônica de identidade de tenant.
+                    // NUNCA derivar de user.id, user_metadata.invited_by ou email.
+                    val ownerId = response.ownerId
+                    if (ownerId.isNullOrBlank()) {
+                        Log.e("AuthViewModel", "TENANT_ID_NOT_RETURNED: owner_id ausente na resposta de login.")
+                        _loginResult.postValue(LoginResult.Error(
+                            "TENANT_ID_NOT_RETURNED: Terminal não pôde verificar empresa. Contate o suporte."
+                        ))
+                        return@withContext
+                    }
+
+                    val activeTenantId = TenantBindingStore.getActiveTenantId(context)
+                    when {
+                        activeTenantId == null -> {
+                            // Primeira vinculação: o dispositivo já está fisicamente vinculado ao
+                            // proprietário via pdv_devices.owner_user_id no backend.
+                            // Preservar cache existente — não purgar na migração.
+                            Log.d("AuthViewModel", "Primeira vinculação de tenant: $ownerId. Cache existente preservado (migração segura).")
+                            TenantBindingStore.setActiveTenantId(context, ownerId)
+                        }
+                        activeTenantId == ownerId -> {
+                            // Mesmo proprietário — cache do Room permanece intacto.
+                            Log.d("AuthViewModel", "Login com mesmo tenant ($ownerId). Cache do Room intacto.")
+                        }
+                        else -> {
+                            // Mismatch: FAIL CLOSED — nunca trocar tenant automaticamente.
+                            // Reprovisionar o terminal é responsabilidade de OFFLINE-FIRST-06+.
+                            Log.w("AuthViewModel", "Tentativa de troca de tenant BLOQUEADA: atual=$activeTenantId, novo=$ownerId")
+                            _loginResult.postValue(LoginResult.Error(
+                                "Este terminal está vinculado a outra empresa. " +
+                                "É necessário reprovisionar o terminal antes de trocar de empresa."
+                            ))
+                            return@withContext
+                        }
+                    }
+                    // ── FIM DO TENANT GUARD ───────────────────────────────────────────────────
                     
                     Log.d("AuthViewModel", "Iniciando registro do dispositivo...")
                     registerDevice(token)
