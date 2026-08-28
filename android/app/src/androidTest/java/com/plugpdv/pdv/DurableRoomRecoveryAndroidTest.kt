@@ -233,7 +233,7 @@ class DurableRoomRecoveryAndroidTest {
             assertEquals("WAITING_PAYMENT", persistedSale!!.syncStatus)
 
             assertNotNull("PaymentAttempt must be committed in Room before PlugPay launch", persistedAttempt)
-            assertEquals("PENDING", persistedAttempt!!.status)
+            assertEquals(PaymentAttemptEntity.STATUS_PREPARED, persistedAttempt!!.status)
             assertEquals(350000L, persistedAttempt.amount)
             assertEquals("PYG", persistedAttempt.currency)
 
@@ -360,6 +360,41 @@ class DurableRoomRecoveryAndroidTest {
             assertEquals(0, deserialized.total.compareTo(java.math.BigDecimal("350000")))
             assertEquals(0, deserialized.convertedTotal!!.compareTo(java.math.BigDecimal("50.00")))
             assertEquals("7000", deserialized.exchangeRatesSnapshot?.get("PYG"))
+        }
+    }
+
+    /**
+     * A-MONEY-17 (Instrumented): Direct sale PREPARED attempt promoted to PENDING in Room before external dispatch.
+     */
+    @Test
+    fun testA_MONEY_17_instrumented_preparedToPendingPromotion() {
+        runBlocking {
+            val localId = "k-instr-17"
+            val attempt = PaymentAttemptEntity(
+                reference = localId,
+                idempotencyKey = localId,
+                nonce = "nonce-17",
+                amount = 350000L,
+                currency = "PYG",
+                status = PaymentAttemptEntity.STATUS_PREPARED,
+                startedAt = System.currentTimeMillis()
+            )
+            db.paymentAttemptDao().insert(attempt)
+
+            val before = db.paymentAttemptDao().getByReference(localId)
+            assertNotNull(before)
+            assertEquals(PaymentAttemptEntity.STATUS_PREPARED, before!!.status)
+
+            // Simulate PaymentHandler promotion before launching external activity
+            val updated = before.copy(
+                status = PaymentAttemptEntity.STATUS_PENDING,
+                startedAt = System.currentTimeMillis()
+            )
+            db.paymentAttemptDao().update(updated)
+
+            val after = db.paymentAttemptDao().getByReference(localId)
+            assertNotNull(after)
+            assertEquals(PaymentAttemptEntity.STATUS_PENDING, after!!.status)
         }
     }
 

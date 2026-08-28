@@ -107,9 +107,8 @@ class CheckoutActivity : BaseActivity() {
             if (!operationId.isNullOrEmpty()) {
                 viewModel.finalizeApprovedSale(operationId, result.paymentId, method)
             } else {
-                token?.let {
-                    viewModel.finishSale(it, method, sessionId ?: "", operatorId, operatorName)
-                } ?: Log.e("CheckoutActivity", "Token nulo ao processar resultado de pagamento!")
+                Log.e("CheckoutActivity", "PAGAMENTO_APROVADO_SEM_CHAVE: Impossível determinar chave de correlação K. Bloqueando reconstrução de venda.")
+                Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -284,6 +283,7 @@ class CheckoutActivity : BaseActivity() {
                                 putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.localId)
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, quote.transactionAmount.toPlainString())
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, quote.baseAmount.toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, quote.transactionCurrency)
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                                 putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.localId)
                                 putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")

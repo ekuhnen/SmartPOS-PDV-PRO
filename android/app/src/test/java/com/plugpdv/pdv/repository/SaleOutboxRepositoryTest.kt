@@ -26,6 +26,14 @@ import retrofit2.HttpException
 import retrofit2.Response
 import java.io.IOException
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.plugpdv.pdv.database.AppDatabase
+import com.plugpdv.pdv.database.PaymentAttemptDao
+
+@RunWith(RobolectricTestRunner::class)
 class SaleOutboxRepositoryTest {
 
     private lateinit var context: Context
@@ -33,18 +41,23 @@ class SaleOutboxRepositoryTest {
     private lateinit var fakeLocalSaleDao: FakeLocalSaleDao
     private lateinit var apiService: PosApiService
     private lateinit var repository: SaleOutboxRepository
+    private lateinit var appDatabase: AppDatabase
+    private lateinit var paymentAttemptDao: PaymentAttemptDao
 
     @Before
     fun setUp() {
-        context = mock()
-        sharedPreferences = mock()
+        context = ApplicationProvider.getApplicationContext()
+        sharedPreferences = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        sharedPreferences.edit().putString(Constants.TOKEN, "valid_test_token").apply()
+
+        appDatabase = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        paymentAttemptDao = appDatabase.paymentAttemptDao()
         fakeLocalSaleDao = FakeLocalSaleDao()
         apiService = mock()
 
-        whenever(context.getSharedPreferences(any(), any())).thenReturn(sharedPreferences)
-        whenever(sharedPreferences.getString(Constants.TOKEN, null)).thenReturn("valid_test_token")
-
-        repository = SaleOutboxRepository(context, fakeLocalSaleDao, apiService)
+        repository = SaleOutboxRepository(context, fakeLocalSaleDao, apiService, appDatabase, paymentAttemptDao)
     }
 
     @Test

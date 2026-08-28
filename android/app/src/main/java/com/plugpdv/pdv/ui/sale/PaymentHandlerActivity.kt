@@ -36,6 +36,7 @@ class PaymentHandlerActivity : BaseActivity() {
         const val EXTRA_MERCHANT_ID = "merchant_id"
         const val EXTRA_AMOUNT_BRL = "amount_brl"
         const val EXTRA_AMOUNTS_JSON = "extra_amounts_json"
+        const val EXTRA_CURRENCY = "extra_currency"
 
         private const val PAYMENT_APP_SCHEME = "plugpay"
         private const val PAYMENT_APP_HOST = "pay"
@@ -79,7 +80,10 @@ class PaymentHandlerActivity : BaseActivity() {
 
                 if (existingAttempt != null) {
                     when (existingAttempt.status) {
-                        "APPROVED" -> {
+                        PaymentAttemptEntity.STATUS_PREPARED -> {
+                            handlePreparedAttempt(intent, existingAttempt, tableNum, tableId)
+                        }
+                        PaymentAttemptEntity.STATUS_APPROVED -> {
                             Log.d(TAG, "Tentativa K=$requestId já APROVADA no Room. Recuperando resultado sem reabrir PlugPay.")
                             deliverApprovedResult(
                                 requestId = existingAttempt.reference,
@@ -90,15 +94,15 @@ class PaymentHandlerActivity : BaseActivity() {
                                 tableId = tableId
                             )
                         }
-                        "PENDING" -> {
+                        PaymentAttemptEntity.STATUS_PENDING -> {
                             Log.d(TAG, "Tentativa K=$requestId em PENDING pós recriação. Bloqueando reabertura automática.")
                             Toast.makeText(this@PaymentHandlerActivity, "Pagamento aguardando confirmação...", Toast.LENGTH_SHORT).show()
                         }
-                        "UNKNOWN" -> {
+                        PaymentAttemptEntity.STATUS_UNKNOWN -> {
                             Log.d(TAG, "Tentativa K=$requestId em UNKNOWN pós recriação. Exibindo conciliação.")
                             showUndeterminedPaymentDialog(existingAttempt, if (tableNum != -1) tableNum.toString() else null)
                         }
-                        "CANCELLED", "REJECTED", "FAILED_TO_START" -> {
+                        PaymentAttemptEntity.STATUS_CANCELLED, PaymentAttemptEntity.STATUS_REJECTED, "FAILED_TO_START" -> {
                             Log.d(TAG, "Tentativa K=$requestId em estado terminal (${existingAttempt.status}).")
                             deliverFailedResult(existingAttempt.status, existingAttempt.statusMessage, if (tableNum != -1) tableNum.toString() else null, tableId)
                         }
@@ -114,6 +118,105 @@ class PaymentHandlerActivity : BaseActivity() {
         }
     }
 
+    private fun handlePreparedAttempt(
+        intent: Intent,
+        existingAttempt: PaymentAttemptEntity,
+        tableNumber: Int,
+        tableId: String?
+    ) {
+        val extraCurrency = intent.getStringExtra(EXTRA_CURRENCY) ?: existingAttempt.currency
+        if (!extraCurrency.equals(existingAttempt.currency, ignoreCase = true)) {
+            Log.e(TAG, "PAYMENT_QUOTE_MISMATCH: Intent currency $extraCurrency != attempt currency ${existingAttempt.currency}")
+            deliverFailedResult("PAYMENT_QUOTE_MISMATCH", "Discrepância na moeda da cotação", if (tableNumber != -1) tableNumber.toString() else null, tableId)
+            return
+        }
+
+        val amountStr = intent.getStringExtra(EXTRA_AMOUNT)
+        val amountBigDecimal = amountStr?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() } ?: java.math.BigDecimal.ZERO
+        val calculatedMinorUnits = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(amountBigDecimal, existingAttempt.currency)
+
+        if (calculatedMinorUnits != existingAttempt.amount) {
+            Log.e(TAG, "PAYMENT_AMOUNT_MISMATCH: Calculated minor units $calculatedMinorUnits != attempt amount ${existingAttempt.amount}")
+            deliverFailedResult("PAYMENT_AMOUNT_MISMATCH", "Discrepância no valor do pagamento", if (tableNumber != -1) tableNumber.toString() else null, tableId)
+            return
+        }
+
+        val displayDecimals = com.plugpdv.pdv.utils.MoneyDecimal.getDisplayDecimals(existingAttempt.currency)
+        val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, existingAttempt.currency)
+        val formattedAmount = if (displayDecimals == 0) {
+            roundedAmount.toBigInteger().toString()
+        } else {
+            roundedAmount.setScale(displayDecimals, java.math.RoundingMode.HALF_UP).toPlainString()
+        }
+
+        val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        val email = prefs.getString(Constants.EMAIL, "") ?: ""
+        val password = prefs.getString(Constants.PASSWORD, "") ?: ""
+
+        var callbackUri = "$CALLBACK_SCHEME://$CALLBACK_HOST"
+        if (tableNumber != -1) {
+            callbackUri += "?table_number=$tableNumber"
+            if (!tableId.isNullOrEmpty()) {
+                callbackUri += "&table_id=$tableId"
+            }
+        }
+
+        val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
+
+        val uriBuilder = Uri.Builder()
+            .scheme(PAYMENT_APP_SCHEME)
+            .authority(PAYMENT_APP_HOST)
+            .appendQueryParameter("amount", formattedAmount)
+            .appendQueryParameter("selected_currency", existingAttempt.currency)
+            .appendQueryParameter("amounts", amountsJsonStr)
+            .appendQueryParameter("request_id", existingAttempt.reference)
+            .appendQueryParameter("callback_uri", callbackUri)
+
+        if (email.isNotEmpty() && password.isNotEmpty()) {
+            uriBuilder.appendQueryParameter("email", email)
+            uriBuilder.appendQueryParameter("password", password)
+        }
+
+        val paymentUri = uriBuilder.build()
+        val paymentIntent = Intent(Intent.ACTION_VIEW, paymentUri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setPackage("com.br.plugpay")
+        }
+
+        lifecycleScope.launch {
+            val now = System.currentTimeMillis()
+            val updatedAttempt = existingAttempt.copy(
+                status = PaymentAttemptEntity.STATUS_PENDING,
+                startedAt = now
+            )
+            withContext(Dispatchers.IO) {
+                paymentAttemptDao.update(updatedAttempt)
+            }
+            Log.i(TAG, "Attempt K=${existingAttempt.reference} promovida PREPARED -> PENDING no Room antes de abrir PlugPay")
+
+            try {
+                startActivity(paymentIntent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Falha ao abrir app de pagamento para PREPARED attempt: ", e)
+                withContext(Dispatchers.IO) {
+                    paymentAttemptDao.update(
+                        updatedAttempt.copy(
+                            status = "FAILED_TO_START",
+                            statusMessage = e.message
+                        )
+                    )
+                    outboxDao.markAsFailedWithKey(
+                        id = existingAttempt.reference,
+                        error = "FAILED_TO_START",
+                        messageKey = "FAILED_TO_START",
+                        isRetriable = false
+                    )
+                }
+                appNotFoundResult(e.message ?: "Erro desconhecido")
+            }
+        }
+    }
+
     private fun startPayment(intent: Intent) {
         val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: UUID.randomUUID().toString()
         val idempotencyKey = intent.getStringExtra(EXTRA_IDEMPOTENCY_KEY) ?: UUID.randomUUID().toString()
@@ -125,7 +228,9 @@ class PaymentHandlerActivity : BaseActivity() {
 
         val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
 
-        val currencyCode = CurrencyManager.getInstance().selectedCurrency.takeIf { it.isNotEmpty() } ?: "BRL"
+        val currencyCode = intent.getStringExtra(EXTRA_CURRENCY)
+            ?: CurrencyManager.getInstance().selectedCurrency.takeIf { it.isNotEmpty() }
+            ?: "BRL"
         val amountBigDecimal = amountStr?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() } ?: java.math.BigDecimal.ZERO
         val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, currencyCode)
         val displayDecimals = com.plugpdv.pdv.utils.MoneyDecimal.getDisplayDecimals(currencyCode)
@@ -182,7 +287,7 @@ class PaymentHandlerActivity : BaseActivity() {
                 nonce = nonce,
                 amount = minimalUnitAmount,
                 currency = currencyCode,
-                status = "PENDING",
+                status = PaymentAttemptEntity.STATUS_PENDING,
                 startedAt = System.currentTimeMillis(),
                 tableNumber = if (tableNumber != -1) tableNumber else null,
                 orderId = orderId,

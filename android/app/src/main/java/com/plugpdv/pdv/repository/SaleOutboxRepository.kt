@@ -40,22 +40,14 @@ class SaleOutboxRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val localSaleDao: LocalSaleDao,
     private val apiService: PosApiService? = null,
-    private val appDatabase: AppDatabase? = null,
-    private val paymentAttemptDao: PaymentAttemptDao? = null
+    private val appDatabase: AppDatabase,
+    private val paymentAttemptDao: PaymentAttemptDao
 ) {
     private val gson = Gson()
 
     companion object {
         private const val TAG = "SaleOutboxRepository"
         var faultInjectionHook: String? = null
-    }
-
-    private suspend fun <T> runInTransaction(block: suspend () -> T): T {
-        return if (appDatabase != null) {
-            appDatabase.withTransaction { block() }
-        } else {
-            block()
-        }
     }
 
     suspend fun enqueueSale(
@@ -106,7 +98,7 @@ class SaleOutboxRepository @Inject constructor(
         orderId: String? = null,
         description: String? = "Venda Direta - PDV"
     ): LocalSaleEntity {
-        return runInTransaction {
+        return appDatabase.withTransaction {
             val now = System.currentTimeMillis()
             val payloadJson = gson.toJson(saleRequest)
             val itemsJson = gson.toJson(saleRequest.items)
@@ -144,13 +136,13 @@ class SaleOutboxRepository @Inject constructor(
                 nonce = UUID.randomUUID().toString(),
                 amount = minimalUnitAmount,
                 currency = saleRequest.paymentCurrency ?: currency,
-                status = "PENDING",
+                status = PaymentAttemptEntity.STATUS_PREPARED,
                 startedAt = now,
                 orderId = orderId,
                 description = description
             )
-            paymentAttemptDao?.insert(attempt)
-            Log.i(TAG, "DirectSale [$localId] persistida atomicamente como WAITING_PAYMENT + PaymentAttempt PENDING no Room")
+            paymentAttemptDao.insert(attempt)
+            Log.i(TAG, "DirectSale [$localId] persistida atomicamente como WAITING_PAYMENT + PaymentAttempt PREPARED no Room")
             localSale
         }
     }
@@ -160,19 +152,19 @@ class SaleOutboxRepository @Inject constructor(
         paymentId: String?,
         method: String?
     ): LocalSaleEntity? {
-        return runInTransaction {
-            val sale = localSaleDao.getById(localId) ?: return@runInTransaction null
+        return appDatabase.withTransaction {
+            val sale = localSaleDao.getById(localId) ?: return@withTransaction null
             val now = System.currentTimeMillis()
 
-            val attempt = paymentAttemptDao?.getByReference(localId)
+            val attempt = paymentAttemptDao.getByReference(localId)
             if (attempt != null) {
                 val updatedAttempt = attempt.copy(
-                    status = "APPROVED",
+                    status = PaymentAttemptEntity.STATUS_APPROVED,
                     completedAt = now,
                     paymentAppPaymentId = paymentId ?: attempt.paymentAppPaymentId,
                     paymentMethod = method ?: attempt.paymentMethod
                 )
-                paymentAttemptDao?.update(updatedAttempt)
+                paymentAttemptDao.update(updatedAttempt)
             }
 
             val updatedSale = sale.copy(
@@ -187,13 +179,13 @@ class SaleOutboxRepository @Inject constructor(
     }
 
     suspend fun recoverApprovedWaitingSalesAtomic(): Int {
-        return runInTransaction {
+        return appDatabase.withTransaction {
             val waitingSales = localSaleDao.getWaitingPaymentSales()
             var recovered = 0
             val now = System.currentTimeMillis()
             for (sale in waitingSales) {
-                val attempt = paymentAttemptDao?.getByReference(sale.localId)
-                if (attempt?.status == "APPROVED") {
+                val attempt = paymentAttemptDao.getByReference(sale.localId)
+                if (attempt?.status == PaymentAttemptEntity.STATUS_APPROVED) {
                     localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, null, now)
                     recovered++
                     Log.i(TAG, "Recuperada venda direta órfã [${sale.localId}] WAITING_PAYMENT com PaymentAttempt APPROVED -> PENDING")
