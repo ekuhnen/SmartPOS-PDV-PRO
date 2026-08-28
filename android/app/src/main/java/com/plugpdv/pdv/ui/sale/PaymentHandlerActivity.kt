@@ -156,13 +156,8 @@ class PaymentHandlerActivity : BaseActivity() {
             return
         }
 
-        val displayDecimals = com.plugpdv.pdv.utils.MoneyDecimal.getDisplayDecimals(existingAttempt.currency)
         val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, existingAttempt.currency)
-        val formattedAmount = if (displayDecimals == 0) {
-            roundedAmount.toBigInteger().toString()
-        } else {
-            roundedAmount.setScale(displayDecimals, java.math.RoundingMode.HALF_UP).toPlainString()
-        }
+        val formattedAmount = com.plugpdv.pdv.utils.MoneyDecimal.toProtocolAmount(roundedAmount, existingAttempt.currency)
 
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
@@ -248,13 +243,7 @@ class PaymentHandlerActivity : BaseActivity() {
             ?: "BRL"
         val amountBigDecimal = amountStr?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() } ?: java.math.BigDecimal.ZERO
         val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, currencyCode)
-        val displayDecimals = com.plugpdv.pdv.utils.MoneyDecimal.getDisplayDecimals(currencyCode)
-
-        val formattedAmount = if (displayDecimals == 0) {
-            roundedAmount.toBigInteger().toString()
-        } else {
-            roundedAmount.setScale(displayDecimals, java.math.RoundingMode.HALF_UP).toPlainString()
-        }
+        val formattedAmount = com.plugpdv.pdv.utils.MoneyDecimal.toProtocolAmount(roundedAmount, currencyCode)
 
         // Converte para unidade mínima da moeda (Long) para invariante de dinheiro
         val minimalUnitAmount = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(roundedAmount, currencyCode)

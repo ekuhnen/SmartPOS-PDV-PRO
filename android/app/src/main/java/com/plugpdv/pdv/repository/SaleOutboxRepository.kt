@@ -40,6 +40,7 @@ data class UnresolvedDirectPaymentState(
     val saleStatus: String,
     val attemptStatus: String?,
     val isBlocked: Boolean,
+    val canResumeSameOperation: Boolean = false,
     val requiresReconciliation: Boolean,
     val blockReason: String?
 )
@@ -57,6 +58,10 @@ class SaleOutboxRepository @Inject constructor(
     companion object {
         private const val TAG = "SaleOutboxRepository"
         var faultInjectionHook: String? = null
+    }
+
+    suspend fun getLocalSaleById(localId: String): LocalSaleEntity? {
+        return localSaleDao.getById(localId)
     }
 
     suspend fun enqueueSale(
@@ -137,21 +142,29 @@ class SaleOutboxRepository @Inject constructor(
                 syncedToApi = false,
                 idempotencyKeyUsed = true
             )
-            localSaleDao.insert(localSale)
 
-            val attempt = PaymentAttemptEntity(
+            val paymentAttempt = PaymentAttemptEntity(
                 reference = localId,
                 idempotencyKey = localId,
                 nonce = UUID.randomUUID().toString(),
+                orderId = orderId ?: localId,
                 amount = minimalUnitAmount,
                 currency = saleRequest.paymentCurrency ?: currency,
+                description = description,
                 status = PaymentAttemptEntity.STATUS_PREPARED,
-                startedAt = now,
-                orderId = orderId,
-                description = description
+                paymentMethod = saleRequest.paymentMethod,
+                startedAt = now
             )
-            paymentAttemptDao.insert(attempt)
-            Log.i(TAG, "DirectSale [$localId] persistida atomicamente como WAITING_PAYMENT + PaymentAttempt PREPARED no Room")
+
+            localSaleDao.insert(localSale)
+            paymentAttemptDao.insert(paymentAttempt)
+
+            if (faultInjectionHook == "AFTER_PREPARE_DIRECT_SALE_ROOM_TX") {
+                faultInjectionHook = null
+                throw java.io.IOException("FaultInjection: Killed right after prepareDirectSale Room transaction")
+            }
+
+            Log.i(TAG, "prepareDirectSaleAtomic [$localId] concluído com sucesso: LocalSale WAITING_PAYMENT + PaymentAttempt PREPARED")
             localSale
         }
     }
@@ -159,21 +172,46 @@ class SaleOutboxRepository @Inject constructor(
     suspend fun finalizeApprovedSaleAtomic(
         localId: String,
         paymentId: String?,
-        method: String?
+        method: String? = null
     ): LocalSaleEntity? {
         return appDatabase.withTransaction {
-            val sale = localSaleDao.getById(localId) ?: return@withTransaction null
+            val sale = localSaleDao.getById(localId)
+            if (sale == null) {
+                Log.w(TAG, "finalizeApprovedSaleAtomic: LocalSale [$localId] não encontrada no Room")
+                return@withTransaction null
+            }
+
+            val existingAttempt = paymentAttemptDao.getByReference(localId)
             val now = System.currentTimeMillis()
 
-            val attempt = paymentAttemptDao.getByReference(localId)
-            if (attempt != null) {
-                val updatedAttempt = attempt.copy(
+            if (existingAttempt != null) {
+                val updatedAttempt = existingAttempt.copy(
                     status = PaymentAttemptEntity.STATUS_APPROVED,
-                    completedAt = now,
-                    paymentAppPaymentId = paymentId ?: attempt.paymentAppPaymentId,
-                    paymentMethod = method ?: attempt.paymentMethod
+                    paymentAppPaymentId = paymentId ?: existingAttempt.paymentAppPaymentId,
+                    paymentMethod = method ?: existingAttempt.paymentMethod,
+                    completedAt = now
                 )
                 paymentAttemptDao.update(updatedAttempt)
+            } else {
+                val minimalUnits = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(
+                    com.plugpdv.pdv.utils.MoneyDecimal.of(sale.total),
+                    sale.currency
+                )
+                val newAttempt = PaymentAttemptEntity(
+                    reference = localId,
+                    idempotencyKey = localId,
+                    nonce = UUID.randomUUID().toString(),
+                    orderId = localId,
+                    amount = minimalUnits,
+                    currency = sale.currency,
+                    description = "Venda Direta - PDV",
+                    status = PaymentAttemptEntity.STATUS_APPROVED,
+                    paymentMethod = method ?: sale.paymentMethod,
+                    paymentAppPaymentId = paymentId,
+                    startedAt = now,
+                    completedAt = now
+                )
+                paymentAttemptDao.insert(newAttempt)
             }
 
             val updatedSale = sale.copy(
@@ -208,42 +246,77 @@ class SaleOutboxRepository @Inject constructor(
         val waitingSales = localSaleDao.getWaitingPaymentSales()
         if (waitingSales.isEmpty()) return null
 
-        val latestWaitingSale = waitingSales.maxByOrNull { it.createdAt } ?: return null
-        val attempt = paymentAttemptDao.getByReference(latestWaitingSale.localId)
-
-        return when (attempt?.status) {
-            PaymentAttemptEntity.STATUS_PENDING -> {
-                UnresolvedDirectPaymentState(
-                    operationId = latestWaitingSale.localId,
-                    saleStatus = latestWaitingSale.syncStatus,
-                    attemptStatus = attempt.status,
-                    isBlocked = true,
-                    requiresReconciliation = false,
-                    blockReason = "Pagamento em andamento aguardando confirmação externa"
-                )
-            }
-            PaymentAttemptEntity.STATUS_UNKNOWN -> {
-                UnresolvedDirectPaymentState(
-                    operationId = latestWaitingSale.localId,
-                    saleStatus = latestWaitingSale.syncStatus,
-                    attemptStatus = attempt.status,
-                    isBlocked = true,
-                    requiresReconciliation = true,
-                    blockReason = "Pagamento em estado indeterminado requer conciliação"
-                )
-            }
-            PaymentAttemptEntity.STATUS_PREPARED -> {
-                UnresolvedDirectPaymentState(
-                    operationId = latestWaitingSale.localId,
-                    saleStatus = latestWaitingSale.syncStatus,
-                    attemptStatus = attempt.status,
-                    isBlocked = false,
-                    requiresReconciliation = false,
-                    blockReason = null
-                )
-            }
-            else -> null
+        data class SaleWithAttempt(val sale: LocalSaleEntity, val attempt: PaymentAttemptEntity?)
+        val salesWithAttempts = waitingSales.map { sale ->
+            SaleWithAttempt(sale, paymentAttemptDao.getByReference(sale.localId))
         }
+
+        // 1. Qualquer UNKNOWN tem precedência máxima -> Reconciliação obrigatória
+        val unknownOp = salesWithAttempts.firstOrNull { it.attempt?.status == PaymentAttemptEntity.STATUS_UNKNOWN }
+        if (unknownOp != null) {
+            return UnresolvedDirectPaymentState(
+                operationId = unknownOp.sale.localId,
+                saleStatus = unknownOp.sale.syncStatus,
+                attemptStatus = PaymentAttemptEntity.STATUS_UNKNOWN,
+                isBlocked = true,
+                canResumeSameOperation = false,
+                requiresReconciliation = true,
+                blockReason = "Pagamento em estado indeterminado requer conciliação"
+            )
+        }
+
+        // 2. Qualquer PENDING em andamento -> Bloqueado aguardando callback (não pode ser escondido por PREPARED mais nova)
+        val pendingOp = salesWithAttempts.firstOrNull { it.attempt?.status == PaymentAttemptEntity.STATUS_PENDING }
+        if (pendingOp != null) {
+            return UnresolvedDirectPaymentState(
+                operationId = pendingOp.sale.localId,
+                saleStatus = pendingOp.sale.syncStatus,
+                attemptStatus = PaymentAttemptEntity.STATUS_PENDING,
+                isBlocked = true,
+                canResumeSameOperation = false,
+                requiresReconciliation = false,
+                blockReason = "Pagamento em andamento aguardando confirmação externa"
+            )
+        }
+
+        // 3. Se houver múltiplas operações em WAITING_PAYMENT não resolvidas
+        if (salesWithAttempts.size > 1) {
+            val firstOp = salesWithAttempts.first()
+            return UnresolvedDirectPaymentState(
+                operationId = firstOp.sale.localId,
+                saleStatus = firstOp.sale.syncStatus,
+                attemptStatus = firstOp.attempt?.status ?: "MULTIPLE",
+                isBlocked = true,
+                canResumeSameOperation = false,
+                requiresReconciliation = true,
+                blockReason = "Múltiplas operações pendentes requerem conciliação"
+            )
+        }
+
+        // 4. Operação única PREPARED -> Bloqueada para novo checkout, mas permite RETOMADA da mesma operação
+        val singleOp = salesWithAttempts.single()
+        if (singleOp.attempt?.status == PaymentAttemptEntity.STATUS_PREPARED) {
+            return UnresolvedDirectPaymentState(
+                operationId = singleOp.sale.localId,
+                saleStatus = singleOp.sale.syncStatus,
+                attemptStatus = PaymentAttemptEntity.STATUS_PREPARED,
+                isBlocked = true,
+                canResumeSameOperation = true,
+                requiresReconciliation = false,
+                blockReason = "Pagamento preparado pendente"
+            )
+        }
+
+        // 5. Fallback defensivo para qualquer outro estado não terminal
+        return UnresolvedDirectPaymentState(
+            operationId = singleOp.sale.localId,
+            saleStatus = singleOp.sale.syncStatus,
+            attemptStatus = singleOp.attempt?.status,
+            isBlocked = true,
+            canResumeSameOperation = false,
+            requiresReconciliation = true,
+            blockReason = "Operação pendente requer conciliação"
+        )
     }
 
     suspend fun processOutboxBatch(): SaleDrainResult {

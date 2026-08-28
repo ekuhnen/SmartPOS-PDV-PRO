@@ -34,7 +34,6 @@ class CheckoutActivity : BaseActivity() {
     /** Flag para evitar processar o mesmo resultado duas vezes */
     private var paymentProcessed = false
     private var pendingDirectSaleOperationId: String? = null
-    private var approvedWithoutCorrelation: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +77,7 @@ class CheckoutActivity : BaseActivity() {
         super.onResume()
         checkPendingPaymentResult()
         viewModel.restoreDurableRecovery()
+        updatePayButtonState()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -90,6 +90,7 @@ class CheckoutActivity : BaseActivity() {
         }
         checkPendingPaymentResult()
         viewModel.restoreDurableRecovery()
+        updatePayButtonState()
     }
 
     /**
@@ -102,14 +103,19 @@ class CheckoutActivity : BaseActivity() {
         val result = PaymentResultStore.consume()
         if (result != null && result.status.equals("APPROVED", ignoreCase = true)) {
             Log.d("CheckoutActivity", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}, requestId=${result.requestId}")
-            paymentProcessed = true
-            val method = mapToApiMethod(result.method ?: "PIX")
             val operationId = result.requestId ?: pendingDirectSaleOperationId
             if (!operationId.isNullOrEmpty()) {
+                paymentProcessed = true
+                val method = mapToApiMethod(result.method ?: "PIX")
                 viewModel.finalizeApprovedSale(operationId, result.paymentId, method)
             } else {
-                Log.e("CheckoutActivity", "PAGAMENTO_APROVADO_SEM_CHAVE: Impossível determinar chave de correlação K. Bloqueando reconstrução de venda.")
-                approvedWithoutCorrelation = true
+                Log.e("CheckoutActivity", "PAGAMENTO_APROVADO_SEM_CHAVE: Impossível determinar chave de correlação K. Bloqueando de forma durável.")
+                com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.setMarker(
+                    context = this,
+                    reason = "APPROVED_WITHOUT_CORRELATION",
+                    paymentId = result.paymentId,
+                    method = result.method
+                )
                 updatePayButtonState()
                 Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
             }
@@ -117,17 +123,24 @@ class CheckoutActivity : BaseActivity() {
     }
 
     private fun updatePayButtonState() {
-        val isBlocked = approvedWithoutCorrelation || viewModel.isPaymentBlocked.value
-        val reason = if (approvedWithoutCorrelation) {
+        val hasDurableMarker = com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.isReconciliationRequired(this)
+        val isBlocked = hasDurableMarker || viewModel.isPaymentBlocked.value
+        val canResume = !hasDurableMarker && viewModel.canResumeSameOperation.value
+        val reason = if (hasDurableMarker) {
             "Pagamento aprovado requer conciliação"
         } else {
             viewModel.blockReason.value
         }
 
         if (isBlocked) {
-            binding.btnPayLink.isEnabled = false
-            if (!reason.isNullOrBlank()) {
-                binding.btnPayLink.text = reason
+            if (canResume) {
+                binding.btnPayLink.isEnabled = !(viewModel.isLoading.value ?: false)
+                binding.btnPayLink.text = "Retomar pagamento"
+            } else {
+                binding.btnPayLink.isEnabled = false
+                if (!reason.isNullOrBlank()) {
+                    binding.btnPayLink.text = reason
+                }
             }
         } else {
             binding.btnPayLink.isEnabled = !(viewModel.isLoading.value ?: false)
@@ -164,6 +177,12 @@ class CheckoutActivity : BaseActivity() {
 
         lifecycleScope.launch {
             viewModel.isPaymentBlocked.collect {
+                updatePayButtonState()
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.canResumeSameOperation.collect {
                 updatePayButtonState()
             }
         }
@@ -282,13 +301,50 @@ class CheckoutActivity : BaseActivity() {
         }.show(supportFragmentManager, "service_fee_override")
     }
 
-    private fun startPaymentFlow() {
-        if (approvedWithoutCorrelation || viewModel.isPaymentBlocked.value) {
-            val reason = if (approvedWithoutCorrelation) {
-                "Pagamento aprovado requer conciliação"
-            } else {
-                viewModel.blockReason.value ?: "Pagamento bloqueado"
+    private fun resumePreparedPaymentFlow() {
+        lifecycleScope.launch {
+            try {
+                val prepared = viewModel.getPreparedOperationForResume()
+                if (prepared == null) {
+                    Toast.makeText(this@CheckoutActivity, "Operação não encontrada para retomada", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                pendingDirectSaleOperationId = prepared.localId
+                paymentProcessed = false
+
+                val intent = Intent(this@CheckoutActivity, PaymentHandlerActivity::class.java).apply {
+                    putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.localId)
+                    putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.localId)
+                    putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, prepared.saleRequest.total.toPlainString())
+                    putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.saleRequest.convertedTotal ?: prepared.saleRequest.total).toPlainString())
+                    putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, prepared.saleRequest.paymentCurrency ?: prepared.saleRequest.currency)
+                    putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, prepared.amountsJson)
+                    putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.localId)
+                    putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
+                    putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Venda Direta - PDV")
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("CheckoutActivity", "Erro ao retomar pagamento preparado: ${e.message}", e)
+                Toast.makeText(this@CheckoutActivity, "Erro ao retomar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    private fun startPaymentFlow() {
+        val hasDurableMarker = com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.isReconciliationRequired(this)
+        if (hasDurableMarker) {
+            Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (viewModel.isPaymentBlocked.value) {
+            if (viewModel.canResumeSameOperation.value) {
+                resumePreparedPaymentFlow()
+                return
+            }
+            val reason = viewModel.blockReason.value ?: "Pagamento bloqueado"
             Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
             return
         }

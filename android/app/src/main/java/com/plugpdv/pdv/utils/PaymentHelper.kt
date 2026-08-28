@@ -23,24 +23,12 @@ object PaymentHelper {
     ): String {
         val json = JSONObject()
 
-        // 1. A moeda da transação selecionada DEVE ter exatamente o valor cotado
-        val transDecimals = MoneyDecimal.getDisplayDecimals(transactionCurrency)
-        val transRounded = MoneyDecimal.roundToCurrency(transactionAmount, transactionCurrency)
-        val transFormatted = if (transDecimals == 0) {
-            transRounded.toBigInteger().toString()
-        } else {
-            transRounded.setScale(transDecimals, RoundingMode.HALF_UP).toPlainString()
-        }
+        // 1. A moeda da transação selecionada DEVE ter exatamente o valor cotado via protocolo minor units
+        val transFormatted = MoneyDecimal.toProtocolAmount(transactionAmount, transactionCurrency)
         json.put(transactionCurrency.uppercase(Locale.ROOT), transFormatted)
 
-        // 2. Moeda base da comanda / venda direta
-        val baseDecimals = MoneyDecimal.getDisplayDecimals(baseCurrency)
-        val baseRounded = MoneyDecimal.roundToCurrency(baseAmount, baseCurrency)
-        val baseFormatted = if (baseDecimals == 0) {
-            baseRounded.toBigInteger().toString()
-        } else {
-            baseRounded.setScale(baseDecimals, RoundingMode.HALF_UP).toPlainString()
-        }
+        // 2. Moeda base da comanda / venda direta via protocolo minor units
+        val baseFormatted = MoneyDecimal.toProtocolAmount(baseAmount, baseCurrency)
         json.put(baseCurrency.uppercase(Locale.ROOT), baseFormatted)
 
         // 3. Demais moedas do snapshot congelado (sem nova consulta ao CurrencyManager)
@@ -53,13 +41,7 @@ object PaymentHelper {
                 val rate = runCatching { BigDecimal(rateStr) }.getOrNull()
                 if (rate != null && rate > BigDecimal.ZERO) {
                     val converted = baseAmount.multiply(rate)
-                    val decimals = MoneyDecimal.getDisplayDecimals(code)
-                    val rounded = MoneyDecimal.roundToCurrency(converted, code)
-                    val formatted = if (decimals == 0) {
-                        rounded.toBigInteger().toString()
-                    } else {
-                        rounded.setScale(decimals, RoundingMode.HALF_UP).toPlainString()
-                    }
+                    val formatted = MoneyDecimal.toProtocolAmount(converted, code)
                     json.put(code, formatted)
                 }
             }

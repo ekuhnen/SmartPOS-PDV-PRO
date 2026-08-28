@@ -62,6 +62,20 @@ object MoneyDecimal {
         return if (upper == "PYG" || upper == "ARS" || ISO_ZERO_DECIMALS.contains(upper)) 0 else 2
     }
 
+    /**
+     * Formatação monetária de protocolo baseada EXCLUSIVAMENTE em minor_unit_digits (getDecimals)
+     * e HALF_UP. Nunca usa display_decimals (que é exclusivo para exibição em tela/recibo).
+     */
+    fun toProtocolAmount(amount: BigDecimal, currencyCode: String): String {
+        val decimals = getDecimals(currencyCode)
+        val rounded = amount.setScale(decimals, RoundingMode.HALF_UP)
+        return if (decimals == 0) {
+            rounded.toBigInteger().toString()
+        } else {
+            rounded.toPlainString()
+        }
+    }
+
     fun roundToCurrency(
         amount: BigDecimal,
         currencyCode: String,

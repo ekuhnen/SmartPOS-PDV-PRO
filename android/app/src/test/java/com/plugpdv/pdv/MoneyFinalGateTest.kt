@@ -734,4 +734,220 @@ class MoneyFinalGateTest {
             assertEquals(0, receipt.baseAmount.compareTo(BigDecimal("50.00")))
         }
     }
+
+    /**
+     * A-MONEY-27: APPROVED without K -> marker persisted -> restart/recreation -> button remains blocked.
+     */
+    @Test
+    fun testA_MONEY_27_approvedWithoutK_persistsMarker_blocksAfterRestart() {
+        DirectPaymentReconciliationStore.clearMarker(context)
+        assertFalse(DirectPaymentReconciliationStore.isReconciliationRequired(context))
+
+        DirectPaymentReconciliationStore.setMarker(
+            context = context,
+            reason = "APPROVED_WITHOUT_CORRELATION",
+            paymentId = "pay-uncorrelated-999",
+            method = "PIX"
+        )
+
+        // Verify durable marker survives restart
+        assertTrue(DirectPaymentReconciliationStore.isReconciliationRequired(context))
+        val marker = DirectPaymentReconciliationStore.getMarker(context)
+        assertEquals("APPROVED_WITHOUT_CORRELATION", marker.reason)
+        assertEquals("pay-uncorrelated-999", marker.paymentId)
+    }
+
+    /**
+     * A-MONEY-28: WAITING_PAYMENT + PREPARED K1 -> normal pay blocked, resume uses K1 -> PaymentAttempt delta 0, LocalSale delta 0.
+     */
+    @Test
+    fun testA_MONEY_28_preparedState_normalPayBlocked_resumeUsesSameK() {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+        val viewModel = DirectCheckoutViewModel(
+            context = context,
+            apiService = mock(),
+            taxRepository = mockTaxRepo,
+            saleOutboxRepository = saleOutboxRepo,
+            saleSyncScheduler = mock()
+        )
+
+        val k1 = "k1-prepared-test"
+        val saleRequest = SaleRequest(
+            customerName = "Consumidor Final",
+            total = BigDecimal("350000"),
+            items = listOf(SaleItem(productId = "p1", productName = "Item", quantity = 1, price = 50.0)),
+            paymentMethod = "CREDITO",
+            currency = "BRL",
+            paymentCurrency = "PYG",
+            exchangeRatesSnapshot = mapOf("PYG" to "7000", "BRL" to "1"),
+            convertedTotal = BigDecimal("50.00")
+        )
+
+        runBlocking {
+            saleOutboxRepo.prepareDirectSaleAtomic(
+                saleRequest = saleRequest,
+                currency = "BRL",
+                localId = k1,
+                minimalUnitAmount = 350000L
+            )
+        }
+
+        val salesCountBefore = runBlocking { db.localSaleDao().getRecentSales().size }
+        val attemptsCountBefore = runBlocking { db.paymentAttemptDao().getByReference(k1) != null }
+
+        viewModel.restoreDurableRecovery()
+
+        val unresolved = runBlocking { saleOutboxRepo.getUnresolvedDirectPaymentState() }
+        assertNotNull(unresolved)
+        assertTrue(unresolved!!.isBlocked)
+        assertTrue(unresolved.canResumeSameOperation)
+        assertEquals(k1, unresolved.operationId)
+
+        runBlocking {
+            val resumed = viewModel.getPreparedOperationForResume()
+            assertNotNull(resumed)
+            assertEquals(k1, resumed!!.localId)
+            assertEquals("PYG", resumed.saleRequest.paymentCurrency)
+        }
+
+        val salesCountAfter = runBlocking { db.localSaleDao().getRecentSales().size }
+        val attemptsCountAfter = runBlocking { db.paymentAttemptDao().getByReference(k1) != null }
+
+        assertEquals("LocalSale count must not change on resume", salesCountBefore, salesCountAfter)
+        assertTrue("PaymentAttempt must remain the same", attemptsCountBefore && attemptsCountAfter)
+    }
+
+    /**
+     * A-MONEY-29: K1=PENDING (old) and K2=PREPARED (new) -> result remains BLOCKED by K1.
+     */
+    @Test
+    fun testA_MONEY_29_pendingK1_hidesPreparedK2_remainsBlocked() {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+
+        val k1 = "k1-pending-old"
+        val k2 = "k2-prepared-new"
+
+        val sale1 = LocalSaleEntity(
+            localId = k1,
+            createdAt = 1000L,
+            updatedAt = 1000L,
+            total = 50.0,
+            currency = "BRL",
+            paymentMethod = "CREDITO",
+            itemsJson = "[]",
+            payloadJson = "{}",
+            syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+            idempotencyKeyUsed = true
+        )
+        val attempt1 = PaymentAttemptEntity(
+            reference = k1,
+            idempotencyKey = k1,
+            nonce = "n1",
+            amount = 5000L,
+            currency = "BRL",
+            status = PaymentAttemptEntity.STATUS_PENDING,
+            startedAt = 1000L
+        )
+
+        val sale2 = LocalSaleEntity(
+            localId = k2,
+            createdAt = 2000L,
+            updatedAt = 2000L,
+            total = 75.0,
+            currency = "BRL",
+            paymentMethod = "CREDITO",
+            itemsJson = "[]",
+            payloadJson = "{}",
+            syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+            idempotencyKeyUsed = true
+        )
+        val attempt2 = PaymentAttemptEntity(
+            reference = k2,
+            idempotencyKey = k2,
+            nonce = "n2",
+            amount = 7500L,
+            currency = "BRL",
+            status = PaymentAttemptEntity.STATUS_PREPARED,
+            startedAt = 2000L
+        )
+
+        runBlocking {
+            db.localSaleDao().insert(sale1)
+            db.paymentAttemptDao().insert(attempt1)
+            db.localSaleDao().insert(sale2)
+            db.paymentAttemptDao().insert(attempt2)
+        }
+
+        val unresolved = runBlocking { saleOutboxRepo.getUnresolvedDirectPaymentState() }
+        assertNotNull(unresolved)
+        assertTrue("Must be blocked by pending attempt K1", unresolved!!.isBlocked)
+        assertFalse("Cannot resume K2 when older K1 is PENDING", unresolved.canResumeSameOperation)
+        assertEquals(k1, unresolved.operationId)
+    }
+
+    /**
+     * A-MONEY-30: ARS (minor=2, display=0, amount=123.45) -> Protocol amount=123.45, PaymentAttempt=12345 (never 123).
+     */
+    @Test
+    fun testA_MONEY_30_arsMinor2Display0_protocolAmountPreservesCents() {
+        val amount = BigDecimal("123.45")
+        val currency = "ARS"
+
+        assertEquals(2, MoneyDecimal.getDecimals(currency))
+        assertEquals(0, MoneyDecimal.getDisplayDecimals(currency))
+
+        val protocolAmount = MoneyDecimal.toProtocolAmount(amount, currency)
+        val minorUnits = MoneyDecimal.toMinorUnits(amount, currency)
+
+        assertEquals("123.45", protocolAmount)
+        assertEquals(12345L, minorUnits)
+        assertNotEquals("123", protocolAmount)
+        assertNotEquals(12300L, minorUnits)
+    }
+
+    /**
+     * A-MONEY-31: BHD (minor=3, amount=1.234) -> protocol amount remains 1.234.
+     */
+    @Test
+    fun testA_MONEY_31_bhdMinor3_protocolAmountPreserves3Decimals() {
+        val amount = BigDecimal("1.234")
+        val currency = "BHD"
+
+        assertEquals(3, MoneyDecimal.getDecimals(currency))
+
+        val protocolAmount = MoneyDecimal.toProtocolAmount(amount, currency)
+        val minorUnits = MoneyDecimal.toMinorUnits(amount, currency)
+
+        assertEquals("1.234", protocolAmount)
+        assertEquals(1234L, minorUnits)
+    }
+
+    /**
+     * A-MONEY-32: amountsJson ARS (minor=2, display=0) -> "123.45" not "123".
+     */
+    @Test
+    fun testA_MONEY_32_amountsJsonArsMinor2Display0_contains123_45Not123() {
+        val json = PaymentHelper.generateAmountsJsonExact(
+            baseAmount = BigDecimal("50.00"),
+            baseCurrency = "BRL",
+            transactionCurrency = "ARS",
+            transactionAmount = BigDecimal("123.45"),
+            snapshot = mapOf("ARS" to "2.469", "BRL" to "1")
+        )
+
+        assertTrue("JSON must contain 123.45 for ARS", json.contains("\"ARS\":\"123.45\""))
+        assertFalse("JSON must not truncate ARS to 123", json.contains("\"ARS\":\"123\""))
+    }
 }

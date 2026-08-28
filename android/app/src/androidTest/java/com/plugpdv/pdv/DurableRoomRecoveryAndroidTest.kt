@@ -494,6 +494,129 @@ class DurableRoomRecoveryAndroidTest {
         }
     }
 
+    /**
+     * A-MONEY-28 (Instrumented): PREPARED operation on device Room returns canResumeSameOperation=true.
+     */
+    @Test
+    fun testA_MONEY_28_instrumented_preparedAllowsResumeSameK() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k = "k-instr-28"
+            val sale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                total = 50.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val attempt = PaymentAttemptEntity(
+                reference = k,
+                idempotencyKey = k,
+                nonce = "n-28",
+                amount = 350000L,
+                currency = "PYG",
+                status = PaymentAttemptEntity.STATUS_PREPARED,
+                startedAt = System.currentTimeMillis()
+            )
+
+            db.localSaleDao().insert(sale)
+            db.paymentAttemptDao().insert(attempt)
+
+            val unresolved = repository.getUnresolvedDirectPaymentState()
+            assertNotNull(unresolved)
+            assertEquals(k, unresolved!!.operationId)
+            assertTrue(unresolved.isBlocked)
+            assertTrue(unresolved.canResumeSameOperation)
+            assertFalse(unresolved.requiresReconciliation)
+        }
+    }
+
+    /**
+     * A-MONEY-29 (Instrumented): Multiple unresolved operations on device Room (PENDING + PREPARED) prioritizes PENDING.
+     */
+    @Test
+    fun testA_MONEY_29_instrumented_pendingTakesPrecedenceOverPrepared() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k1 = "k1-instr-29"
+            val k2 = "k2-instr-29"
+
+            val sale1 = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k1,
+                createdAt = 1000L,
+                updatedAt = 1000L,
+                total = 50.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val attempt1 = PaymentAttemptEntity(
+                reference = k1,
+                idempotencyKey = k1,
+                nonce = "n1-29",
+                amount = 5000L,
+                currency = "BRL",
+                status = PaymentAttemptEntity.STATUS_PENDING,
+                startedAt = 1000L
+            )
+
+            val sale2 = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k2,
+                createdAt = 2000L,
+                updatedAt = 2000L,
+                total = 75.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val attempt2 = PaymentAttemptEntity(
+                reference = k2,
+                idempotencyKey = k2,
+                nonce = "n2-29",
+                amount = 7500L,
+                currency = "BRL",
+                status = PaymentAttemptEntity.STATUS_PREPARED,
+                startedAt = 2000L
+            )
+
+            db.localSaleDao().insert(sale1)
+            db.paymentAttemptDao().insert(attempt1)
+            db.localSaleDao().insert(sale2)
+            db.paymentAttemptDao().insert(attempt2)
+
+            val unresolved = repository.getUnresolvedDirectPaymentState()
+            assertNotNull(unresolved)
+            assertEquals(k1, unresolved!!.operationId)
+            assertTrue(unresolved.isBlocked)
+            assertFalse("Cannot resume when pending attempt exists", unresolved.canResumeSameOperation)
+        }
+    }
+
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }

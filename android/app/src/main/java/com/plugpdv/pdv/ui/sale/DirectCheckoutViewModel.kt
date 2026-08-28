@@ -84,6 +84,9 @@ class DirectCheckoutViewModel @Inject constructor(
     private val _isPaymentBlocked = MutableStateFlow(false)
     val isPaymentBlocked: StateFlow<Boolean> = _isPaymentBlocked.asStateFlow()
 
+    private val _canResumeSameOperation = MutableStateFlow(false)
+    val canResumeSameOperation: StateFlow<Boolean> = _canResumeSameOperation.asStateFlow()
+
     private val _requiresReconciliation = MutableStateFlow(false)
     val requiresReconciliation: StateFlow<Boolean> = _requiresReconciliation.asStateFlow()
 
@@ -193,12 +196,46 @@ class DirectCheckoutViewModel @Inject constructor(
         val quote: SelectedPaymentQuote
     )
 
+    data class ResumedPreparedOperation(
+        val localId: String,
+        val saleRequest: SaleRequest,
+        val amountsJson: String
+    )
+
+    suspend fun getPreparedOperationForResume(): ResumedPreparedOperation? {
+        val unresolved = saleOutboxRepository.getUnresolvedDirectPaymentState() ?: return null
+        if (!unresolved.canResumeSameOperation) return null
+
+        val localSale = saleOutboxRepository.getLocalSaleById(unresolved.operationId) ?: return null
+        val saleReq = runCatching { gson.fromJson(localSale.payloadJson, SaleRequest::class.java) }.getOrNull() ?: return null
+
+        val txCurrency = saleReq.paymentCurrency ?: saleReq.currency
+        val baseCurrency = saleReq.currency
+        val txAmount = saleReq.total
+        val baseAmount = saleReq.convertedTotal ?: saleReq.total
+
+        val amountsJson = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJsonExact(
+            baseAmount = baseAmount,
+            baseCurrency = baseCurrency,
+            transactionCurrency = txCurrency,
+            transactionAmount = txAmount,
+            snapshot = saleReq.exchangeRatesSnapshot
+        )
+
+        return ResumedPreparedOperation(
+            localId = localSale.localId,
+            saleRequest = saleReq,
+            amountsJson = amountsJson
+        )
+    }
+
     fun restoreDurableRecovery() {
         viewModelScope.launch {
             val recovered = saleOutboxRepository.recoverApprovedWaitingSalesAtomic()
             val unresolved = saleOutboxRepository.getUnresolvedDirectPaymentState()
             _unresolvedPaymentState.value = unresolved
             _isPaymentBlocked.value = unresolved?.isBlocked ?: false
+            _canResumeSameOperation.value = unresolved?.canResumeSameOperation ?: false
             _requiresReconciliation.value = unresolved?.requiresReconciliation ?: false
             _blockReason.value = unresolved?.blockReason
             if (recovered > 0) {
