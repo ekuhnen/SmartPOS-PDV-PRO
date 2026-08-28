@@ -39,6 +39,12 @@ interface LocalSaleDao {
     @Query("SELECT * FROM local_sales WHERE syncedToApi = 0 OR syncStatus != 'SYNCED' ORDER BY createdAt ASC")
     suspend fun getPendingSync(): List<LocalSaleEntity>
 
+    @Query("SELECT * FROM local_sales WHERE localId = :localId LIMIT 1")
+    suspend fun getById(localId: String): LocalSaleEntity?
+
+    @Query("SELECT * FROM local_sales WHERE syncStatus = 'WAITING_PAYMENT' ORDER BY createdAt ASC")
+    suspend fun getWaitingPaymentSales(): List<LocalSaleEntity>
+
     @Query("SELECT * FROM local_sales ORDER BY createdAt DESC LIMIT 50")
     suspend fun getRecentSales(): List<LocalSaleEntity>
 }

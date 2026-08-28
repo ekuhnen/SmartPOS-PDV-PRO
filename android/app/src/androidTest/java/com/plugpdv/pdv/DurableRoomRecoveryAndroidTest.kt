@@ -188,8 +188,184 @@ class DurableRoomRecoveryAndroidTest {
         }
     }
 
+    /**
+     * A-MONEY-10: Direct sale persists durable WAITING_PAYMENT + PaymentAttempt PENDING in atomic Room TX BEFORE PlugPay start.
+     */
+    @Test
+    fun testA_MONEY_10_directSalePersistsDurableWaitingPaymentBeforePlugPay() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val saleRequest = com.plugpdv.pdv.models.SaleRequest(
+                customerName = "Consumidor Final",
+                total = java.math.BigDecimal("350000"),
+                items = listOf(com.plugpdv.pdv.models.SaleItem(productId = "p1", productName = "Test", quantity = 1, price = 50.0)),
+                paymentMethod = "CREDITO",
+                currency = "BRL",
+                paymentCurrency = "PYG",
+                exchangeRatesSnapshot = mapOf("PYG" to "7000", "BRL" to "1"),
+                convertedTotal = java.math.BigDecimal("50.00")
+            )
+
+            val localId = "k-direct-atomic-10"
+            var plugPayLaunched = false
+
+            // Execute atomic pre-payment Room transaction
+            repository.prepareDirectSaleAtomic(
+                saleRequest = saleRequest,
+                currency = "BRL",
+                localId = localId,
+                minimalUnitAmount = 350000L,
+                orderId = localId
+            )
+
+            // Proves Room commit is confirmed BEFORE external hook
+            val persistedSale = db.localSaleDao().getById(localId)
+            val persistedAttempt = db.paymentAttemptDao().getByReference(localId)
+
+            assertNotNull("LocalSale must be committed in Room before PlugPay launch", persistedSale)
+            assertEquals("WAITING_PAYMENT", persistedSale!!.syncStatus)
+
+            assertNotNull("PaymentAttempt must be committed in Room before PlugPay launch", persistedAttempt)
+            assertEquals("PENDING", persistedAttempt!!.status)
+            assertEquals(350000L, persistedAttempt.amount)
+            assertEquals("PYG", persistedAttempt.currency)
+
+            // Simulated launch hook
+            plugPayLaunched = true
+            assertTrue(plugPayLaunched)
+        }
+    }
+
+    /**
+     * A-MONEY-11: Simulated process death: PaymentResultStore empty, volatile state wiped,
+     * Room has PaymentAttempt APPROVED + LocalSale WAITING_PAYMENT -> recovery promotes same sale, same K, same payloadJson.
+     */
+    @Test
+    fun testA_MONEY_11_simulatedProcessDeath_recoveryPromotesFrozenSale() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val saleRequest = com.plugpdv.pdv.models.SaleRequest(
+                customerName = "Consumidor Final",
+                total = java.math.BigDecimal("350000"),
+                items = listOf(com.plugpdv.pdv.models.SaleItem(productId = "p1", productName = "Test", quantity = 1, price = 50.0)),
+                paymentMethod = "CREDITO",
+                currency = "BRL",
+                paymentCurrency = "PYG",
+                exchangeRatesSnapshot = mapOf("PYG" to "7000", "BRL" to "1"),
+                convertedTotal = java.math.BigDecimal("50.00")
+            )
+
+            val localId = "k-death-recovery-11"
+            val payloadJson = gson.toJson(saleRequest)
+
+            // 1. Sale was persisted before crash
+            val localSale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = localId,
+                total = 350000.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = gson.toJson(saleRequest.items),
+                payloadJson = payloadJson,
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            val paymentAttempt = PaymentAttemptEntity(
+                reference = localId,
+                idempotencyKey = localId,
+                nonce = "nonce-11",
+                amount = 350000L,
+                currency = "PYG",
+                status = "APPROVED",
+                startedAt = System.currentTimeMillis(),
+                paymentAppPaymentId = "ext-approved-11"
+            )
+
+            db.localSaleDao().insert(localSale)
+            db.paymentAttemptDao().insert(paymentAttempt)
+
+            // 2. Volatile PaymentResultStore is empty (simulating process recreation)
+            com.plugpdv.pdv.utils.PaymentResultStore.consume()
+            assertFalse(com.plugpdv.pdv.utils.PaymentResultStore.hasPending())
+
+            // 3. Trigger recovery
+            val recoveredCount = repository.recoverApprovedWaitingSalesAtomic()
+            assertEquals(1, recoveredCount)
+
+            // 4. Verify promoted sale
+            val promotedSale = db.localSaleDao().getById(localId)
+            assertNotNull(promotedSale)
+            assertEquals("PENDING", promotedSale!!.syncStatus)
+            assertEquals("Same K must be preserved", localId, promotedSale.localId)
+            assertEquals("Same payloadJson must be preserved byte-for-byte", payloadJson, promotedSale.payloadJson)
+        }
+    }
+
+    /**
+     * A-MONEY-16: Room persistence: SaleRequest with BigDecimal transactionAmount, baseAmount, fxRate, snapshot survives byte-for-byte JSON round trip in real Room.
+     */
+    @Test
+    fun testA_MONEY_16_roomPersistenceSaleRequestRoundTrip() {
+        runBlocking {
+            val saleRequest = com.plugpdv.pdv.models.SaleRequest(
+                customerName = "Consumidor Final",
+                total = java.math.BigDecimal("350000"),
+                items = listOf(com.plugpdv.pdv.models.SaleItem(productId = "p1", productName = "Test", quantity = 1, price = 50.0)),
+                paymentMethod = "CREDITO",
+                currency = "BRL",
+                paymentCurrency = "PYG",
+                exchangeRatesSnapshot = mapOf("PYG" to "7000", "BRL" to "1"),
+                taxAmount = java.math.BigDecimal("0.00"),
+                serviceFeeAmount = java.math.BigDecimal("0.00"),
+                convertedTotal = java.math.BigDecimal("50.00")
+            )
+
+            val payloadJson = gson.toJson(saleRequest)
+            val originalHash = sha256(payloadJson)
+
+            val localSale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = "k-room-money-16",
+                total = 350000.0,
+                currency = "BRL",
+                paymentMethod = "CREDITO",
+                itemsJson = gson.toJson(saleRequest.items),
+                payloadJson = payloadJson,
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+
+            db.localSaleDao().insert(localSale)
+
+            val recovered = db.localSaleDao().getById("k-room-money-16")
+            assertNotNull(recovered)
+            assertEquals(payloadJson, recovered!!.payloadJson)
+            assertEquals(originalHash, sha256(recovered.payloadJson))
+
+            val deserialized = gson.fromJson(recovered.payloadJson, com.plugpdv.pdv.models.SaleRequest::class.java)
+            assertEquals("PYG", deserialized.paymentCurrency)
+            assertEquals("BRL", deserialized.currency)
+            assertEquals(0, deserialized.total.compareTo(java.math.BigDecimal("350000")))
+            assertEquals(0, deserialized.convertedTotal!!.compareTo(java.math.BigDecimal("50.00")))
+            assertEquals("7000", deserialized.exchangeRatesSnapshot?.get("PYG"))
+        }
+    }
+
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
 }
+

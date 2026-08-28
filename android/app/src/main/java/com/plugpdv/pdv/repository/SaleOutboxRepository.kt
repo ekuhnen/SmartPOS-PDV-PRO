@@ -2,10 +2,14 @@ package com.plugpdv.pdv.repository
 
 import android.content.Context
 import android.util.Log
+import androidx.room.withTransaction
 import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
+import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.LocalSaleDao
 import com.plugpdv.pdv.database.LocalSaleEntity
+import com.plugpdv.pdv.database.PaymentAttemptDao
+import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.models.SaleRequest
 import com.plugpdv.pdv.utils.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -35,13 +39,23 @@ enum class StopReason {
 class SaleOutboxRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val localSaleDao: LocalSaleDao,
-    private val apiService: PosApiService
+    private val apiService: PosApiService? = null,
+    private val appDatabase: AppDatabase? = null,
+    private val paymentAttemptDao: PaymentAttemptDao? = null
 ) {
     private val gson = Gson()
 
     companion object {
         private const val TAG = "SaleOutboxRepository"
         var faultInjectionHook: String? = null
+    }
+
+    private suspend fun <T> runInTransaction(block: suspend () -> T): T {
+        return if (appDatabase != null) {
+            appDatabase.withTransaction { block() }
+        } else {
+            block()
+        }
     }
 
     suspend fun enqueueSale(
@@ -58,7 +72,7 @@ class SaleOutboxRepository @Inject constructor(
             apiId = null,
             createdAt = now,
             updatedAt = now,
-            total = saleRequest.total,
+            total = saleRequest.total.toDouble(),
             currency = currency,
             paymentMethod = saleRequest.paymentMethod,
             operatorId = saleRequest.operatorId,
@@ -66,10 +80,10 @@ class SaleOutboxRepository @Inject constructor(
             sessionId = saleRequest.caixa_session_id,
             itemsJson = itemsJson,
             customerName = saleRequest.customerName ?: "Consumidor Final",
-            taxAmount = saleRequest.taxAmount,
-            serviceFeeAmount = saleRequest.serviceFeeAmount,
+            taxAmount = saleRequest.taxAmount.toDouble(),
+            serviceFeeAmount = saleRequest.serviceFeeAmount.toDouble(),
             serviceFeeKind = saleRequest.serviceFeeKind,
-            convertedTotal = saleRequest.convertedTotal ?: 0.0,
+            convertedTotal = saleRequest.convertedTotal?.toDouble() ?: 0.0,
             payloadJson = payloadJson,
             attemptCount = 0,
             lastError = null,
@@ -84,6 +98,111 @@ class SaleOutboxRepository @Inject constructor(
         return entity
     }
 
+    suspend fun prepareDirectSaleAtomic(
+        saleRequest: SaleRequest,
+        currency: String,
+        localId: String,
+        minimalUnitAmount: Long,
+        orderId: String? = null,
+        description: String? = "Venda Direta - PDV"
+    ): LocalSaleEntity {
+        return runInTransaction {
+            val now = System.currentTimeMillis()
+            val payloadJson = gson.toJson(saleRequest)
+            val itemsJson = gson.toJson(saleRequest.items)
+
+            val localSale = LocalSaleEntity(
+                localId = localId,
+                apiId = null,
+                createdAt = now,
+                updatedAt = now,
+                total = saleRequest.total.toDouble(),
+                currency = currency,
+                paymentMethod = saleRequest.paymentMethod,
+                operatorId = saleRequest.operatorId,
+                operatorName = saleRequest.operatorName,
+                sessionId = saleRequest.caixa_session_id,
+                itemsJson = itemsJson,
+                customerName = saleRequest.customerName ?: "Consumidor Final",
+                taxAmount = saleRequest.taxAmount.toDouble(),
+                serviceFeeAmount = saleRequest.serviceFeeAmount.toDouble(),
+                serviceFeeKind = saleRequest.serviceFeeKind,
+                convertedTotal = saleRequest.convertedTotal?.toDouble() ?: 0.0,
+                payloadJson = payloadJson,
+                attemptCount = 0,
+                lastError = null,
+                lastAttemptAt = null,
+                syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                syncedToApi = false,
+                idempotencyKeyUsed = true
+            )
+            localSaleDao.insert(localSale)
+
+            val attempt = PaymentAttemptEntity(
+                reference = localId,
+                idempotencyKey = localId,
+                nonce = UUID.randomUUID().toString(),
+                amount = minimalUnitAmount,
+                currency = saleRequest.paymentCurrency ?: currency,
+                status = "PENDING",
+                startedAt = now,
+                orderId = orderId,
+                description = description
+            )
+            paymentAttemptDao?.insert(attempt)
+            Log.i(TAG, "DirectSale [$localId] persistida atomicamente como WAITING_PAYMENT + PaymentAttempt PENDING no Room")
+            localSale
+        }
+    }
+
+    suspend fun finalizeApprovedSaleAtomic(
+        localId: String,
+        paymentId: String?,
+        method: String?
+    ): LocalSaleEntity? {
+        return runInTransaction {
+            val sale = localSaleDao.getById(localId) ?: return@runInTransaction null
+            val now = System.currentTimeMillis()
+
+            val attempt = paymentAttemptDao?.getByReference(localId)
+            if (attempt != null) {
+                val updatedAttempt = attempt.copy(
+                    status = "APPROVED",
+                    completedAt = now,
+                    paymentAppPaymentId = paymentId ?: attempt.paymentAppPaymentId,
+                    paymentMethod = method ?: attempt.paymentMethod
+                )
+                paymentAttemptDao?.update(updatedAttempt)
+            }
+
+            val updatedSale = sale.copy(
+                syncStatus = LocalSaleEntity.STATUS_PENDING,
+                updatedAt = now,
+                paymentMethod = method ?: sale.paymentMethod
+            )
+            localSaleDao.update(updatedSale)
+            Log.i(TAG, "DirectSale [$localId] promovida atomicamente para PENDING no Room com PaymentAttempt APPROVED")
+            updatedSale
+        }
+    }
+
+    suspend fun recoverApprovedWaitingSalesAtomic(): Int {
+        return runInTransaction {
+            val waitingSales = localSaleDao.getWaitingPaymentSales()
+            var recovered = 0
+            val now = System.currentTimeMillis()
+            for (sale in waitingSales) {
+                val attempt = paymentAttemptDao?.getByReference(sale.localId)
+                if (attempt?.status == "APPROVED") {
+                    localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, null, now)
+                    recovered++
+                    Log.i(TAG, "Recuperada venda direta órfã [${sale.localId}] WAITING_PAYMENT com PaymentAttempt APPROVED -> PENDING")
+                }
+            }
+            recovered
+        }
+    }
+
     suspend fun processOutboxBatch(): SaleDrainResult {
         val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val token = prefs.getString(Constants.TOKEN, null)
@@ -95,9 +214,13 @@ class SaleOutboxRepository @Inject constructor(
             return SaleDrainResult(0, pendingBefore.size, StopReason.AUTH_REQUIRED)
         }
 
+        val recoveredWaiting = recoverApprovedWaitingSalesAtomic()
         val recoveredKeyed = localSaleDao.recoverStaleSyncingKeyedToPending()
         val recoveredUnkeyed = localSaleDao.recoverStaleSyncingUnkeyedToUnknown()
 
+        if (recoveredWaiting > 0) {
+            Log.i(TAG, "Recuperados $recoveredWaiting registros WAITING_PAYMENT com pagamento aprovado -> PENDING.")
+        }
         if (recoveredKeyed > 0) {
             Log.i(TAG, "Recuperados $recoveredKeyed registros SYNCING com chave -> PENDING (Idempotent Retry).")
         }
@@ -135,7 +258,8 @@ class SaleOutboxRepository @Inject constructor(
 
             try {
                 val request = gson.fromJson(sale.payloadJson, SaleRequest::class.java)
-                val response = apiService.registerSale("Bearer $token", sale.localId, request)
+                val response = apiService?.registerSale("Bearer $token", sale.localId, request)
+                    ?: throw java.io.IOException("PosApiService is null in SaleOutboxRepository")
 
                 if (faultInjectionHook == "AFTER_HTTP_BEFORE_ROOM_SUCCESS") {
                     faultInjectionHook = null

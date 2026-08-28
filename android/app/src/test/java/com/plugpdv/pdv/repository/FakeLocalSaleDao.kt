@@ -98,6 +98,14 @@ open class FakeLocalSaleDao : LocalSaleDao {
         return sales.filter { !it.syncedToApi || it.syncStatus != LocalSaleEntity.STATUS_SYNCED }
     }
 
+    override suspend fun getById(localId: String): LocalSaleEntity? {
+        return sales.find { it.localId == localId }
+    }
+
+    override suspend fun getWaitingPaymentSales(): List<LocalSaleEntity> {
+        return sales.filter { it.syncStatus == LocalSaleEntity.STATUS_WAITING_PAYMENT }
+    }
+
     override suspend fun getRecentSales(): List<LocalSaleEntity> {
         return sales.sortedByDescending { it.createdAt }.take(50)
     }

@@ -22,7 +22,8 @@ object PaymentResultStore {
         val status: String,
         val paymentId: String?,
         val method: String?,
-        val message: String?
+        val message: String?,
+        val requestId: String? = null
     )
 
     fun setResult(result: PaymentResult) {

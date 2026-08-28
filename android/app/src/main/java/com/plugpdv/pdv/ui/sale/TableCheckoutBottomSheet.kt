@@ -187,7 +187,13 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 printPaymentReceipt(method, state.lastPaymentAmount)
             }
             
-            if (table?.getPendingBalance() ?: 1.0 <= 0.01) {
+            val isFullyPaid = table?.let {
+                val pending = it.getPendingBalance()
+                val baseCurr = viewModel.comandaBaseCurrency ?: "BRL"
+                com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(com.plugpdv.pdv.utils.MoneyDecimal.of(pending), baseCurr) <= 0L
+            } ?: false
+
+            if (isFullyPaid) {
                 viewModel.acknowledgePaymentSuccess()
                 
                 val currentTable = table
@@ -351,16 +357,16 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             return
         }
 
-        PaymentMethodSelectorBottomSheet.newInstance(state.finalToPay) { method, txAmount, txCurrency, baseAmount ->
-            Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, TxAmount: $txAmount $txCurrency, BaseAmount: $baseAmount")
+        PaymentMethodSelectorBottomSheet.newInstance(state.finalToPay, viewModel.comandaBaseCurrency) { method, quote ->
+            Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, Quote: $quote")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
-                    viewModel.finalizePayment(PaymentMethod.CASH, txAmount, txCurrency, baseAmount)
+                    viewModel.finalizePayment(PaymentMethod.CASH, suppliedQuote = quote)
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
                     lifecycleScope.launch {
                         try {
-                            val prepared = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, txAmount, txCurrency, baseAmount)
+                            val prepared = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, suppliedQuote = quote)
                             pendingCheckoutOperationId = prepared.operationKey
 
                             val cm = CurrencyManager.getInstance()
@@ -369,7 +375,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
                             val activeTaxes = viewModel.uiState.value.activeTaxes
                             val finalBase = (prepared.request.valorBase ?: prepared.request.valor).toDouble()
-                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(finalBase, txCurrency, activeTaxes, cm)
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(finalBase, quote.transactionCurrency, activeTaxes, cm)
 
                             val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
                                 putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.operationKey)

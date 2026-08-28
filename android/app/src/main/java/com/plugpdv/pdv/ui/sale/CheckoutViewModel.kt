@@ -220,9 +220,22 @@ class CheckoutViewModel @Inject constructor(
     }
 
     var comandaBaseCurrency: String? = null
+    var moneyAuthorityLoaded: Boolean = false
 
     fun applyComandaMoneyDetail(detail: ComandaDetailResponse, targetTable: Table): Double {
-        comandaBaseCurrency = detail.baseCurrency
+        if (detail.baseCurrency.isNullOrBlank()) {
+            moneyAuthorityLoaded = false
+            comandaBaseCurrency = null
+            _uiState.value = _uiState.value.copy(
+                isPayButtonBlocked = true,
+                requiresReconciliation = true,
+                blockReason = "Moeda-base da comanda não definida no servidor"
+            )
+        } else {
+            comandaBaseCurrency = detail.baseCurrency
+            moneyAuthorityLoaded = true
+        }
+
         val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
         if (serverPaidBase > 0) {
             targetTable.paidAmount = serverPaidBase
@@ -242,7 +255,7 @@ class CheckoutViewModel @Inject constructor(
                 val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
                 val serverPaidBase = applyComandaMoneyDetail(detail, currentTable)
 
-                val currentReconciliation = _uiState.value.requiresReconciliation
+                val currentReconciliation = _uiState.value.requiresReconciliation || !moneyAuthorityLoaded
 
                 if (isComandaClosed) {
                     currentTable.id?.let { TableManager.markTableAvailable(it) }
@@ -383,29 +396,43 @@ class CheckoutViewModel @Inject constructor(
         val request: CommandCheckoutCommitRequest
     )
 
-    private fun buildCommitRequest(
+    fun buildCommitRequest(
         method: PaymentMethod,
         manualAmount: Double? = null,
         manualCurrency: String? = null,
-        manualBaseAmount: Double? = null
+        manualBaseAmount: Double? = null,
+        suppliedQuote: SelectedPaymentQuote? = null
     ): CommandCheckoutCommitRequest {
         val currentTable = table ?: throw IllegalStateException("Table is null")
         val cm = CurrencyManager.getInstance()
-        val baseCurrency = comandaBaseCurrency ?: cm.getBaseCurrency()
-        val currentCurrency = manualCurrency ?: cm.selectedCurrency
+        val baseCurrency = requireNotNull(comandaBaseCurrency?.takeIf { it.isNotBlank() }) {
+            "COMANDA_BASE_CURRENCY_NOT_LOADED: Base currency not loaded from backend"
+        }
+        val currentCurrency = manualCurrency ?: suppliedQuote?.transactionCurrency ?: cm.selectedCurrency
 
-        val amountToPayBigDecimal = if (manualAmount != null) {
-            MoneyDecimal.of(manualAmount)
+        val quote = if (suppliedQuote != null) {
+            suppliedQuote.toMoneyQuote()
         } else {
-            MoneyDecimal.of(_uiState.value.finalToPay)
+            val amountToPayBigDecimal = if (manualAmount != null) {
+                MoneyDecimal.of(manualAmount)
+            } else {
+                MoneyDecimal.of(_uiState.value.finalToPay)
+            }
+
+            cm.quoteTransactionAmount(
+                amountToPayBigDecimal,
+                currentCurrency,
+                baseCurrency
+            ).getOrElse {
+                throw IllegalStateException(it.message ?: "FX_RATE_MISSING")
+            }
         }
 
-        val quote = cm.quoteTransactionAmount(
-            amountToPayBigDecimal,
-            currentCurrency,
-            baseCurrency
-        ).getOrElse {
-            throw IllegalStateException(it.message ?: "FX_RATE_MISSING")
+        if (manualBaseAmount != null) {
+            val suppliedBase = MoneyDecimal.roundToCurrency(MoneyDecimal.of(manualBaseAmount), baseCurrency)
+            if (suppliedBase.compareTo(quote.baseAmount) != 0) {
+                throw IllegalStateException("MONEY_AMOUNT_MISMATCH: Supplied base $suppliedBase != quote base ${quote.baseAmount}")
+            }
         }
 
         val pendingBase = MoneyDecimal.roundToCurrency(
@@ -435,8 +462,8 @@ class CheckoutViewModel @Inject constructor(
                 .map { SaleItem(it.product.id, it.product.name, it.quantity - it.paidQuantity, it.product.selling_price ?: 0.0) }
         }
 
-        val sfAmount2 = if (manualAmount != null) 0.0 else _uiState.value.serviceFeeAmount
-        val sfKind2 = if (manualAmount != null) null else (_uiState.value.serviceFeeKind ?: if (sfAmount2 > 0) "fixed" else null)
+        val sfAmount2 = if (manualAmount != null || suppliedQuote != null) 0.0 else _uiState.value.serviceFeeAmount
+        val sfKind2 = if (manualAmount != null || suppliedQuote != null) null else (_uiState.value.serviceFeeKind ?: if (sfAmount2 > 0) "fixed" else null)
 
         return CommandCheckoutCommitRequest(
             comandaId = currentTable.comandaId ?: "",
@@ -460,9 +487,10 @@ class CheckoutViewModel @Inject constructor(
         method: PaymentMethod,
         manualAmount: Double? = null,
         manualCurrency: String? = null,
-        manualBaseAmount: Double? = null
+        manualBaseAmount: Double? = null,
+        suppliedQuote: SelectedPaymentQuote? = null
     ): PreparedCheckoutResult {
-        val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount)
+        val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
         val key = java.util.UUID.randomUUID().toString()
         val gson = com.google.gson.Gson()
 
@@ -545,16 +573,17 @@ class CheckoutViewModel @Inject constructor(
         method: PaymentMethod,
         manualAmount: Double? = null,
         manualCurrency: String? = null,
-        manualBaseAmount: Double? = null
+        manualBaseAmount: Double? = null,
+        suppliedQuote: SelectedPaymentQuote? = null
     ) {
         val gson = com.google.gson.Gson()
-        val amountToPay = manualAmount ?: _uiState.value.finalToPay
+        val amountToPay = manualAmount ?: suppliedQuote?.transactionAmount?.toDouble() ?: _uiState.value.finalToPay
 
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount)
+                val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
                 val key = java.util.UUID.randomUUID().toString()
 
                 val entity = com.plugpdv.pdv.database.OutboxOperationEntity(

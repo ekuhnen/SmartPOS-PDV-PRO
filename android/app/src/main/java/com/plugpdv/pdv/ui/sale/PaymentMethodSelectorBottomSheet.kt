@@ -4,17 +4,40 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.plugpdv.pdv.databinding.LayoutPaymentMethodSelectorBinding
 import com.plugpdv.pdv.utils.CurrencyManager
+import com.plugpdv.pdv.utils.MoneyDecimal
+import com.plugpdv.pdv.utils.MoneyQuote
+import java.math.BigDecimal
+
+data class SelectedPaymentQuote(
+    val transactionAmount: BigDecimal,
+    val transactionCurrency: String,
+    val baseAmount: BigDecimal,
+    val baseCurrency: String,
+    val fxRate: BigDecimal,
+    val snapshot: Map<String, String>? = null
+) {
+    fun toMoneyQuote(): MoneyQuote = MoneyQuote(
+        transactionAmount = transactionAmount,
+        transactionCurrency = transactionCurrency,
+        baseAmount = baseAmount,
+        baseCurrency = baseCurrency,
+        fxRate = fxRate,
+        snapshot = snapshot
+    )
+}
 
 class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
 
     private var _binding: LayoutPaymentMethodSelectorBinding? = null
     private val binding get() = _binding!!
 
-    private var totalAmount: Double = 0.0
-    private var onMethodSelected: ((PaymentType, Double, String, Double) -> Unit)? = null
+    private var baseAmount: BigDecimal = BigDecimal.ZERO
+    private var baseCurrency: String = "BRL"
+    private var onQuoteSelected: ((PaymentType, SelectedPaymentQuote) -> Unit)? = null
 
     enum class PaymentType {
         CASH, PLUG_PAY
@@ -22,7 +45,9 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        totalAmount = arguments?.getDouble(ARG_TOTAL) ?: 0.0
+        val amountDbl = arguments?.getDouble(ARG_TOTAL) ?: 0.0
+        baseAmount = MoneyDecimal.of(amountDbl)
+        baseCurrency = arguments?.getString(ARG_BASE_CURRENCY) ?: CurrencyManager.getInstance().getBaseCurrency()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -34,57 +59,91 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         super.onViewCreated(view, savedInstanceState)
 
         val cm = CurrencyManager.getInstance()
-        val localTotal = cm.convert(totalAmount)
+        val selectedTxCurrency = cm.selectedCurrency
 
-        // Ajusta o prefixo para a moeda selecionada (ex: "Gs. ", "R$ ")
-        binding.tilAmount.prefixText = "${cm.selectedCurrency} "
-        
-        val isNoDecimals = cm.selectedCurrency.equals("PYG", ignoreCase = true) || cm.selectedCurrency.equals("ARS", ignoreCase = true)
-        val formattedLocal = if (isNoDecimals) {
-            String.format("%.0f", Math.ceil(localTotal))
-        } else if (localTotal % 1.0 == 0.0) {
-            String.format("%.0f", localTotal)
+        binding.tilAmount.prefixText = "$selectedTxCurrency "
+
+        // Calcula quote determinística inicial a partir do baseAmount
+        val quoteResult = cm.convertMoneyExact(
+            amount = baseAmount,
+            fromCurrency = baseCurrency,
+            toCurrency = selectedTxCurrency,
+            baseCurrency = baseCurrency
+        )
+
+        var currentQuote: SelectedPaymentQuote? = null
+
+        if (quoteResult.isSuccess) {
+            val q = quoteResult.getOrThrow()
+            currentQuote = SelectedPaymentQuote(
+                transactionAmount = q.transactionAmount,
+                transactionCurrency = q.transactionCurrency,
+                baseAmount = q.baseAmount,
+                baseCurrency = q.baseCurrency,
+                fxRate = q.fxRate,
+                snapshot = q.snapshot
+            )
+            val displayDecimals = MoneyDecimal.getDisplayDecimals(selectedTxCurrency)
+            val formatted = if (displayDecimals == 0) {
+                q.transactionAmount.toBigInteger().toString()
+            } else {
+                q.transactionAmount.setScale(displayDecimals, java.math.RoundingMode.HALF_UP).toPlainString()
+            }
+            binding.etAmount.setText(formatted)
         } else {
-            String.format("%.2f", localTotal).replace(",", ".")
+            val errorMsg = quoteResult.exceptionOrNull()?.message ?: "FX_RATE_MISSING"
+            binding.etAmount.setText("")
+            binding.tilAmount.error = errorMsg
+            binding.cardCash.isEnabled = false
+            binding.cardCash.alpha = 0.5f
+            binding.cardPlugPay.isEnabled = false
+            binding.cardPlugPay.alpha = 0.5f
+            Toast.makeText(requireContext(), "Cotação ausente para $selectedTxCurrency: $errorMsg", Toast.LENGTH_LONG).show()
         }
 
-        binding.etAmount.setText(formattedLocal)
+        fun resolveFinalQuote(): SelectedPaymentQuote? {
+            val text = binding.etAmount.text?.toString()?.replace(",", ".")?.trim()
+            val enteredTxAmount = text?.let { runCatching { BigDecimal(it) }.getOrNull() }
+            if (enteredTxAmount == null) return currentQuote
 
-        val isOffline = isNetworkOffline(requireContext())
+            val recalculated = cm.quoteTransactionAmount(
+                transactionAmount = enteredTxAmount,
+                transactionCurrency = selectedTxCurrency,
+                baseCurrency = baseCurrency
+            )
+            return if (recalculated.isSuccess) {
+                val q = recalculated.getOrThrow()
+                SelectedPaymentQuote(
+                    transactionAmount = q.transactionAmount,
+                    transactionCurrency = q.transactionCurrency,
+                    baseAmount = q.baseAmount,
+                    baseCurrency = q.baseCurrency,
+                    fxRate = q.fxRate,
+                    snapshot = q.snapshot
+                )
+            } else {
+                Toast.makeText(requireContext(), "Falha na cotação: ${recalculated.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
 
-        // Configuração de Pagamento em Dinheiro (Permitido Offline)
+        // Configuração de Pagamento em Dinheiro
         binding.cardCash.setOnClickListener {
-            val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
-            val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
-            val amountBrl = cm.convertToBrl(localAmount)
-            onMethodSelected?.invoke(PaymentType.CASH, localAmount, cm.selectedCurrency, amountBrl)
+            val quote = resolveFinalQuote() ?: return@setOnClickListener
+            onQuoteSelected?.invoke(PaymentType.CASH, quote)
             dismiss()
         }
 
-        // Configuração de Pagamento Cartão/PlugPay (Verifica se offline)
-        val plugPayAllowedOffline = true
-        if (isOffline && !plugPayAllowedOffline) {
-            binding.cardPlugPay.isEnabled = false
-            binding.cardPlugPay.alpha = 0.5f
-        } else {
-            binding.cardPlugPay.setOnClickListener {
-                val localAmountStr = binding.etAmount.text.toString().replace(",", ".")
-                val localAmount = localAmountStr.toDoubleOrNull() ?: localTotal
-                val amountBrl = cm.convertToBrl(localAmount)
-                onMethodSelected?.invoke(PaymentType.PLUG_PAY, localAmount, cm.selectedCurrency, amountBrl)
-                dismiss()
-            }
+        // Configuração de Pagamento Cartão/PlugPay
+        binding.cardPlugPay.setOnClickListener {
+            val quote = resolveFinalQuote() ?: return@setOnClickListener
+            onQuoteSelected?.invoke(PaymentType.PLUG_PAY, quote)
+            dismiss()
         }
 
         binding.btnCancel.setOnClickListener {
             dismiss()
         }
-    }
-
-    private fun isNetworkOffline(context: android.content.Context): Boolean {
-        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-        val activeNetwork = cm?.activeNetworkInfo
-        return activeNetwork == null || !activeNetwork.isConnected
     }
 
     override fun onDestroyView() {
@@ -94,13 +153,21 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
 
     companion object {
         private const val ARG_TOTAL = "arg_total"
+        private const val ARG_BASE_CURRENCY = "arg_base_currency"
 
-        fun newInstance(total: Double, onSelected: (PaymentType, Double, String, Double) -> Unit): PaymentMethodSelectorBottomSheet {
+        fun newInstance(
+            baseTotal: Double,
+            baseCurrency: String? = null,
+            onSelected: (PaymentType, SelectedPaymentQuote) -> Unit
+        ): PaymentMethodSelectorBottomSheet {
             return PaymentMethodSelectorBottomSheet().apply {
                 arguments = Bundle().apply {
-                    putDouble(ARG_TOTAL, total)
+                    putDouble(ARG_TOTAL, baseTotal)
+                    if (!baseCurrency.isNullOrEmpty()) {
+                        putString(ARG_BASE_CURRENCY, baseCurrency)
+                    }
                 }
-                this.onMethodSelected = onSelected
+                this.onQuoteSelected = onSelected
             }
         }
     }

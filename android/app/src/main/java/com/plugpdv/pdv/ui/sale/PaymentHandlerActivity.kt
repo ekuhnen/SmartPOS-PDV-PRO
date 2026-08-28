@@ -126,26 +126,18 @@ class PaymentHandlerActivity : BaseActivity() {
         val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
 
         val currencyCode = CurrencyManager.getInstance().selectedCurrency.takeIf { it.isNotEmpty() } ?: "BRL"
+        val amountBigDecimal = amountStr?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() } ?: java.math.BigDecimal.ZERO
+        val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, currencyCode)
+        val displayDecimals = com.plugpdv.pdv.utils.MoneyDecimal.getDisplayDecimals(currencyCode)
 
-        var amount = amountStr?.toDoubleOrNull() ?: 0.0
-        val isNoFractionCurrency = currencyCode.equals("PYG", ignoreCase = true) || currencyCode.equals("ARS", ignoreCase = true)
-
-        if (isNoFractionCurrency) {
-            amount = Math.ceil(amount)
-        }
-
-        val formattedAmount = if (isNoFractionCurrency) {
-            String.format(Locale.US, "%.0f", amount)
+        val formattedAmount = if (displayDecimals == 0) {
+            roundedAmount.toBigInteger().toString()
         } else {
-            String.format(Locale.US, "%.2f", amount)
+            roundedAmount.setScale(displayDecimals, java.math.RoundingMode.HALF_UP).toPlainString()
         }
 
         // Converte para unidade mínima da moeda (Long) para invariante de dinheiro
-        val minimalUnitAmount = if (isNoFractionCurrency) {
-            amount.toLong()
-        } else {
-            Math.round(amount * 100.0)
-        }
+        val minimalUnitAmount = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(roundedAmount, currencyCode)
 
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
@@ -307,15 +299,17 @@ class PaymentHandlerActivity : BaseActivity() {
             }
 
             if (isApproved) {
+                val effectiveRequestId = requestId ?: existingAttempt?.reference
                 PaymentResultStore.setResult(
                     PaymentResultStore.PaymentResult(
                         status = "APPROVED",
                         paymentId = paymentId,
                         method = method,
-                        message = message
+                        message = message,
+                        requestId = effectiveRequestId
                     )
                 )
-                deliverApprovedResult(requestId ?: existingAttempt?.reference, paymentId, method, message, tableNum, tableId)
+                deliverApprovedResult(effectiveRequestId, paymentId, method, message, tableNum, tableId)
             } else if (isUndetermined) {
                 // Pagamento não determinado: abre tela com opções seguras para não cobrar duas vezes
                 showUndeterminedPaymentDialog(

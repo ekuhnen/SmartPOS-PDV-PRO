@@ -33,6 +33,7 @@ class CheckoutActivity : BaseActivity() {
 
     /** Flag para evitar processar o mesmo resultado duas vezes */
     private var paymentProcessed = false
+    private var pendingDirectSaleOperationId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,7 +48,10 @@ class CheckoutActivity : BaseActivity() {
         operatorId = prefs.getString(Constants.OPERATOR_ID, null)
         operatorName = prefs.getString(Constants.OPERATOR_NAME, null)
 
+        pendingDirectSaleOperationId = savedInstanceState?.getString("PENDING_DIRECT_SALE_OP_ID")
+
         cartItems?.let { viewModel.init(it, token) }
+        viewModel.restoreDurableRecovery()
 
         observeViewModel()
 
@@ -64,9 +68,15 @@ class CheckoutActivity : BaseActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("PENDING_DIRECT_SALE_OP_ID", pendingDirectSaleOperationId)
+    }
+
     override fun onResume() {
         super.onResume()
         checkPendingPaymentResult()
+        viewModel.restoreDurableRecovery()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -78,6 +88,7 @@ class CheckoutActivity : BaseActivity() {
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         }
         checkPendingPaymentResult()
+        viewModel.restoreDurableRecovery()
     }
 
     /**
@@ -87,15 +98,19 @@ class CheckoutActivity : BaseActivity() {
      */
     private fun checkPendingPaymentResult() {
         if (paymentProcessed) return
-        val result = PaymentResultStore.consume() ?: return
-
-        if (result.status.equals("APPROVED", ignoreCase = true)) {
-            Log.d("CheckoutActivity", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}")
+        val result = PaymentResultStore.consume()
+        if (result != null && result.status.equals("APPROVED", ignoreCase = true)) {
+            Log.d("CheckoutActivity", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}, requestId=${result.requestId}")
             paymentProcessed = true
             val method = mapToApiMethod(result.method ?: "PIX")
-            token?.let {
-                viewModel.finishSale(it, method, sessionId ?: "", operatorId, operatorName)
-            } ?: Log.e("CheckoutActivity", "Token nulo ao processar resultado de pagamento!")
+            val operationId = result.requestId ?: pendingDirectSaleOperationId
+            if (!operationId.isNullOrEmpty()) {
+                viewModel.finalizeApprovedSale(operationId, result.paymentId, method)
+            } else {
+                token?.let {
+                    viewModel.finishSale(it, method, sessionId ?: "", operatorId, operatorName)
+                } ?: Log.e("CheckoutActivity", "Token nulo ao processar resultado de pagamento!")
+            }
         }
     }
 
@@ -240,31 +255,46 @@ class CheckoutActivity : BaseActivity() {
         }
 
         val total = viewModel.finalTotal.value ?: 0.0
-        
-        PaymentMethodSelectorBottomSheet.newInstance(total) { method, txAmount, txCurrency, baseAmount ->
-            Log.d("CheckoutActivity", "Método selecionado: $method, TxAmount: $txAmount $txCurrency, BaseAmount: $baseAmount")
+        val baseCurrency = CurrencyManager.getInstance().getBaseCurrency()
+
+        PaymentMethodSelectorBottomSheet.newInstance(total, baseCurrency) { method, quote ->
+            Log.d("CheckoutActivity", "Método selecionado: $method, Quote: $quote")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
-                    // Finaliza direto em dinheiro com o valor selecionado
-                    token?.let {
-                        viewModel.finishSale(it, "DINHEIRO", sessionId ?: "", operatorId, operatorName, baseAmount)
-                    } ?: Log.e("CheckoutActivity", "Impossível finalizar: Token is NULL")
+                    viewModel.finishCashSale(quote, sessionId ?: "", operatorId, operatorName)
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
-                    paymentProcessed = false
-                    val cm = CurrencyManager.getInstance()
-                    val activeTaxes = viewModel.activeTaxes.value ?: emptyList()
-                    val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(baseAmount, txCurrency, activeTaxes, cm)
-                    
-                    val intent = Intent(this, PaymentHandlerActivity::class.java).apply {
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, txAmount.toString())
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, baseAmount.toString())
-                        putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
-                        putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, "direct_${System.currentTimeMillis()}")
-                        putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
-                        putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Venda Direta - PDV")
+                    lifecycleScope.launch {
+                        try {
+                            paymentProcessed = false
+                            val prepared = viewModel.prepareDirectSaleOperation(quote, "CREDITO", sessionId ?: "", operatorId, operatorName)
+                            pendingDirectSaleOperationId = prepared.localId
+
+                            val cm = CurrencyManager.getInstance()
+                            val activeTaxes = viewModel.activeTaxes.value ?: emptyList()
+                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJson(
+                                quote.baseAmount.toDouble(),
+                                quote.transactionCurrency,
+                                activeTaxes,
+                                cm
+                            )
+
+                            val intent = Intent(this@CheckoutActivity, PaymentHandlerActivity::class.java).apply {
+                                putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.localId)
+                                putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.localId)
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, quote.transactionAmount.toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, quote.baseAmount.toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
+                                putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.localId)
+                                putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
+                                putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Venda Direta - PDV")
+                            }
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            Log.e("CheckoutActivity", "Erro ao iniciar pagamento direto: ${e.message}", e)
+                            Toast.makeText(this@CheckoutActivity, "Erro ao iniciar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
                     }
-                    startActivity(intent)
                 }
             }
         }.show(supportFragmentManager, "payment_selector")

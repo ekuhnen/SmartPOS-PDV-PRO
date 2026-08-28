@@ -164,6 +164,144 @@ class DirectCheckoutViewModel @Inject constructor(
         _finalTotal.value = base + tax + sfAmount
     }
 
+    data class PreparedDirectSaleResult(
+        val localId: String,
+        val saleRequest: SaleRequest,
+        val quote: SelectedPaymentQuote
+    )
+
+    fun restoreDurableRecovery() {
+        viewModelScope.launch {
+            try {
+                val recovered = saleOutboxRepository.recoverApprovedWaitingSalesAtomic()
+                if (recovered > 0) {
+                    Log.i("DirectCheckoutVM", "Recuperadas $recovered vendas órfãs WAITING_PAYMENT -> PENDING")
+                    saleSyncScheduler.scheduleSync(context)
+                }
+            } catch (e: Exception) {
+                Log.e("DirectCheckoutVM", "Erro na recuperação durável de vendas: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun prepareDirectSaleOperation(
+        quote: SelectedPaymentQuote,
+        method: String,
+        sessionId: String,
+        operatorId: String?,
+        operatorName: String?
+    ): PreparedDirectSaleResult {
+        val items = _cartItems.value?.map {
+            SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0)
+        } ?: emptyList()
+
+        val saleRequest = SaleRequest(
+            customerName = "Consumidor Final",
+            total = quote.transactionAmount,
+            items = items,
+            paymentMethod = method,
+            currency = quote.baseCurrency,
+            paymentCurrency = quote.transactionCurrency,
+            exchangeRatesSnapshot = quote.snapshot,
+            caixa_session_id = sessionId,
+            operatorId = operatorId,
+            operatorName = operatorName,
+            taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
+            serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+            serviceFeeKind = _serviceFeeKind.value,
+            convertedTotal = quote.baseAmount
+        )
+
+        val localId = UUID.randomUUID().toString()
+        val minimalUnits = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(quote.transactionAmount, quote.transactionCurrency)
+
+        saleOutboxRepository.prepareDirectSaleAtomic(
+            saleRequest = saleRequest,
+            currency = quote.baseCurrency,
+            localId = localId,
+            minimalUnitAmount = minimalUnits,
+            orderId = localId,
+            description = "Venda Direta - PDV"
+        )
+        Log.d("DirectCheckoutVM", "Venda direta K=$localId persistida atomicamente como WAITING_PAYMENT antes do PlugPay")
+
+        return PreparedDirectSaleResult(localId, saleRequest, quote)
+    }
+
+    fun finalizeApprovedSale(
+        operationId: String,
+        paymentId: String?,
+        method: String
+    ) {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                val updated = saleOutboxRepository.finalizeApprovedSaleAtomic(operationId, paymentId, method)
+                if (updated != null) {
+                    Log.d("DirectCheckoutVM", "Venda direta K=$operationId promovida para PENDING após pagamento aprovado")
+                    saleSyncScheduler.scheduleSync(context)
+                    val fakeResponse = SaleResponse(id = "LOCAL-$operationId", status = method)
+                    _saleResult.value = SaleResult.Success(fakeResponse)
+                } else {
+                    Log.e("DirectCheckoutVM", "Venda direta K=$operationId não encontrada no Room")
+                    _saleResult.value = SaleResult.Error("Venda não encontrada localmente: $operationId")
+                }
+            } catch (e: Exception) {
+                Log.e("DirectCheckoutVM", "Erro ao finalizar venda aprovada K=$operationId: ${e.message}", e)
+                _saleResult.value = SaleResult.Error("Falha ao registrar aprovação: ${e.message}")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun finishCashSale(
+        quote: SelectedPaymentQuote,
+        sessionId: String,
+        operatorId: String?,
+        operatorName: String?
+    ) {
+        val items = _cartItems.value?.map {
+            SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0)
+        } ?: emptyList()
+
+        val saleRequest = SaleRequest(
+            customerName = "Consumidor Final",
+            total = quote.transactionAmount,
+            items = items,
+            paymentMethod = "DINHEIRO",
+            currency = quote.baseCurrency,
+            paymentCurrency = quote.transactionCurrency,
+            exchangeRatesSnapshot = quote.snapshot,
+            caixa_session_id = sessionId,
+            operatorId = operatorId,
+            operatorName = operatorName,
+            taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
+            serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+            serviceFeeKind = _serviceFeeKind.value,
+            convertedTotal = quote.baseAmount
+        )
+
+        val localId = UUID.randomUUID().toString()
+
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                saleOutboxRepository.enqueueSale(saleRequest, quote.baseCurrency, localId)
+                Log.d("DirectCheckoutVM", "Venda dinheiro salva na Outbox com sucesso. localId: $localId")
+
+                val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = "DINHEIRO")
+                _saleResult.value = SaleResult.Success(fakeResponse)
+                saleSyncScheduler.scheduleSync(context)
+            } catch (e: Exception) {
+                Log.e("DirectCheckoutVM", "Erro fatal ao salvar venda dinheiro na Outbox: ${e.message}", e)
+                _saleResult.value = SaleResult.Error("Falha crítica ao salvar venda localmente: ${e.message}")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
     fun finishSale(
         token: String,
         method: String,
@@ -172,65 +310,75 @@ class DirectCheckoutViewModel @Inject constructor(
         operatorName: String?,
         manualAmount: Double? = null
     ) {
-        val items = _cartItems.value?.map {
-            SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0)
-        } ?: emptyList()
-
-        val finalToPay = manualAmount ?: (_finalTotal.value ?: 0.0)
         val cm = CurrencyManager.getInstance()
-        val currency = cm.selectedCurrency
         val baseCurrency = cm.getBaseCurrency()
-        val snapshotResult = cm.getNormalizedSnapshotForBase(baseCurrency)
+        val txCurrency = cm.selectedCurrency
+        val baseTotalAmount = manualAmount ?: (_finalTotal.value ?: 0.0)
 
-        if (currency.uppercase() != baseCurrency.uppercase() && snapshotResult.isFailure) {
-            Log.e("DirectCheckoutViewModel", "FX_RATE_MISSING: ${snapshotResult.exceptionOrNull()?.message}")
+        val quoteResult = cm.convertMoneyExact(
+            amount = com.plugpdv.pdv.utils.MoneyDecimal.of(baseTotalAmount),
+            fromCurrency = baseCurrency,
+            toCurrency = txCurrency,
+            baseCurrency = baseCurrency
+        )
+
+        if (quoteResult.isFailure) {
+            Log.e("DirectCheckoutVM", "FX_RATE_MISSING: ${quoteResult.exceptionOrNull()?.message}")
             _saleResult.value = SaleResult.Error("FX_RATE_MISSING: Cotação de câmbio ausente")
             _isLoading.value = false
             return
         }
 
-        val snapshot = snapshotResult.getOrNull()
-
-        val saleRequest = SaleRequest(
-            customerName = "Consumidor Final",
-            total = finalToPay,
-            items = items,
-            paymentMethod = method,
-            currency = currency,
-            paymentCurrency = currency,
-            exchangeRatesSnapshot = snapshot,
-            caixa_session_id = sessionId,
-            operatorId = operatorId,
-            operatorName = operatorName,
-            taxAmount = if (manualAmount != null) 0.0 else (_taxAmount.value ?: 0.0),
-            serviceFeeAmount = if (manualAmount != null) 0.0 else (_serviceFeeAmount.value ?: 0.0),
-            serviceFeeKind = if (manualAmount != null) null else _serviceFeeKind.value
+        val q = quoteResult.getOrThrow()
+        val selectedQuote = SelectedPaymentQuote(
+            transactionAmount = q.transactionAmount,
+            transactionCurrency = q.transactionCurrency,
+            baseAmount = q.baseAmount,
+            baseCurrency = q.baseCurrency,
+            fxRate = q.fxRate,
+            snapshot = q.snapshot
         )
 
-        val localId = UUID.randomUUID().toString()
+        if (method.equals("DINHEIRO", ignoreCase = true) || method.equals("CASH", ignoreCase = true)) {
+            finishCashSale(selectedQuote, sessionId, operatorId, operatorName)
+        } else {
+            val items = _cartItems.value?.map {
+                SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0)
+            } ?: emptyList()
 
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
+            val saleRequest = SaleRequest(
+                customerName = "Consumidor Final",
+                total = selectedQuote.transactionAmount,
+                items = items,
+                paymentMethod = method,
+                currency = selectedQuote.baseCurrency,
+                paymentCurrency = selectedQuote.transactionCurrency,
+                exchangeRatesSnapshot = selectedQuote.snapshot,
+                caixa_session_id = sessionId,
+                operatorId = operatorId,
+                operatorName = operatorName,
+                taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
+                serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+                serviceFeeKind = _serviceFeeKind.value,
+                convertedTotal = selectedQuote.baseAmount
+            )
 
-                // 1. Salvar snapshot imutável da venda na Outbox (Room) ANTES de liberar a UI
-                saleOutboxRepository.enqueueSale(saleRequest, currency, localId)
-                Log.d("DirectCheckoutViewModel", "Venda salva na Outbox com sucesso. localId: $localId")
+            val localId = UUID.randomUUID().toString()
 
-                // 2. Libera a tela IMEDIATAMENTE ("Piscou, imprimiu") apenas após confirmação do salvamento local
-                val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = method)
-                _saleResult.value = SaleResult.Success(fakeResponse)
-
-                // 3. Agenda sincronização via WorkManager (durável, retoma se o app fechar/reiniciar)
-                saleSyncScheduler.scheduleSync(context)
-
-            } catch (e: Exception) {
-                Log.e("DirectCheckoutViewModel", "Erro fatal ao salvar venda localmente na Outbox: ${e.message}")
-                e.printStackTrace()
-                // Requisito 15: se o Room não conseguir persistir localmente, exibe erro e permite nova tentativa
-                _saleResult.value = SaleResult.Error("Falha crítica ao salvar venda localmente: ${e.message}")
-            } finally {
-                _isLoading.value = false
+            viewModelScope.launch {
+                try {
+                    _isLoading.value = true
+                    saleOutboxRepository.enqueueSale(saleRequest, selectedQuote.baseCurrency, localId)
+                    Log.d("DirectCheckoutVM", "Venda salva na Outbox com sucesso. localId: $localId")
+                    val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = method)
+                    _saleResult.value = SaleResult.Success(fakeResponse)
+                    saleSyncScheduler.scheduleSync(context)
+                } catch (e: Exception) {
+                    Log.e("DirectCheckoutVM", "Erro fatal ao salvar venda localmente na Outbox: ${e.message}", e)
+                    _saleResult.value = SaleResult.Error("Falha crítica ao salvar venda localmente: ${e.message}")
+                } finally {
+                    _isLoading.value = false
+                }
             }
         }
     }

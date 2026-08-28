@@ -32,6 +32,7 @@ data class LocalSaleEntity(
     val idempotencyKeyUsed: Boolean = false // Marcador explícito de transmissão com Idempotency-Key
 ) {
     companion object {
+        const val STATUS_WAITING_PAYMENT = "WAITING_PAYMENT"
         const val STATUS_PENDING = "PENDING"
         const val STATUS_SYNCING = "SYNCING"
         const val STATUS_SYNCED = "SYNCED"
