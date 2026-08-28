@@ -16,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import retrofit2.HttpException
 import java.io.IOException
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -450,6 +451,9 @@ class SaleOutboxRepository @Inject constructor(
                 localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, "E/S error: ${e.message}")
                 stopReason = StopReason.TRANSIENT_FAILURE
                 break
+            } catch (e: CancellationException) {
+                Log.w(TAG, "Outbox [${sale.localId}] Coroutine cancelada. Repassando exceção sem alterar status no Room.")
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Outbox [${sale.localId}] Exceção não tratada: ${e.message}", e)
                 localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_UNKNOWN, "Exception: ${e.message}")

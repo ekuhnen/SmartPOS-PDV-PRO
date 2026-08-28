@@ -36,7 +36,7 @@ class SaleSyncScheduler @Inject constructor() {
 
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 SaleSyncWorker.UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 workRequest
             )
             Log.d(TAG, "Sincronização da Outbox agendada via WorkManager (UniqueWork: ${SaleSyncWorker.UNIQUE_WORK_NAME})")

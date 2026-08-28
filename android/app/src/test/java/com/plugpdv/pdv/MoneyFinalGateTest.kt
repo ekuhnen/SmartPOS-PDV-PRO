@@ -26,6 +26,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -1227,5 +1228,87 @@ class MoneyFinalGateTest {
         // Must be strictly numeric
         assertTrue("X-Api-Version must parse as integer", apiVersionHeader?.toIntOrNull() != null)
         assertEquals(1, apiVersionHeader!!.toInt())
+    }
+
+    /**
+     * SCHEDULER-01: Proves SaleSyncScheduler uses ExistingWorkPolicy.APPEND_OR_REPLACE.
+     */
+    @Test
+    fun testA_SCHEDULER_01_outboxSyncScheduler_usesAppendOrReplacePolicy() {
+        val schedulerFile = java.io.File("src/main/java/com/plugpdv/pdv/outbox/SaleSyncScheduler.kt")
+        if (schedulerFile.exists()) {
+            val content = schedulerFile.readText()
+            assertTrue("Must use ExistingWorkPolicy.APPEND_OR_REPLACE", content.contains("ExistingWorkPolicy.APPEND_OR_REPLACE"))
+            assertFalse("Must not use ExistingWorkPolicy.KEEP", content.contains("ExistingWorkPolicy.KEEP"))
+            assertFalse("scheduleSync must not use REPLACE for UNIQUE_WORK_NAME", 
+                content.contains("SaleSyncWorker.UNIQUE_WORK_NAME,\n                ExistingWorkPolicy.REPLACE") ||
+                content.contains("SaleSyncWorker.UNIQUE_WORK_NAME,\r\n                ExistingWorkPolicy.REPLACE"))
+        }
+        val scheduler = SaleSyncScheduler()
+        assertNotNull(scheduler)
+    }
+
+    /**
+     * OUTBOX-CANCELLATION-01: Proves CancellationException is rethrown and does not mark sale as UNKNOWN.
+     */
+    @Test
+    fun testA_OUTBOX_CANCELLATION_01_cancellationException_rethrowsAndDoesNotMarkUnknown() {
+        runBlocking {
+            context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(Constants.TOKEN, "valid_test_token")
+                .apply()
+
+            val mockApi: PosApiService = mock()
+            val saleOutboxRepo = SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = mockApi,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k = "k-cancellation-test-01"
+            val frozenPayload = """
+                {
+                    "customerName": "Consumidor Final",
+                    "total": 50.0,
+                    "currency": "BRL",
+                    "items": []
+                }
+            """.trimIndent()
+
+            val sale = LocalSaleEntity(
+                localId = k,
+                createdAt = 1000L,
+                updatedAt = 1000L,
+                total = 50.0,
+                currency = "BRL",
+                paymentMethod = "DINHEIRO",
+                itemsJson = "[]",
+                payloadJson = frozenPayload,
+                syncStatus = LocalSaleEntity.STATUS_PENDING,
+                idempotencyKeyUsed = true
+            )
+            db.localSaleDao().insert(sale)
+
+            whenever(mockApi.registerSale(any(), eq(k), any())).thenAnswer {
+                throw kotlinx.coroutines.CancellationException("Job was cancelled")
+            }
+
+            var thrown: Throwable? = null
+            try {
+                saleOutboxRepo.processOutboxBatch()
+            } catch (e: Throwable) {
+                thrown = e
+            }
+
+            assertNotNull("CancellationException must be rethrown", thrown)
+            assertTrue("Expected CancellationException, got ${thrown?.javaClass}", thrown is kotlinx.coroutines.CancellationException)
+
+            val saleInDb = db.localSaleDao().getById(k)
+            assertNotNull(saleInDb)
+            assertNotEquals("Sale must NEVER be marked as UNKNOWN solely due to coroutine cancellation", LocalSaleEntity.STATUS_UNKNOWN, saleInDb!!.syncStatus)
+        }
     }
 }
