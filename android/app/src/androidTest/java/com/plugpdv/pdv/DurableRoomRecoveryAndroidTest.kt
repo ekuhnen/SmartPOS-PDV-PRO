@@ -617,6 +617,63 @@ class DurableRoomRecoveryAndroidTest {
         }
     }
 
+    /**
+     * A-MONEY-33: Room instrumented test. Missing PaymentAttempt when callback approved arrives.
+     * Must FAIL-CLOSED:
+     * - PaymentAttempt delta = 0
+     * - LocalSale marked as NEEDS_RECONCILIATION
+     * - isBlocked = true, requiresReconciliation = true
+     */
+    @Test
+    fun testA_MONEY_33_instrumented_missingPaymentAttempt_failClosed() {
+        runBlocking {
+            val repository = com.plugpdv.pdv.repository.SaleOutboxRepository(
+                context = context,
+                localSaleDao = db.localSaleDao(),
+                apiService = null,
+                appDatabase = db,
+                paymentAttemptDao = db.paymentAttemptDao()
+            )
+
+            val k = "k-missing-attempt-33"
+            val sale = com.plugpdv.pdv.database.LocalSaleEntity(
+                localId = k,
+                createdAt = 1000L,
+                updatedAt = 1000L,
+                total = 350000.0,
+                currency = "BRL",
+                paymentMethod = "CARTAO_CREDITO",
+                itemsJson = "[]",
+                payloadJson = "{\"total\":350000.0,\"currency\":\"BRL\",\"paymentCurrency\":\"PYG\"}",
+                syncStatus = com.plugpdv.pdv.database.LocalSaleEntity.STATUS_WAITING_PAYMENT,
+                idempotencyKeyUsed = true
+            )
+            db.localSaleDao().insert(sale)
+
+            assertNull(db.paymentAttemptDao().getByReference(k))
+
+            val updated = repository.finalizeApprovedSaleAtomic(
+                localId = k,
+                paymentId = "ext-pay-33",
+                method = "CARTAO_CREDITO"
+            )
+
+            // 1. PaymentAttempt delta = 0
+            assertNull("No synthetic PaymentAttempt may be created", db.paymentAttemptDao().getByReference(k))
+
+            // 2. LocalSale is NOT PENDING
+            assertNotNull(updated)
+            assertEquals(com.plugpdv.pdv.database.LocalSaleEntity.STATUS_NEEDS_RECONCILIATION, updated!!.syncStatus)
+
+            // 3. State is blocked and requires reconciliation
+            val unresolved = repository.getUnresolvedDirectPaymentState()
+            assertNotNull(unresolved)
+            assertTrue(unresolved!!.isBlocked)
+            assertTrue(unresolved.requiresReconciliation)
+            assertFalse(unresolved.canResumeSameOperation)
+        }
+    }
+
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }

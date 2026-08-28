@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
+import com.plugpdv.pdv.database.LocalSaleEntity
 import com.plugpdv.pdv.database.TaxEntity
 import com.plugpdv.pdv.models.SaleItem
 import com.plugpdv.pdv.models.SaleRequest
@@ -299,6 +300,16 @@ class DirectCheckoutViewModel @Inject constructor(
                 _isLoading.value = true
                 val updated = saleOutboxRepository.finalizeApprovedSaleAtomic(operationId, paymentId, method)
                 if (updated != null) {
+                    if (updated.syncStatus == LocalSaleEntity.STATUS_NEEDS_RECONCILIATION) {
+                        Log.e("DirectCheckoutVM", "Venda direta K=$operationId marcada como NEEDS_RECONCILIATION (PaymentAttempt ausente)")
+                        _isPaymentBlocked.value = true
+                        _canResumeSameOperation.value = false
+                        _requiresReconciliation.value = true
+                        _blockReason.value = "PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL"
+                        _saleResult.value = SaleResult.Error("PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL")
+                        return@launch
+                    }
+
                     Log.d("DirectCheckoutVM", "Venda direta K=$operationId promovida para PENDING após pagamento aprovado")
                     
                     val saleReq = runCatching { gson.fromJson(updated.payloadJson, SaleRequest::class.java) }.getOrNull()
@@ -320,6 +331,7 @@ class DirectCheckoutViewModel @Inject constructor(
                     _saleResult.value = SaleResult.Success(fakeResponse)
                     
                     _isPaymentBlocked.value = false
+                    _canResumeSameOperation.value = false
                     _requiresReconciliation.value = false
                     _blockReason.value = null
                     _unresolvedPaymentState.value = null

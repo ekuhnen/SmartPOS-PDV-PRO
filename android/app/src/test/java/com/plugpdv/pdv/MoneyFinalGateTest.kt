@@ -25,7 +25,10 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.robolectric.RobolectricTestRunner
 import java.math.BigDecimal
@@ -949,5 +952,81 @@ class MoneyFinalGateTest {
 
         assertTrue("JSON must contain 123.45 for ARS", json.contains("\"ARS\":\"123.45\""))
         assertFalse("JSON must not truncate ARS to 123", json.contains("\"ARS\":\"123\""))
+    }
+
+    /**
+     * A-MONEY-33: LocalSale K exists, PaymentAttempt K missing, APPROVED callback arrives.
+     * Must FAIL-CLOSED:
+     * - PaymentAttempt delta = 0 (no synthetic PaymentAttempt created)
+     * - LocalSale does NOT become PENDING (remains WAITING_PAYMENT / NEEDS_RECONCILIATION)
+     * - requiresReconciliation = true, isBlocked = true
+     * - Zero sync scheduled
+     * - Never reconstructs 350000 BRL
+     */
+    @Test
+    fun testA_MONEY_33_missingPaymentAttempt_failClosed() = runBlocking {
+        val saleOutboxRepo = SaleOutboxRepository(
+            context = context,
+            localSaleDao = db.localSaleDao(),
+            apiService = mock(),
+            appDatabase = db,
+            paymentAttemptDao = db.paymentAttemptDao()
+        )
+        val mockScheduler: SaleSyncScheduler = mock()
+        val k = "k-failclosed-33"
+
+        val frozenPayload = """
+            {
+                "customerName": "Consumidor Final",
+                "total": 350000.0,
+                "currency": "BRL",
+                "paymentCurrency": "PYG",
+                "convertedTotal": 50.0,
+                "items": []
+            }
+        """.trimIndent()
+
+        val sale = LocalSaleEntity(
+            localId = k,
+            createdAt = 1000L,
+            updatedAt = 1000L,
+            total = 350000.0,
+            currency = "BRL",
+            paymentMethod = "CARTAO_CREDITO",
+            itemsJson = "[]",
+            payloadJson = frozenPayload,
+            syncStatus = LocalSaleEntity.STATUS_WAITING_PAYMENT,
+            idempotencyKeyUsed = true
+        )
+        db.localSaleDao().insert(sale)
+
+        // PaymentAttempt is deliberately ABSENT
+        assertNull(db.paymentAttemptDao().getByReference(k))
+
+        val result = saleOutboxRepo.finalizeApprovedSaleAtomic(
+            localId = k,
+            paymentId = "pay-external-123",
+            method = "CARTAO_CREDITO"
+        )
+
+        // 1. PaymentAttempt delta = 0
+        assertNull("No synthetic PaymentAttempt may be created", db.paymentAttemptDao().getByReference(k))
+
+        // 2. LocalSale does NOT become PENDING
+        assertNotNull(result)
+        assertNotEquals(LocalSaleEntity.STATUS_PENDING, result!!.syncStatus)
+        assertEquals(LocalSaleEntity.STATUS_NEEDS_RECONCILIATION, result.syncStatus)
+        assertEquals("PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL", result.lastError)
+
+        // 3. State is blocked and requires reconciliation
+        val unresolved = saleOutboxRepo.getUnresolvedDirectPaymentState()
+        assertNotNull(unresolved)
+        assertTrue("isBlocked must be true", unresolved!!.isBlocked)
+        assertTrue("requiresReconciliation must be true", unresolved.requiresReconciliation)
+        assertFalse("canResumeSameOperation must be false", unresolved.canResumeSameOperation)
+        assertEquals("PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL", unresolved.blockReason)
+
+        // 4. Zero sync scheduled
+        verify(mockScheduler, never()).scheduleSync(any())
     }
 }

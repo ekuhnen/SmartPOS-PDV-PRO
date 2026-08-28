@@ -184,35 +184,24 @@ class SaleOutboxRepository @Inject constructor(
             val existingAttempt = paymentAttemptDao.getByReference(localId)
             val now = System.currentTimeMillis()
 
-            if (existingAttempt != null) {
-                val updatedAttempt = existingAttempt.copy(
-                    status = PaymentAttemptEntity.STATUS_APPROVED,
-                    paymentAppPaymentId = paymentId ?: existingAttempt.paymentAppPaymentId,
-                    paymentMethod = method ?: existingAttempt.paymentMethod,
-                    completedAt = now
+            if (existingAttempt == null) {
+                Log.e(TAG, "FAIL_CLOSED: PaymentAttempt ausente para LocalSale [$localId] após callback APPROVED. Estado inconsistente.")
+                val updatedSale = sale.copy(
+                    syncStatus = LocalSaleEntity.STATUS_NEEDS_RECONCILIATION,
+                    lastError = "PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL",
+                    updatedAt = now
                 )
-                paymentAttemptDao.update(updatedAttempt)
-            } else {
-                val minimalUnits = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(
-                    com.plugpdv.pdv.utils.MoneyDecimal.of(sale.total),
-                    sale.currency
-                )
-                val newAttempt = PaymentAttemptEntity(
-                    reference = localId,
-                    idempotencyKey = localId,
-                    nonce = UUID.randomUUID().toString(),
-                    orderId = localId,
-                    amount = minimalUnits,
-                    currency = sale.currency,
-                    description = "Venda Direta - PDV",
-                    status = PaymentAttemptEntity.STATUS_APPROVED,
-                    paymentMethod = method ?: sale.paymentMethod,
-                    paymentAppPaymentId = paymentId,
-                    startedAt = now,
-                    completedAt = now
-                )
-                paymentAttemptDao.insert(newAttempt)
+                localSaleDao.update(updatedSale)
+                return@withTransaction updatedSale
             }
+
+            val updatedAttempt = existingAttempt.copy(
+                status = PaymentAttemptEntity.STATUS_APPROVED,
+                paymentAppPaymentId = paymentId ?: existingAttempt.paymentAppPaymentId,
+                paymentMethod = method ?: existingAttempt.paymentMethod,
+                completedAt = now
+            )
+            paymentAttemptDao.update(updatedAttempt)
 
             val updatedSale = sale.copy(
                 syncStatus = LocalSaleEntity.STATUS_PENDING,
@@ -231,6 +220,9 @@ class SaleOutboxRepository @Inject constructor(
             var recovered = 0
             val now = System.currentTimeMillis()
             for (sale in waitingSales) {
+                if (sale.syncStatus == LocalSaleEntity.STATUS_NEEDS_RECONCILIATION) {
+                    continue
+                }
                 val attempt = paymentAttemptDao.getByReference(sale.localId)
                 if (attempt?.status == PaymentAttemptEntity.STATUS_APPROVED) {
                     localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, null, now)
@@ -249,6 +241,22 @@ class SaleOutboxRepository @Inject constructor(
         data class SaleWithAttempt(val sale: LocalSaleEntity, val attempt: PaymentAttemptEntity?)
         val salesWithAttempts = waitingSales.map { sale ->
             SaleWithAttempt(sale, paymentAttemptDao.getByReference(sale.localId))
+        }
+
+        // 0. Qualquer venda em NEEDS_RECONCILIATION ou com attempt ausente -> Reconciliação imediata obrigatória
+        val missingAttemptOrReconciliation = salesWithAttempts.firstOrNull {
+            it.sale.syncStatus == LocalSaleEntity.STATUS_NEEDS_RECONCILIATION || it.attempt == null
+        }
+        if (missingAttemptOrReconciliation != null) {
+            return UnresolvedDirectPaymentState(
+                operationId = missingAttemptOrReconciliation.sale.localId,
+                saleStatus = missingAttemptOrReconciliation.sale.syncStatus,
+                attemptStatus = missingAttemptOrReconciliation.attempt?.status,
+                isBlocked = true,
+                canResumeSameOperation = false,
+                requiresReconciliation = true,
+                blockReason = "PAYMENT_ATTEMPT_MISSING_AFTER_APPROVAL"
+            )
         }
 
         // 1. Qualquer UNKNOWN tem precedência máxima -> Reconciliação obrigatória

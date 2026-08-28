@@ -42,7 +42,7 @@ interface LocalSaleDao {
     @Query("SELECT * FROM local_sales WHERE localId = :localId LIMIT 1")
     suspend fun getById(localId: String): LocalSaleEntity?
 
-    @Query("SELECT * FROM local_sales WHERE syncStatus = 'WAITING_PAYMENT' ORDER BY createdAt ASC")
+    @Query("SELECT * FROM local_sales WHERE syncStatus IN ('WAITING_PAYMENT', 'NEEDS_RECONCILIATION') ORDER BY createdAt ASC")
     suspend fun getWaitingPaymentSales(): List<LocalSaleEntity>
 
     @Query("SELECT * FROM local_sales ORDER BY createdAt DESC LIMIT 50")
