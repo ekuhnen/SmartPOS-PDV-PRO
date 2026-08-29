@@ -15,9 +15,10 @@ import com.plugpdv.pdv.models.Product
         LocalSaleEntity::class,
         OutboxOperationEntity::class,
         PaymentAttemptEntity::class,
-        TableEntity::class
+        TableEntity::class,
+        ComandaSnapshotEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun paymentAttemptDao(): PaymentAttemptDao
     abstract fun tableDao(): TableDao
+    abstract fun comandaSnapshotDao(): ComandaSnapshotDao
 
     suspend fun clearRebuildableCaches() {
         taxDao().deleteAll()
@@ -340,6 +342,43 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `comanda_snapshots` (
+                        `localComandaId` TEXT NOT NULL,
+                        `serverComandaId` TEXT,
+                        `tenantId` TEXT NOT NULL,
+                        `tableId` TEXT,
+                        `tableNumber` INTEGER,
+                        `customerIdentifier` TEXT,
+                        `baseCurrency` TEXT,
+                        `baseMinorUnitDigits` INTEGER,
+                        `serverStatus` TEXT,
+                        `localStatus` TEXT NOT NULL,
+                        `syncStatus` TEXT NOT NULL,
+                        `serverRevision` INTEGER,
+                        `localRevision` INTEGER NOT NULL,
+                        `totalBaseMinor` INTEGER,
+                        `paidBaseMinor` INTEGER,
+                        `balanceBaseMinor` INTEGER,
+                        `itemsJson` TEXT NOT NULL,
+                        `paymentsJson` TEXT NOT NULL,
+                        `requiresReconciliation` INTEGER NOT NULL,
+                        `reconciliationReason` TEXT,
+                        `serverUpdatedAt` INTEGER,
+                        `cachedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`localComandaId`)
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_comanda_snapshots_tenantId_serverComandaId` ON `comanda_snapshots` (`tenantId`, `serverComandaId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_snapshots_tableId` ON `comanda_snapshots` (`tableId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_snapshots_localStatus` ON `comanda_snapshots` (`localStatus`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_snapshots_syncStatus` ON `comanda_snapshots` (`syncStatus`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_snapshots_requiresReconciliation` ON `comanda_snapshots` (`requiresReconciliation`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -347,7 +386,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "smartpos_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .build()
                 INSTANCE = instance
                 instance

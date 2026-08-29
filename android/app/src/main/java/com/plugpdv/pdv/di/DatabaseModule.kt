@@ -53,4 +53,9 @@ object DatabaseModule {
     fun provideTableDao(database: AppDatabase): com.plugpdv.pdv.database.TableDao {
         return database.tableDao()
     }
+
+    @Provides
+    fun provideComandaSnapshotDao(database: AppDatabase): com.plugpdv.pdv.database.ComandaSnapshotDao {
+        return database.comandaSnapshotDao()
+    }
 }

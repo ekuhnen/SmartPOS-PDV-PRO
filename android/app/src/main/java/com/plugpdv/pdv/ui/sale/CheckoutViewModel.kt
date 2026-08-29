@@ -64,7 +64,8 @@ class CheckoutViewModel @Inject constructor(
     private val outboxDao: com.plugpdv.pdv.database.OutboxDao,
     private val paymentAttemptDao: com.plugpdv.pdv.database.PaymentAttemptDao,
     private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager,
-    private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
+    private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler,
+    private val comandaSnapshotRepository: com.plugpdv.pdv.repository.ComandaSnapshotRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CheckoutUiState())
@@ -271,6 +272,11 @@ class CheckoutViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                try {
+                    comandaSnapshotRepository?.cacheRemoteDetail(detail, currentTable)
+                } catch (e: Exception) {
+                    Log.e("CheckoutViewModel", "Non-fatal failure caching comanda snapshot: ${e.message}", e)
+                }
                 val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
                 val serverPaidBase = applyComandaMoneyDetail(detail, currentTable)
 
