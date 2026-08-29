@@ -1,12 +1,9 @@
 package com.plugpdv.pdv.di
 
 import android.content.Context
-import com.plugpdv.pdv.database.AppDatabase
-import com.plugpdv.pdv.database.CatalogDao
-import com.plugpdv.pdv.database.LocalSaleDao
-import com.plugpdv.pdv.database.OutboxDao
-import com.plugpdv.pdv.database.PaymentAttemptDao
-import com.plugpdv.pdv.database.TaxDao
+import com.plugpdv.pdv.api.PosApiService
+import com.plugpdv.pdv.database.*
+import com.plugpdv.pdv.repository.TableReadRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -50,12 +47,12 @@ object DatabaseModule {
     }
 
     @Provides
-    fun provideTableDao(database: AppDatabase): com.plugpdv.pdv.database.TableDao {
+    fun provideTableDao(database: AppDatabase): TableDao {
         return database.tableDao()
     }
 
     @Provides
-    fun provideComandaSnapshotDao(database: AppDatabase): com.plugpdv.pdv.database.ComandaSnapshotDao {
+    fun provideComandaSnapshotDao(database: AppDatabase): ComandaSnapshotDao {
         return database.comandaSnapshotDao()
     }
 }

@@ -1,290 +1,272 @@
 package com.plugpdv.pdv.ui.sale
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.CatalogDao
+import com.plugpdv.pdv.database.ComandaSnapshotEntity
 import com.plugpdv.pdv.models.*
+import com.plugpdv.pdv.repository.ComandaSnapshotRepository
+import com.plugpdv.pdv.repository.TableReadRepository
+import com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy
+import com.plugpdv.pdv.utils.SnapshotAuthorityDecision
 import com.plugpdv.pdv.utils.TableManager
+import com.plugpdv.pdv.utils.TenantBindingStore
 import com.plugpdv.pdv.utils.retryIO
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class ReadProvenance {
+    INITIAL,
+    LOCAL_CACHED,
+    REMOTE_REFRESHED
+}
+
 @HiltViewModel
 class TableOrderViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val apiService: PosApiService,
-    private val catalogDao: CatalogDao
+    private val catalogDao: CatalogDao,
+    private val tableReadRepository: TableReadRepository,
+    private val comandaSnapshotRepository: ComandaSnapshotRepository
 ) : ViewModel() {
+
+    private val gson = Gson()
 
     private val _table = MutableLiveData<Table?>()
     val table: LiveData<Table?> = _table
 
-    private val _isLoading = MutableLiveData(false)
+    private val _readProvenance = MutableLiveData<ReadProvenance>(ReadProvenance.INITIAL)
+    val readProvenance: LiveData<ReadProvenance> = _readProvenance
+
+    private val _isLoading = MutableLiveData<Boolean>(false)
     val isLoading: LiveData<Boolean> = _isLoading
 
-    private val _error = MutableLiveData<String?>(null)
+    private val _refreshWarning = MutableLiveData<String?>()
+    val refreshWarning: LiveData<String?> = _refreshWarning
+
+    private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
 
     private var token: String? = null
+    private var tableId: String? = null
+    private var tableNumber: Int = 0
+    private var sectorId: String? = null
 
     private val pendingAdditions = mutableMapOf<String, Int>()
     private val previousServerQuantities = mutableMapOf<String, Int>()
 
-    fun init(table: Table, token: String) {
-        this._table.value = table
+    fun init(tableId: String?, tableNumber: Int, sectorId: String?, token: String) {
+        this.tableId = tableId
+        this.tableNumber = tableNumber
+        this.sectorId = sectorId
         this.token = token
-        // Reset sync trackers when opening a new table
+
         pendingAdditions.clear()
         previousServerQuantities.clear()
-        // Se a mesa foi recém-aberta (sem itens), aguarda consistência do servidor
-        val isNewlyOpened = table.items.isEmpty() && !table.comandaId.isNullOrEmpty()
-        syncTable(isNewlyOpened)
+
+        viewModelScope.launch {
+            loadLocalTableAndSnapshot()
+            performSyncTable()
+        }
+    }
+
+    fun init(table: Table, token: String) {
+        this._table.value = table
+        init(table.id, table.number, table.sectorId, token)
+    }
+
+    private suspend fun loadLocalTableAndSnapshot() {
+        val resolvedTable = if (!tableId.isNullOrEmpty()) {
+            tableReadRepository.getTableById(tableId!!)
+        } else if (tableNumber > 0) {
+            tableReadRepository.getTableByNumber(tableNumber, sectorId)
+        } else {
+            null
+        }
+
+        if (resolvedTable == null) return
+
+        _table.value = resolvedTable
+
+        val cId = resolvedTable.comandaId
+        if (!cId.isNullOrEmpty()) {
+            val tenantId = TenantBindingStore.getActiveTenantId(context)
+            if (!tenantId.isNullOrBlank()) {
+                val snapshot = comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
+                if (snapshot != null) {
+                    val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
+                    if (decision == SnapshotAuthorityDecision.USABLE || snapshot.syncStatus == "PENDING_MUTATIONS") {
+                        applySnapshotToTable(resolvedTable, snapshot)
+                        _readProvenance.value = ReadProvenance.LOCAL_CACHED
+                        _table.value = resolvedTable
+                    }
+                }
+            }
+        }
+    }
+
+    private fun applySnapshotToTable(targetTable: Table, snapshot: ComandaSnapshotEntity) {
+        try {
+            val itemsDto: List<MesaItemDto> = gson.fromJson(snapshot.itemsJson, Array<MesaItemDto>::class.java)?.toList().orEmpty()
+
+            targetTable.items.clear()
+            val filteredItems = itemsDto.filter { it.status != "CANCELADO" && it.status != "REMOVIDO" }
+            val groupedItems = filteredItems.groupBy { Pair(it.nestedProduct?.id ?: it.produto_id, it.observacao) }
+
+            groupedItems.forEach { (groupKey, dtoList) ->
+                val pId = groupKey.first ?: return@forEach
+                val obs = groupKey.second
+                val firstDto = dtoList.first()
+                val serverQty = dtoList.sumOf { it.quantidade ?: 0 }
+
+                val localProduct = runCatching {
+                    kotlinx.coroutines.runBlocking { catalogDao.getProductById(pId) }
+                }.getOrNull()
+
+                var productName = localProduct?.name
+                if (productName.isNullOrEmpty()) {
+                    productName = firstDto.nestedProduct?.name ?: firstDto.nome
+                }
+
+                // Invariant: Snapshot item price contained in MesaItemDto (preco_unitario / subtotal) is authoritative for the snapshot
+                var itemPrice = if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
+                    firstDto.preco_unitario
+                } else if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
+                    firstDto.nestedProduct?.selling_price
+                } else if (firstDto.subtotal != null && firstDto.subtotal != 0.0 && serverQty > 0) {
+                    firstDto.subtotal / serverQty
+                } else {
+                    localProduct?.selling_price
+                }
+
+                val product = Product(
+                    id = pId,
+                    name = productName,
+                    selling_price = itemPrice ?: 0.0
+                )
+                targetTable.items.add(TableItem(product = product, quantity = serverQty).apply {
+                    id = firstDto.id
+                    serverIds = dtoList.mapNotNull { it.id }.toMutableList()
+                    observation = obs
+                    paidQuantity = 0
+                    isPaid = false
+                })
+            }
+            targetTable.calculateTotal()
+        } catch (e: Exception) {
+            Log.e("TableOrderViewModel", "Error applying snapshot to table: ${e.message}", e)
+        }
     }
 
     fun syncTable(isNewlyOpened: Boolean = false) {
+        viewModelScope.launch {
+            performSyncTable(isNewlyOpened)
+        }
+    }
+
+    private suspend fun performSyncTable(isNewlyOpened: Boolean = false) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
-        if (currentTable.id.isNullOrEmpty()) return
 
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                
-                // Pequeno delay para mesas recém-abertas para garantir consistência no servidor
-                if (isNewlyOpened) {
-                    kotlinx.coroutines.delay(500)
-                }
-                
-                val cId = currentTable.comandaId
-                if (!cId.isNullOrEmpty()) {
-                    // Optimized sync using specific comanda detail
-                    val response = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
-                    
-                    currentTable.apply {
-                        // Preserve existing paid state locally
-                        val oldPaidAmount = paidAmount
-                        val oldPaidQuantities = items.associate { it.product.id to it.paidQuantity }
-                        val oldIsPaid = items.associate { it.product.id to it.isPaid }
-
-                        // 1. Update from remote source of truth
-                        val serverPaid = if (response.totalPago > 0) response.totalPago else response.pagamentos.sumOf { it.valor }
-                        paidAmount = if (serverPaid > 0) serverPaid else oldPaidAmount
-
-                        items.clear()
-                        
-                        val seenProducts = mutableSetOf<String>()
-                        
-                        val filteredItems = response.itens.filter { it.status != "CANCELADO" && it.status != "REMOVIDO" }
-                        val groupedItems = filteredItems.groupBy { Pair(it.nestedProduct?.id ?: it.produto_id, it.observacao) }
-
-                        groupedItems.forEach { (groupKey, itemDtos) ->
-                            val pId = groupKey.first ?: return@forEach
-                            val obs = groupKey.second
-                            seenProducts.add(pId)
-                            
-                            val serverQty = itemDtos.sumOf { it.quantidade ?: 0 }
-                            val trackingKey = pId + (obs ?: "")
-                            val prevQty = previousServerQuantities[trackingKey] ?: 0
-                            
-                            if (serverQty > prevQty) {
-                                val consumed = serverQty - prevQty
-                                pendingAdditions[pId] = ((pendingAdditions[pId] ?: 0) - consumed).coerceAtLeast(0)
-                            }
-                            previousServerQuantities[trackingKey] = serverQty
-                            
-                            val finalQty = serverQty + (if (obs == null) pendingAdditions[pId] ?: 0 else 0)
-                            
-                            val firstDto = itemDtos.first()
-                            val localProduct = catalogDao.getProductById(pId)
-
-                            var productName = localProduct?.name
-                            if (productName.isNullOrEmpty()) {
-                                productName = firstDto.nestedProduct?.name ?: firstDto.nome
-                            }
-
-                            var productPrice = localProduct?.selling_price
-                            if (productPrice == null || productPrice == 0.0) {
-                                val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
-                                    firstDto.nestedProduct?.selling_price ?: 0.0
-                                } else if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
-                                    firstDto.preco_unitario
-                                } else {
-                                    firstDto.subtotal ?: 0.0
-                                }
-                                val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
-                                productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
-                            }
-
-                            val product = Product(
-                                id = pId, 
-                                name = productName, 
-                                selling_price = productPrice ?: 0.0
-                            )
-                            val item = TableItem(product = product, quantity = finalQty).apply {
-                                id = firstDto.id
-                                serverIds = itemDtos.mapNotNull { it.id }.toMutableList()
-                                observation = obs
-                                paidQuantity = oldPaidQuantities[pId] ?: 0
-                                isPaid = oldIsPaid[pId] ?: false
-                            }
-                            items.add(item)
-                        }
-                        calculateTotal()
-                    }
-                } else {
-                    // Fallback to getMesas if no comandaId yet
-                    val response = apiService.getMesas("Bearer $currentToken")
-                    val updatedTable = response.setores.orEmpty().flatMap { it.mesas.orEmpty() }
-                        .find { it.id == currentTable.id }
-                    
-                    updatedTable?.let { dto ->
-                        currentTable.apply {
-                            val oldPaidAmount = paidAmount
-                            val oldPaidQuantities = items.associate { it.product.id to it.paidQuantity }
-                            val oldIsPaid = items.associate { it.product.id to it.isPaid }
-
-                            comandaId = dto.comanda_id
-                            items.clear()
-                            paidAmount = oldPaidAmount
-
-                            val filteredItems = dto.itens?.filter { it.status != "CANCELADO" && it.status != "REMOVIDO" } ?: emptyList()
-                            val groupedItems = filteredItems.groupBy { Pair(it.nestedProduct?.id ?: it.produto_id, it.observacao) }
-
-                            groupedItems.forEach { (groupKey, itemDtos) ->
-                                val pId = groupKey.first ?: return@forEach
-                                val obs = groupKey.second
-                                val firstDto = itemDtos.first()
-                                val serverQty = itemDtos.sumOf { it.quantidade ?: 0 }
-
-                                val localProduct = catalogDao.getProductById(pId)
-
-                                var productName = localProduct?.name
-                                if (productName.isNullOrEmpty()) {
-                                    productName = firstDto.nestedProduct?.name ?: firstDto.nome
-                                }
-
-                                var productPrice = localProduct?.selling_price
-                                if (productPrice == null || productPrice == 0.0) {
-                                    val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
-                                        firstDto.nestedProduct?.selling_price ?: 0.0
-                                    } else if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
-                                        firstDto.preco_unitario
-                                    } else {
-                                        firstDto.subtotal ?: 0.0
-                                    }
-                                    val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
-                                    productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
-                                }
-
-                                val product = Product(
-                                    id = pId, 
-                                    name = productName, 
-                                    selling_price = productPrice ?: 0.0
-                                )
-                                items.add(TableItem(product = product, quantity = serverQty).apply { 
-                                    id = firstDto.id 
-                                    serverIds = itemDtos.mapNotNull { it.id }.toMutableList()
-                                    observation = obs
-                                    paidQuantity = oldPaidQuantities[pId] ?: 0
-                                    isPaid = oldIsPaid[pId] ?: false
-                                })
-                            }
-                            calculateTotal()
-                        }
-                    }
-                }
-                
-                TableManager.updateTable(currentTable)
-                _table.value = currentTable
-            } catch (e: Exception) {
-                Log.e("TableOrderViewModel", "Sync failed", e)
-            } finally {
-                _isLoading.value = false
+        try {
+            _isLoading.value = true
+            if (isNewlyOpened) {
+                kotlinx.coroutines.delay(500)
             }
+
+            val cId = currentTable.comandaId
+            if (!cId.isNullOrEmpty()) {
+                val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                val snapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
+
+                if (snapshot != null) {
+                    applySnapshotToTable(currentTable, snapshot)
+                }
+                _readProvenance.value = ReadProvenance.REMOTE_REFRESHED
+                _refreshWarning.value = null
+                _table.value = currentTable
+            } else {
+                tableReadRepository.refreshTables(currentToken)
+                loadLocalTableAndSnapshot()
+            }
+        } catch (e: Exception) {
+            Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
+            if (_readProvenance.value == ReadProvenance.LOCAL_CACHED) {
+                _refreshWarning.value = "Sem conexão — exibindo dados salvos"
+            } else {
+                _error.value = "Erro de conexão ao carregar mesa"
+            }
+        } finally {
+            _isLoading.value = false
         }
     }
 
     fun addItem(product: Product) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
-        val cId = currentTable.comandaId
 
-        if (cId.isNullOrEmpty()) {
-            _error.value = "ID da comanda não encontrado"
+        if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
+            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             return
         }
-
-        // 1. Record pending addition
-        pendingAdditions[product.id] = (pendingAdditions[product.id] ?: 0) + 1
-
-        // 2. Optimistic Update (Immediate UI feedback)
-        val existing = currentTable.items.find { !it.removed && it.product.id == product.id }
-        if (existing != null) {
-            existing.quantity++
-        } else {
-            currentTable.items.add(TableItem(product = product, quantity = 1))
-        }
-        currentTable.calculateTotal()
-        _table.value = currentTable
 
         val request = CommandActionRequest().apply {
             action = "add_item"
             mesaId = currentTable.id
-            comandaId = cId
+            comandaId = currentTable.comandaId
             product_id = product.id
             quantity = 1
-            status = "RASCUNHO"
         }
 
         viewModelScope.launch {
             try {
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
-                
-                // After success, wait a bit for server persistence before syncing
-                viewModelScope.launch {
-                    kotlinx.coroutines.delay(1000)
-                    syncTable()
-                }
+                syncTable()
+            } catch (e: java.io.IOException) {
+                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
-                // Revert pending on error
-                pendingAdditions[product.id] = (pendingAdditions[product.id] ?: 0).minus(1).coerceAtLeast(0)
-                _error.value = "Erro ao adicionar item"
-                syncTable() // Refresh to real state
+                _error.value = "Erro ao adicionar item: ${e.localizedMessage}"
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    fun removeItem(item: TableItem, reason: String) {
+    fun removeItem(item: TableItem, reasonStr: String) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
 
+        if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
+            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+            return
+        }
+
         val request = CommandActionRequest().apply {
-            action = "cancel_item"
+            action = "remove_item"
             mesaId = currentTable.id
             comandaId = currentTable.comandaId
             order_id = item.id
-            product_id = item.product.id
-            this.reason = reason
-            itemIds = item.serverIds
+            reason = reasonStr
         }
 
         viewModelScope.launch {
             try {
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
-                item.removed = true
-                item.removalReason = reason
-                currentTable.calculateTotal()
-                _table.value = currentTable
+                syncTable()
+            } catch (e: java.io.IOException) {
+                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
-                _error.value = "Erro ao remover item"
+                _error.value = "Erro ao remover item: ${e.localizedMessage}"
             } finally {
                 _isLoading.value = false
             }
@@ -294,16 +276,16 @@ class TableOrderViewModel @Inject constructor(
     fun enviarCozinha(onSuccess: () -> Unit) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
-        val cId = currentTable.comandaId
 
-        if (cId.isNullOrEmpty()) {
-            _error.value = "ID da comanda não encontrado"
+        if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
+            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             return
         }
 
         val request = CommandActionRequest().apply {
-            action = "enviar_cozinha"
-            comandaId = cId
+            action = "send_kitchen"
+            mesaId = currentTable.id
+            comandaId = currentTable.comandaId
         }
 
         viewModelScope.launch {
@@ -311,8 +293,10 @@ class TableOrderViewModel @Inject constructor(
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
                 onSuccess()
+            } catch (e: java.io.IOException) {
+                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
-                _error.value = "Erro ao enviar pedido para a cozinha"
+                _error.value = "Erro ao enviar pedido para a cozinha: ${e.localizedMessage}"
             } finally {
                 _isLoading.value = false
             }

@@ -14,7 +14,6 @@ import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.CurrencyManager
-import com.plugpdv.pdv.utils.TableManager
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -41,20 +40,15 @@ class TableOrderActivity : BaseActivity() {
         val tableNumber = intent.getIntExtra("TABLE_NUMBER", 0)
         val sectorId = intent.getStringExtra("SECTOR_ID")
         token = intent.getStringExtra("ACCESS_TOKEN")
-        table = TableManager.getTable(tableId, tableNumber, sectorId)
 
-        if (table == null || token == null) {
+        if (token == null || (tableId.isNullOrEmpty() && tableNumber <= 0)) {
             finish()
             return
         }
 
         setSupportActionBar(binding.toolbar)
         supportActionBar?.let {
-            var title = if (!table!!.sectorName.isNullOrEmpty()) "Mesa ${table!!.number} (${table!!.sectorName})" else "Mesa ${table!!.number}"
-            if (!table!!.customerName.isNullOrEmpty() && table!!.customerName != "null") {
-                title += " - ${table!!.customerName}"
-            }
-            it.title = title
+            it.title = "Mesa $tableNumber"
             it.setDisplayHomeAsUpEnabled(true)
             binding.toolbar.setNavigationOnClickListener { attemptToExit() }
         }
@@ -69,10 +63,8 @@ class TableOrderActivity : BaseActivity() {
         setupSearch()
         observeViewModels()
 
-        token?.let {
-            saleViewModel.loadCatalog(it)
-            tableOrderViewModel.init(table!!, it)
-        }
+        saleViewModel.loadCatalog(token!!)
+        tableOrderViewModel.init(tableId, tableNumber, sectorId, token!!)
 
         binding.btnUpdateTable.setOnClickListener {
             table?.calculateTotal()
@@ -104,7 +96,7 @@ class TableOrderActivity : BaseActivity() {
         }
 
         if (intent.getBooleanExtra("AUTO_CHECKOUT", false)) {
-            TableCheckoutBottomSheet.newInstance(table!!.id, table!!.number, token!!).show(supportFragmentManager, "checkout")
+            TableCheckoutBottomSheet.newInstance(tableId, tableNumber, token!!).show(supportFragmentManager, "checkout")
         }
     }
 
@@ -133,13 +125,14 @@ class TableOrderActivity : BaseActivity() {
     }
 
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
+        val currentTable = table ?: return super.onOptionsItemSelected(item)
         return when (item.itemId) {
             R.id.action_history -> {
-                TableHistoryBottomSheet.newInstance(table!!.id, table!!.number).show(supportFragmentManager, "history")
+                TableHistoryBottomSheet.newInstance(currentTable.id, currentTable.number).show(supportFragmentManager, "history")
                 true
             }
             R.id.action_close_account -> {
-                TableCheckoutBottomSheet.newInstance(table!!.id, table!!.number, token!!).show(supportFragmentManager, "checkout")
+                TableCheckoutBottomSheet.newInstance(currentTable.id, currentTable.number, token!!).show(supportFragmentManager, "checkout")
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -172,7 +165,7 @@ class TableOrderActivity : BaseActivity() {
         binding.rvCategories.adapter = categoryAdapter
 
         // Table Items
-        orderAdapter = TableOrderItemAdapter(table?.items ?: mutableListOf()) { item ->
+        orderAdapter = TableOrderItemAdapter(mutableListOf()) { item ->
             if (!item.removed) {
                 showItemOptions(item)
             }
@@ -189,19 +182,44 @@ class TableOrderActivity : BaseActivity() {
         saleViewModel.isLoading.observe(this) { loading -> updateLoading(loading) }
 
         // TableOrderViewModel (Table logic)
-        tableOrderViewModel.table.observe(this) { _ -> updateUI() }
+        tableOrderViewModel.table.observe(this) { resolvedTable ->
+            this.table = resolvedTable
+            if (resolvedTable != null) {
+                supportActionBar?.let {
+                    var title = if (!resolvedTable.sectorName.isNullOrEmpty()) "Mesa ${resolvedTable.number} (${resolvedTable.sectorName})" else "Mesa ${resolvedTable.number}"
+                    if (!resolvedTable.customerName.isNullOrEmpty() && resolvedTable.customerName != "null") {
+                        title += " - ${resolvedTable.customerName}"
+                    }
+                    it.title = title
+                }
+            }
+            updateUI()
+        }
+
         tableOrderViewModel.isLoading.observe(this) { loading -> updateLoading(loading) }
         tableOrderViewModel.error.observe(this) { error ->
             error?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
         }
+        tableOrderViewModel.refreshWarning.observe(this) { warning ->
+            warning?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
+        }
     }
 
-    private fun updateLoading(loading: Boolean) {
-        binding.loadingLayout.loadingOverlay.visibility = if (loading) View.VISIBLE else View.GONE
+    private fun updateLoading(loading: Boolean?) {
+        binding.loadingLayout.loadingOverlay.visibility = if (loading == true) View.VISIBLE else View.GONE
     }
 
     fun updateUI() {
-        binding.tvTotal.text = CurrencyManager.getInstance().format(table?.calculateTotal() ?: 0.0)
+        val currentTable = table
+        binding.tvTotal.text = CurrencyManager.getInstance().format(currentTable?.calculateTotal() ?: 0.0)
+        currentTable?.items?.let { items ->
+            orderAdapter = TableOrderItemAdapter(items) { item ->
+                if (!item.removed) {
+                    showItemOptions(item)
+                }
+            }
+            binding.rvOrderItems.adapter = orderAdapter
+        }
         orderAdapter.notifyDataSetChanged()
         productAdapter.notifyDataSetChanged()
     }

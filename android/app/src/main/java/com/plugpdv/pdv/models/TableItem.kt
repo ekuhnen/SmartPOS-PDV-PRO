@@ -15,3 +15,9 @@ data class TableItem(
     var timestamp: Long = System.currentTimeMillis(),
     var serverIds: MutableList<String>? = null
 ) : Serializable
+
+data class TableItemPayment(
+    val item: TableItem,
+    var selected: Boolean = false,
+    var selectedQuantity: Int = item.quantity - item.paidQuantity
+) : Serializable

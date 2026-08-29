@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TableDao {
@@ -13,6 +14,9 @@ interface TableDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(table: TableEntity)
+
+    @Query("SELECT * FROM tables ORDER BY sectorName, number")
+    fun observeAllTables(): Flow<List<TableEntity>>
 
     @Query("SELECT * FROM tables ORDER BY number ASC")
     suspend fun getAllTables(): List<TableEntity>
