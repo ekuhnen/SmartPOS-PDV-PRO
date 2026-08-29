@@ -3,8 +3,8 @@ package com.plugpdv.pdv.ui.sale
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.MediatorLiveData
+import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.plugpdv.pdv.api.PosApiService
@@ -18,6 +18,7 @@ import com.plugpdv.pdv.utils.TransferQueueManager
 import com.plugpdv.pdv.utils.retryIO
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
@@ -38,7 +39,7 @@ class MesaViewModel @Inject constructor(
     private val _sectors = MutableLiveData<List<Sector>>(listOf(Sector(id = "", nome = "Todos")))
     val sectors: LiveData<List<Sector>> = _sectors
 
-    private val _selectedSectorId = MutableLiveData<String?>(null)
+    private val _selectedSectorId = MutableLiveData<String?>("")
     val selectedSectorId: LiveData<String?> = _selectedSectorId
 
     private val _filteredTables = MediatorLiveData<List<Table>>().apply {
@@ -47,25 +48,28 @@ class MesaViewModel @Inject constructor(
     }
     val tables: LiveData<List<Table>> = _filteredTables
 
-    private val _isLoading = MutableLiveData(false)
+    private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
-    private val _isRefreshing = MutableLiveData(false)
+    private val _isRefreshing = MutableLiveData<Boolean>(false)
     val isRefreshing: LiveData<Boolean> = _isRefreshing
 
-    private val _refreshWarning = MutableLiveData<String?>(null)
+    private val _refreshWarning = MutableLiveData<String?>()
     val refreshWarning: LiveData<String?> = _refreshWarning
 
-    private val _error = MutableLiveData<String?>(null)
+    private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
 
-    private val _openSuccess = MutableLiveData(false)
-    val openSuccess: LiveData<Boolean> = _openSuccess
-
-    private val _openedComandaId = MutableLiveData<String?>(null)
+    private val _openedComandaId = MutableLiveData<String?>()
     val openedComandaId: LiveData<String?> = _openedComandaId
 
-    private val _sessionExpired = MutableLiveData<Boolean>(false)
+    private val _openSuccess = MutableLiveData<Boolean>()
+    val openSuccess: LiveData<Boolean> = _openSuccess
+
+    private val _transferSuccess = MutableLiveData<Boolean>()
+    val transferSuccess: LiveData<Boolean> = _transferSuccess
+
+    private val _sessionExpired = MutableLiveData<Boolean>()
     val sessionExpired: LiveData<Boolean> = _sessionExpired
 
     private var isRefreshingNetwork = false
@@ -109,8 +113,8 @@ class MesaViewModel @Inject constructor(
         _selectedSectorId.value = sectorId
     }
 
-    fun consumeSessionExpired() {
-        _sessionExpired.value = false
+    fun filterBySector(sectorId: String?) {
+        setSelectedSector(sectorId)
     }
 
     fun fetchTables(token: String) {
@@ -126,7 +130,7 @@ class MesaViewModel @Inject constructor(
             _error.value = null
 
             try {
-                // Process any pending transfers first
+                // Process any existing pending transfers from queue
                 queueManager.processQueue(apiService)
 
                 val result = tableReadRepository.refreshTables(token)
@@ -138,6 +142,8 @@ class MesaViewModel @Inject constructor(
                         handleRefreshError(error, hasCachedData)
                     }
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 handleRefreshError(e, hasCachedData)
             } finally {
@@ -213,11 +219,14 @@ class MesaViewModel @Inject constructor(
                     val errorBody = response.errorBody()?.string() ?: ""
                     Log.e("MesaViewModel", "Falha ao abrir mesa: $errorCode - $errorBody")
                     if (errorCode == 401) {
-                        _error.value = "Sessão expirada. Por favor, faça login novamente."
+                        _sessionExpired.value = true
+                        _error.value = "Sessão expirada. Faça login novamente."
                     } else {
                         _error.value = "Erro ao abrir mesa (Código: $errorCode)"
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
@@ -234,28 +243,16 @@ class MesaViewModel @Inject constructor(
         _openedComandaId.value = null
     }
 
+    fun consumeTransferSuccess() {
+        _transferSuccess.value = false
+    }
+
+    fun consumeSessionExpired() {
+        _sessionExpired.value = false
+    }
+
     fun transferTable(token: String, origin: Table, destination: Table) {
         val comandaId = origin.comandaId ?: return
-        
-        // Optimistic UI mirror
-        val currentTables = _tables.value?.toMutableList() ?: mutableListOf()
-        val originInList = currentTables.find { it.id == origin.id }
-        val destInList = currentTables.find { it.id == destination.id }
-        
-        if (originInList != null && destInList != null) {
-            destInList.status = Table.Status.OCCUPIED
-            destInList.comandaId = originInList.comandaId
-            destInList.customerName = originInList.customerName
-            destInList.items = originInList.items.toMutableList()
-            
-            originInList.status = Table.Status.AVAILABLE
-            originInList.comandaId = null
-            originInList.customerName = ""
-            originInList.items = mutableListOf()
-            
-            _tables.value = currentTables
-            TableManager.setTables(currentTables)
-        }
 
         val request = CommandActionRequest().apply {
             action = "transferir_mesa"
@@ -265,13 +262,29 @@ class MesaViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val response = apiService.manageComanda("Bearer $token", request)
-                if (!response.isSuccessful) {
-                    queueManager.addToQueue(token, request)
+                _isLoading.value = true
+                val response = retryIO { apiService.manageComanda("Bearer $token", request) }
+                if (response.isSuccessful) {
+                    tableReadRepository.refreshTables(token)
+                    _transferSuccess.value = true
+                } else {
+                    val errorCode = response.code()
+                    if (errorCode == 401) {
+                        _sessionExpired.value = true
+                        _error.value = "Sessão expirada. Faça login novamente."
+                    } else {
+                        _error.value = "Erro ao transferir mesa (Código: $errorCode)"
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                _error.value = "Sem conexão. Transferência de mesa requer conexão."
             } catch (e: Exception) {
-                queueManager.addToQueue(token, request)
-                Log.e("MesaViewModel", "Network error during transfer, queued", e)
+                Log.e("MesaViewModel", "Error transferring table", e)
+                _error.value = "Erro ao transferir mesa: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         }
     }

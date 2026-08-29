@@ -203,6 +203,17 @@ class TableOrderActivity : BaseActivity() {
         tableOrderViewModel.refreshWarning.observe(this) { warning ->
             warning?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
         }
+        tableOrderViewModel.accountingSummary.observe(this) { _ ->
+            updateUI()
+        }
+        tableOrderViewModel.sessionExpired.observe(this) { expired ->
+            if (expired == true) {
+                com.plugpdv.pdv.utils.KillSwitchManager.forceLogout(
+                    applicationContext,
+                    "Sessão expirada. Faça login novamente."
+                )
+            }
+        }
     }
 
     private fun updateLoading(loading: Boolean?) {
@@ -211,7 +222,16 @@ class TableOrderActivity : BaseActivity() {
 
     fun updateUI() {
         val currentTable = table
-        binding.tvTotal.text = CurrencyManager.getInstance().format(currentTable?.calculateTotal() ?: 0.0)
+        val summary = tableOrderViewModel.accountingSummary.value
+        if (summary != null) {
+            val decimal = com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(
+                summary.totalBaseMinor,
+                summary.baseMinorUnitDigits
+            )
+            binding.tvTotal.text = CurrencyManager.getInstance().formatExplicit(decimal.toDouble(), summary.baseCurrency)
+        } else {
+            binding.tvTotal.text = CurrencyManager.getInstance().format(currentTable?.calculateTotal() ?: 0.0)
+        }
         currentTable?.items?.let { items ->
             orderAdapter = TableOrderItemAdapter(items) { item ->
                 if (!item.removed) {

@@ -35,4 +35,12 @@ interface TableDao {
 
     @Query("DELETE FROM tables")
     suspend fun deleteAll()
+
+    @androidx.room.Transaction
+    suspend fun replaceAll(tables: List<TableEntity>) {
+        deleteAll()
+        if (tables.isNotEmpty()) {
+            insertAll(tables)
+        }
+    }
 }

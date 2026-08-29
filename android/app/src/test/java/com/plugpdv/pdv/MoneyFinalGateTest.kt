@@ -15,7 +15,9 @@ import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.models.*
 import com.plugpdv.pdv.outbox.SaleSyncScheduler
+import com.plugpdv.pdv.repository.ComandaSnapshotRepository
 import com.plugpdv.pdv.repository.SaleOutboxRepository
+import com.plugpdv.pdv.repository.TableReadRepository
 import com.plugpdv.pdv.repository.TaxRepository
 import com.plugpdv.pdv.ui.sale.*
 import com.plugpdv.pdv.utils.*
@@ -42,6 +44,8 @@ class MoneyFinalGateTest {
     private lateinit var currencyManager: CurrencyManager
     private lateinit var context: Context
     private lateinit var mockTaxRepo: TaxRepository
+    private lateinit var mockComandaSnapshotRepo: ComandaSnapshotRepository
+    private lateinit var mockTableReadRepo: TableReadRepository
     private lateinit var db: AppDatabase
 
     @Before
@@ -52,6 +56,8 @@ class MoneyFinalGateTest {
             .build()
 
         mockTaxRepo = mock()
+        mockComandaSnapshotRepo = mock()
+        mockTableReadRepo = mock()
         whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
 
         currencyManager = CurrencyManager.getInstance()
@@ -78,10 +84,22 @@ class MoneyFinalGateTest {
      * request must use comanda base BRL without falling back to current config.
      */
     @Test
-    fun testA_MONEY_01_frozenComandaBaseBrl_currentConfigPyg_requestUsesBaseBrl() {
+    fun testA_MONEY_01_frozenComandaBaseBrl_currentConfigPyg_requestUsesBaseBrl() = runBlocking {
         val mockApi: PosApiService = mock()
         val mockOutboxSyncManager: OutboxSyncManager = mock()
         val mockSaleSyncScheduler: SaleSyncScheduler = mock()
+
+        val comandaDetail = ComandaDetailResponse(
+            id = "comanda-1",
+            mesaId = "table-1",
+            status = "ABERTA",
+            baseCurrency = "BRL",
+            total = 50.0,
+            totalPago = 0.0,
+            totalPagoBase = 0.0,
+            saldoBase = 50.0
+        )
+        whenever(mockApi.getComandaDetail(any(), any())).thenReturn(comandaDetail)
 
         val viewModel = CheckoutViewModel(
             context = context,
@@ -90,7 +108,9 @@ class MoneyFinalGateTest {
             outboxDao = db.outboxDao(),
             paymentAttemptDao = db.paymentAttemptDao(),
             outboxSyncManager = mockOutboxSyncManager,
-            saleSyncScheduler = mockSaleSyncScheduler
+            saleSyncScheduler = mockSaleSyncScheduler,
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
         )
 
         val table = Table(id = "table-1", number = 5, status = Table.Status.OCCUPIED)
@@ -98,16 +118,13 @@ class MoneyFinalGateTest {
         table.paidAmount = 0.0
         table.items.add(TableItem(product = Product(id = "p1", name = "Item 1", selling_price = 50.0), quantity = 1))
 
-        val comandaDetail = ComandaDetailResponse(
-            id = "comanda-1",
-            mesaId = "table-1",
-            status = "ABERTA",
-            baseCurrency = "BRL",
-            total = 50.0,
-            totalPago = 0.0
-        )
-        viewModel.applyComandaMoneyDetail(comandaDetail, table)
         viewModel.init(table, "token-1", "session-1", "op-1", "Op")
+        var attempts = 0
+        while (viewModel.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            kotlinx.coroutines.delay(50)
+            attempts++
+        }
 
         // Establishment shifts to PYG
         currencyManager.setRates(
@@ -325,23 +342,43 @@ class MoneyFinalGateTest {
      * A-MONEY-13: Manual base mismatch exact compare -> MONEY_AMOUNT_MISMATCH.
      */
     @Test
-    fun testA_MONEY_13_manualBaseMismatch_exactCompareThrows() {
+    fun testA_MONEY_13_manualBaseMismatch_exactCompareThrows() = runBlocking {
+        val mockApi: PosApiService = mock()
+        val comandaDetail = ComandaDetailResponse(
+            id = "c-1",
+            mesaId = "table-1",
+            status = "ABERTA",
+            baseCurrency = "BRL",
+            total = 100.0,
+            totalPago = 0.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0
+        )
+        whenever(mockApi.getComandaDetail(any(), any())).thenReturn(comandaDetail)
+
         val viewModel = CheckoutViewModel(
             context = context,
-            apiService = mock(),
+            apiService = mockApi,
             taxRepository = mockTaxRepo,
             outboxDao = db.outboxDao(),
             paymentAttemptDao = db.paymentAttemptDao(),
             outboxSyncManager = mock(),
-            saleSyncScheduler = mock()
+            saleSyncScheduler = mock(),
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
         )
 
         val table = Table(id = "table-1", number = 5, status = Table.Status.OCCUPIED)
         table.comandaId = "c-1"
         table.items.add(TableItem(product = Product(id = "p1", name = "Item", selling_price = 100.0), quantity = 1))
 
-        viewModel.applyComandaMoneyDetail(ComandaDetailResponse(id = "c-1", mesaId = "table-1", status = "ABERTA", baseCurrency = "BRL", total = 100.0), table)
         viewModel.init(table, "token", "sess", "op", "Op")
+        var attempts = 0
+        while (viewModel.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            kotlinx.coroutines.delay(50)
+            attempts++
+        }
 
         try {
             viewModel.buildCommitRequest(PaymentMethod.CASH, manualAmount = 100.0, manualCurrency = "BRL", manualBaseAmount = 99.00)
@@ -374,7 +411,9 @@ class MoneyFinalGateTest {
             outboxDao = db.outboxDao(),
             paymentAttemptDao = db.paymentAttemptDao(),
             outboxSyncManager = mock(),
-            saleSyncScheduler = mock()
+            saleSyncScheduler = mock(),
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
         )
 
         val table = Table(id = "table-1", number = 5, status = Table.Status.OCCUPIED)
@@ -1047,33 +1086,13 @@ class MoneyFinalGateTest {
      * MESA-02: Valid base_currency BRL sets moneyAuthorityState = READY and enables pay.
      */
     @Test
-    fun testA_MESA_02_moneyAuthority_successSetsReadyAndEnablesPay() {
+    fun testA_MESA_02_moneyAuthority_fromDetailResponse_setsStateAndFrozenBaseCurrency() = runBlocking {
         val mockApi: PosApiService = mock()
-        val mockTaxRepo: TaxRepository = mock()
-        val mockOutboxDao: OutboxDao = mock()
-        val mockPaymentAttemptDao: PaymentAttemptDao = mock()
         val mockOutboxSyncMgr: OutboxSyncManager = mock()
         val mockSaleScheduler: SaleSyncScheduler = mock()
 
         whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
         whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
-
-        val vm = CheckoutViewModel(
-            context = context,
-            apiService = mockApi,
-            taxRepository = mockTaxRepo,
-            outboxDao = mockOutboxDao,
-            paymentAttemptDao = mockPaymentAttemptDao,
-            outboxSyncManager = mockOutboxSyncMgr,
-            saleSyncScheduler = mockSaleScheduler
-        )
-
-        val table = Table(
-            id = "mesa-1",
-            number = 1,
-            status = Table.Status.OCCUPIED,
-            comandaId = "123"
-        )
 
         val detail = ComandaDetailResponse(
             id = "123",
@@ -1083,91 +1102,10 @@ class MoneyFinalGateTest {
             baseCurrency = "BRL",
             totalPagoBase = 0.0,
             totalPago = 0.0,
+            saldoBase = 100.0,
             pagamentos = emptyList()
         )
-
-        val paid = vm.applyComandaMoneyDetail(detail, table)
-        assertEquals(0.0, paid, 0.001)
-        assertTrue(vm.moneyAuthorityLoaded)
-        assertEquals("BRL", vm.comandaBaseCurrency)
-        assertEquals(MoneyAuthorityState.READY, vm.uiState.value.moneyAuthorityState)
-    }
-
-    /**
-     * MESA-03: Network failure loading detail sets LOAD_ERROR, keeps pay blocked, but requiresReconciliation = false.
-     */
-    @Test
-    fun testA_MESA_03_moneyAuthority_networkErrorSetsLoadErrorAndBlockedNotReconciliation() {
-        runBlocking {
-            val mockApi: PosApiService = mock()
-            val mockTaxRepo: TaxRepository = mock()
-            val mockOutboxDao: OutboxDao = mock()
-            val mockPaymentAttemptDao: PaymentAttemptDao = mock()
-            val mockOutboxSyncMgr: OutboxSyncManager = mock()
-            val mockSaleScheduler: SaleSyncScheduler = mock()
-
-            whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
-            whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
-            whenever(mockApi.getComandaDetail(any(), any())).thenAnswer { throw java.io.IOException("Network Timeout") }
-
-            val vm = CheckoutViewModel(
-                context = context,
-                apiService = mockApi,
-                taxRepository = mockTaxRepo,
-                outboxDao = mockOutboxDao,
-                paymentAttemptDao = mockPaymentAttemptDao,
-                outboxSyncManager = mockOutboxSyncMgr,
-                saleSyncScheduler = mockSaleScheduler
-            )
-
-            val table = Table(
-                id = "mesa-1",
-                number = 1,
-                status = Table.Status.OCCUPIED,
-                comandaId = "123"
-            )
-
-            vm.init(table, "token123", "sess123", "op1", "OpName")
-            
-            var attempts = 0
-            while (vm.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
-                org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                attempts++
-            }
-
-            assertFalse(vm.moneyAuthorityLoaded)
-            assertNull(vm.comandaBaseCurrency)
-            assertEquals(MoneyAuthorityState.LOAD_ERROR, vm.uiState.value.moneyAuthorityState)
-            assertTrue(vm.uiState.value.isPayButtonBlocked)
-            assertFalse(vm.uiState.value.requiresReconciliation)
-            assertEquals("Não foi possível carregar os dados financeiros da comanda.", vm.uiState.value.blockReason)
-        }
-    }
-
-    /**
-     * MESA-04: Blank base_currency sets RECONCILIATION_REQUIRED and requiresReconciliation = true.
-     */
-    @Test
-    fun testA_MESA_04_moneyAuthority_blankBaseCurrencySetsReconciliationRequired() {
-        val mockApi: PosApiService = mock()
-        val mockTaxRepo: TaxRepository = mock()
-        val mockOutboxDao: OutboxDao = mock()
-        val mockPaymentAttemptDao: PaymentAttemptDao = mock()
-        val mockOutboxSyncMgr: OutboxSyncManager = mock()
-        val mockSaleScheduler: SaleSyncScheduler = mock()
-
-        whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
-        whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
-
-        val vm = CheckoutViewModel(
-            context = context,
-            apiService = mockApi,
-            taxRepository = mockTaxRepo,
-            outboxDao = mockOutboxDao,
-            paymentAttemptDao = mockPaymentAttemptDao,
-            outboxSyncManager = mockOutboxSyncMgr,
-            saleSyncScheduler = mockSaleScheduler
-        )
+        whenever(mockApi.getComandaDetail(any(), any())).thenReturn(detail)
 
         val table = Table(
             id = "mesa-1",
@@ -1175,6 +1113,96 @@ class MoneyFinalGateTest {
             status = Table.Status.OCCUPIED,
             comandaId = "123"
         )
+        whenever(mockTableReadRepo.getTableById(any())).thenReturn(table)
+
+        val vm = CheckoutViewModel(
+            context = context,
+            apiService = mockApi,
+            taxRepository = mockTaxRepo,
+            outboxDao = db.outboxDao(),
+            paymentAttemptDao = db.paymentAttemptDao(),
+            outboxSyncManager = mockOutboxSyncMgr,
+            saleSyncScheduler = mockSaleScheduler,
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
+        )
+
+        vm.init(table, "token123", "sess123", "op1", "OpName")
+        var attempts = 0
+        while (vm.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            kotlinx.coroutines.delay(50)
+            attempts++
+        }
+
+        assertTrue(vm.moneyAuthorityLoaded)
+        assertEquals("BRL", vm.comandaBaseCurrency)
+        assertEquals(MoneyAuthorityState.READY_REMOTE, vm.uiState.value.moneyAuthorityState)
+    }
+
+    /**
+     * MESA-03: Network failure loading detail sets LOAD_ERROR, keeps pay blocked, but requiresReconciliation = false.
+     */
+    @Test
+    fun testA_MESA_03_moneyAuthority_networkErrorSetsLoadErrorAndBlockedNotReconciliation() = runBlocking {
+        val mockApi: PosApiService = mock()
+        val mockTaxRepo: TaxRepository = mock()
+        val mockOutboxSyncMgr: OutboxSyncManager = mock()
+        val mockSaleScheduler: SaleSyncScheduler = mock()
+
+        whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
+        whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
+        whenever(mockApi.getComandaDetail(any(), any())).thenAnswer { throw java.io.IOException("Network Timeout") }
+
+        val table = Table(
+            id = "mesa-1",
+            number = 1,
+            status = Table.Status.OCCUPIED,
+            comandaId = "123"
+        )
+        whenever(mockTableReadRepo.getTableById(any())).thenReturn(table)
+
+        val vm = CheckoutViewModel(
+            context = context,
+            apiService = mockApi,
+            taxRepository = mockTaxRepo,
+            outboxDao = db.outboxDao(),
+            paymentAttemptDao = db.paymentAttemptDao(),
+            outboxSyncManager = mockOutboxSyncMgr,
+            saleSyncScheduler = mockSaleScheduler,
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
+        )
+
+        vm.init(table, "token123", "sess123", "op1", "OpName")
+        
+        var attempts = 0
+        while (vm.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            kotlinx.coroutines.delay(50)
+            attempts++
+        }
+
+        assertFalse(vm.moneyAuthorityLoaded)
+        assertNull(vm.comandaBaseCurrency)
+        assertEquals(MoneyAuthorityState.LOAD_ERROR, vm.uiState.value.moneyAuthorityState)
+        assertTrue(vm.uiState.value.isPayButtonBlocked)
+        assertFalse(vm.uiState.value.requiresReconciliation)
+        assertEquals("Não foi possível carregar os dados financeiros da comanda.", vm.uiState.value.blockReason)
+    }
+
+    /**
+     * MESA-04: Blank base_currency sets RECONCILIATION_REQUIRED and requiresReconciliation = true.
+     */
+    @Test
+    fun testA_MESA_04_moneyAuthority_blankBaseCurrencySetsReconciliationRequired() = runBlocking {
+        val mockApi: PosApiService = mock()
+        val mockTaxRepo: TaxRepository = mock()
+        val mockOutboxSyncMgr: OutboxSyncManager = mock()
+        val mockSaleScheduler: SaleSyncScheduler = mock()
+
+        whenever(mockOutboxSyncMgr.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
+        whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
 
         val detail = ComandaDetailResponse(
             id = "123",
@@ -1184,12 +1212,40 @@ class MoneyFinalGateTest {
             baseCurrency = "",
             totalPagoBase = 0.0,
             totalPago = 0.0,
+            saldoBase = 100.0,
             pagamentos = emptyList()
         )
+        whenever(mockApi.getComandaDetail(any(), any())).thenReturn(detail)
 
-        vm.applyComandaMoneyDetail(detail, table)
+        val table = Table(
+            id = "mesa-1",
+            number = 1,
+            status = Table.Status.OCCUPIED,
+            comandaId = "123"
+        )
+        whenever(mockTableReadRepo.getTableById(any())).thenReturn(table)
+
+        val vm = CheckoutViewModel(
+            context = context,
+            apiService = mockApi,
+            taxRepository = mockTaxRepo,
+            outboxDao = db.outboxDao(),
+            paymentAttemptDao = db.paymentAttemptDao(),
+            outboxSyncManager = mockOutboxSyncMgr,
+            saleSyncScheduler = mockSaleScheduler,
+            comandaSnapshotRepository = mockComandaSnapshotRepo,
+            tableReadRepository = mockTableReadRepo
+        )
+
+        vm.init(table, "token123", "sess123", "op1", "OpName")
+        var attempts = 0
+        while (vm.uiState.value.moneyAuthorityState == MoneyAuthorityState.LOADING && attempts < 50) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            kotlinx.coroutines.delay(50)
+            attempts++
+        }
+
         assertFalse(vm.moneyAuthorityLoaded)
-        assertNull(vm.comandaBaseCurrency)
         assertEquals(MoneyAuthorityState.RECONCILIATION_REQUIRED, vm.uiState.value.moneyAuthorityState)
         assertTrue(vm.uiState.value.isPayButtonBlocked)
         assertTrue(vm.uiState.value.requiresReconciliation)

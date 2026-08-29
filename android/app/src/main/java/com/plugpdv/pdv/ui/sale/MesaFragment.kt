@@ -111,6 +111,12 @@ class MesaFragment : Fragment() {
                 showSessionExpiredDialog()
             }
         }
+        viewModel.transferSuccess.observe(viewLifecycleOwner) { success ->
+            if (success) {
+                viewModel.consumeTransferSuccess()
+                Toast.makeText(requireContext(), R.string.transfer_success, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun showSessionExpiredDialog() {
@@ -182,7 +188,6 @@ class MesaFragment : Fragment() {
                 val destination = availableTables[which]
                 token?.let { 
                     viewModel.transferTable(it, originTable, destination)
-                    Toast.makeText(requireContext(), R.string.transfer_success, Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton(R.string.cancel, null)

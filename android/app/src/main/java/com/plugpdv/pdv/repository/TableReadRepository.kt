@@ -111,11 +111,10 @@ class TableReadRepository @Inject constructor(
                 }
             }
 
-            tableDao.deleteAll()
-            if (entities.isNotEmpty()) {
-                tableDao.insertAll(entities)
-            }
+            tableDao.replaceAll(entities)
             Result.success(Unit)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: HttpException) {
             Log.e(TAG, "HTTP error refreshing tables: ${e.code()} ${e.message()}", e)
             Result.failure(e)

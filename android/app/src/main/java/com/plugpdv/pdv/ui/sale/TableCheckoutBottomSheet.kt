@@ -3,15 +3,11 @@ package com.plugpdv.pdv.ui.sale
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import android.os.Bundle
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.viewModels
@@ -27,17 +23,17 @@ import com.plugpdv.pdv.databinding.ItemTaxRowBinding
 import com.plugpdv.pdv.databinding.LayoutTableCheckoutBinding
 import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.models.TableItem
-import com.plugpdv.pdv.utils.Constants
-import com.plugpdv.pdv.utils.CurrencyManager
-import com.plugpdv.pdv.utils.PaymentMethod
-import com.plugpdv.pdv.utils.PrinterHelper
-import com.plugpdv.pdv.utils.TableManager
+import com.plugpdv.pdv.models.TableItemPayment
+import com.plugpdv.pdv.utils.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @AndroidEntryPoint
 class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
-    private var table: Table? = null
     private var token: String? = null
     private var binding: LayoutTableCheckoutBinding? = null
     
@@ -65,25 +61,25 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        arguments?.let {
-            val tableId = it.getString("TABLE_ID")
-            val tableNumber = it.getInt("TABLE_NUMBER")
-            table = TableManager.getTable(tableId, tableNumber)
-            token = it.getString("TOKEN")
-        }
+        val tableId = arguments?.getString("TABLE_ID")
+        val tableNumber = arguments?.getInt("TABLE_NUMBER") ?: 0
+        val sectorId = arguments?.getString("SECTOR_ID")
+        token = arguments?.getString("TOKEN")
         
-        if (table == null || token == null) {
+        if (token == null || (tableId.isNullOrEmpty() && tableNumber <= 0)) {
             dismiss()
             return
         }
 
         val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         viewModel.init(
-            table!!, 
-            token!!,
-            prefs.getString(Constants.SESSION_ID, null),
-            prefs.getString(Constants.OPERATOR_ID, null),
-            prefs.getString(Constants.OPERATOR_NAME, null)
+            tableId = tableId,
+            tableNumber = tableNumber,
+            sectorId = sectorId,
+            token = token!!,
+            sessionId = prefs.getString(Constants.SESSION_ID, null),
+            opId = prefs.getString(Constants.OPERATOR_ID, null),
+            opName = prefs.getString(Constants.OPERATOR_NAME, null)
         )
     }
 
@@ -104,7 +100,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     }
 
     private fun checkPendingPaymentResult() {
-        val result = com.plugpdv.pdv.utils.PaymentResultStore.consume() ?: return
+        val result = PaymentResultStore.consume() ?: return
         if (result.status.equals("APPROVED", ignoreCase = true)) {
             Log.d("TableCheckoutBottomSheet", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}")
             val method = PaymentMethod.fromString(result.method)
@@ -161,22 +157,46 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun updateUI(state: CheckoutUiState) {
         val b = binding ?: return
         val cm = CurrencyManager.getInstance()
+        val digits = state.baseMinorUnitDigits
+        val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
 
-        val comandaTotal = table?.calculateTotal() ?: 0.0
-        val totalPaid = table?.paidAmount ?: 0.0
-        val pendingBalance = table?.getPendingBalance() ?: 0.0
+        val totalDecimal = state.totalBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
 
-        b.tvComandaTotal.text = cm.format(comandaTotal)
-        b.tvTotalPaid.text = cm.format(totalPaid)
-        b.tvPendingBalance.text = cm.format(pendingBalance)
+        val paidDecimal = state.paidBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
+
+        val balanceDecimal = state.balanceBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
+
+        fun formatMoney(amount: BigDecimal): String {
+            val selectedCurrency = cm.selectedCurrency
+            if (selectedCurrency.equals(baseCurrency, ignoreCase = true)) {
+                return cm.formatExplicit(amount.toDouble(), baseCurrency)
+            }
+            val quote = cm.quoteTransactionAmount(amount, selectedCurrency, baseCurrency).getOrNull()
+            return if (quote != null) {
+                cm.formatExplicit(quote.transactionAmount.toDouble(), selectedCurrency)
+            } else {
+                cm.formatExplicit(amount.toDouble(), baseCurrency)
+            }
+        }
+
+        b.tvComandaTotal.text = formatMoney(totalDecimal)
+        b.tvTotalPaid.text = formatMoney(paidDecimal)
+        b.tvPendingBalance.text = formatMoney(balanceDecimal)
         b.tvTotalToPay.text = cm.format(state.finalToPay)
+
         if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
             b.btnPayLink.isEnabled = true
             b.btnPayLink.text = "Tentar novamente"
             b.btnPayLink.setOnClickListener { viewModel.fetchComandaPayments() }
         } else {
             b.btnPayLink.setOnClickListener { finalizePayment() }
-            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
+            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
             if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
                 b.btnPayLink.text = "Carregando comanda..."
             } else if (state.requiresReconciliation) {
@@ -198,23 +218,16 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 printPaymentReceipt(method, state.lastPaymentAmount)
             }
             
-            val isFullyPaid = table?.let {
-                val pending = it.getPendingBalance()
-                val baseCurr = viewModel.comandaBaseCurrency ?: "BRL"
-                com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(com.plugpdv.pdv.utils.MoneyDecimal.of(pending), baseCurr) <= 0L
-            } ?: false
+            val isFullyPaid = state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L
 
             if (isFullyPaid) {
                 viewModel.acknowledgePaymentSuccess()
-                
-                val currentTable = table
                 val totalFactura = state.fullTableTotalPaid
                 
                 FacturaElectronicaDialog(requireContext()) { emitir ->
                     if (emitir) {
                         val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                         val operatorName = prefs.getString(Constants.OPERATOR_NAME, "Operador")
-                        val cm = CurrencyManager.getInstance()
                         PrinterHelper.printMockFactura(
                             context = requireContext(),
                             total = totalFactura,
@@ -223,9 +236,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                         )
                     }
                     dismiss()
-                    if (currentTable?.status == Table.Status.AVAILABLE || TableManager.getTableByNumber(currentTable?.number ?: 0)?.status == Table.Status.AVAILABLE) {
-                        activity?.finish()
-                    }
+                    activity?.finish()
                 }.show()
                 
             } else {
@@ -251,7 +262,6 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         populateTaxBreakdown(state)
-        lockModeIfPaymentStarted()
     }
 
     private fun populatePaymentsHistory(payments: List<com.plugpdv.pdv.models.ComandaPaymentDto>) {
@@ -309,7 +319,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             addBreakdownRow(label, cm.format(calculatedTax))
         }
 
-        // Add Service Fee — mostra se allow_override=true (independente de fixed_enabled)
+        // Add Service Fee
         val sfAmount = state.serviceFeeAmount
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
@@ -338,32 +348,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }.show(childFragmentManager, "service_fee_override")
     }
 
-    private fun lockModeIfPaymentStarted() {
-        val b = binding ?: return
-        val currentTable = table ?: return
-        
-        val itemsPaid = currentTable.items.any { it.paidQuantity > 0 }
-        val moneyPaid = currentTable.paidAmount > 0
-        
-        if (itemsPaid) {
-            // Force Items mode and disable others
-            if (viewModel.uiState.value.splitMode != 2) {
-                viewModel.setSplitMode(2)
-                b.toggleGroupMode.check(R.id.btnModeSplitItems)
-            }
-            b.btnModeFull.isEnabled = false
-            b.btnModeSplitPeople.isEnabled = false
-            b.btnModeSplitItems.isEnabled = true
-        } else if (moneyPaid) {
-            // Force Total or People mode, disable Items
-            b.btnModeSplitItems.isEnabled = false
-            // Allow toggling between Full and People if they were used interchangeably
-        }
-    }
-
     private fun finalizePayment() {
         val state = viewModel.uiState.value
-        if (state.moneyAuthorityState != MoneyAuthorityState.READY || !viewModel.moneyAuthorityLoaded || viewModel.comandaBaseCurrency.isNullOrBlank()) {
+        if (state.moneyAuthorityState != MoneyAuthorityState.READY_REMOTE || !viewModel.moneyAuthorityLoaded || viewModel.comandaBaseCurrency.isNullOrBlank() || state.isPayButtonBlocked || state.requiresReconciliation) {
             Toast.makeText(context, state.blockReason ?: "Dados financeiros da comanda não carregados", Toast.LENGTH_SHORT).show()
             return
         }
@@ -384,11 +371,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                             val prepared = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, suppliedQuote = quote)
                             pendingCheckoutOperationId = prepared.operationKey
 
-                            val cm = CurrencyManager.getInstance()
                             val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                             val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
-                            val amountsJsonStr = com.plugpdv.pdv.utils.PaymentHelper.generateAmountsJsonExact(
+                            val amountsJsonStr = PaymentHelper.generateAmountsJsonExact(
                                 baseAmount = prepared.request.valorBase ?: prepared.request.valor,
                                 baseCurrency = prepared.request.baseCurrency ?: quote.baseCurrency,
                                 transactionCurrency = quote.transactionCurrency,
@@ -404,11 +390,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.request.valorBase ?: prepared.request.valor).toPlainString())
                                 putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, quote.transactionCurrency)
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
-                                putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, table?.comandaId?.toString() ?: "0")
-                                putExtra(PaymentHandlerActivity.EXTRA_TABLE_NUMBER, table?.number ?: 0)
-                                putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, table?.id)
+                                putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.request.comandaId)
+                                putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, prepared.request.mesaId)
                                 putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")
-                                putExtra(PaymentHandlerActivity.EXTRA_DESCRIPTION, "Mesa ${table?.number ?: ""}")
                             }
                             paymentLauncher.launch(intent)
                         } catch (e: Exception) {
@@ -422,101 +406,56 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     }
 
     private fun printTableReceipt() {
-        val currentTable = table ?: return
-        val ctx = context?.let { com.plugpdv.pdv.utils.LanguageManager.updateResources(it, com.plugpdv.pdv.utils.LanguageManager.getLanguage(it)) } ?: return
+        val ctx = context?.let { LanguageManager.updateResources(it, LanguageManager.getLanguage(it)) } ?: return
         val state = viewModel.uiState.value
         val sb = StringBuilder()
         val cm = CurrencyManager.getInstance()
-        val currentCurrency = cm.selectedCurrency
 
-        sb.append(ctx.getString(R.string.print_table_label)).append(" ").append(currentTable.number).append("\n")
-        if (!currentTable.customerName.isNullOrEmpty()) {
-            sb.append(ctx.getString(R.string.print_customer_label)).append(" ").append(currentTable.customerName).append("\n")
-        }
+        sb.append(ctx.getString(R.string.print_table_label)).append("\n")
         sb.append("--------------------------------\n")
 
-        val listToPrint = mutableListOf<TableItem>()
-        if (state.splitMode == 0 || state.splitMode == 1) {
-            currentTable.items.filter { !it.isPaid && !it.removed }.forEach { listToPrint.add(it) }
-        } else if (state.splitMode == 2) {
-            viewModel.itemsToPay.filter { it.selected }.forEach { tip ->
-                listToPrint.add(TableItem(product = tip.item.product, quantity = tip.selectedQuantity))
-            }
-        }
+        val digits = state.baseMinorUnitDigits
+        val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
+        val totalDecimal = state.totalBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
+        val balanceDecimal = state.balanceBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
 
-        if (listToPrint.isEmpty()) {
-            Toast.makeText(context, "Nenhum item para imprimir", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        listToPrint.forEach { item ->
-            var name = item.product.name ?: ""
-            if (name.length > 18) name = name.substring(0, 15) + "..."
-            sb.append(String.format("%-18s %2d x %s\n", name, item.quantity, cm.format(item.product.selling_price ?: 0.0)))
-            sb.append(String.format("%31s\n", cm.format((item.product.selling_price ?: 0.0) * item.quantity.toDouble())))
-        }
-
+        sb.append("Total: ").append(cm.formatExplicit(totalDecimal.toDouble(), baseCurrency)).append("\n")
+        sb.append("Saldo: ").append(cm.formatExplicit(balanceDecimal.toDouble(), baseCurrency)).append("\n")
         sb.append("--------------------------------\n")
-        sb.append(String.format("%-18s %13s\n", ctx.getString(R.string.print_subtotal_label), cm.format(state.currentToPay)))
 
-        state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach { tax ->
-            val calculatedTax = state.currentToPay * (tax.percentage / 100.0)
-            val label = "${tax.name} (${String.format("%.1f%%", tax.percentage)}):"
-            sb.append(String.format("%-20s %11s\n", label, cm.format(calculatedTax)))
-        }
-
-        if (state.serviceFeeAmount > 0) {
-            sb.append(String.format("%-20s %11s\n", ctx.getString(R.string.print_service_fee_label), cm.format(state.serviceFeeAmount)))
-        }
-
-        sb.append("--------------------------------\n")
-        sb.append(String.format("%-15s %16s\n", ctx.getString(R.string.print_total_label), cm.format(state.finalToPay)))
-
-        if (state.splitMode == 1) {
-            val peopleStr = binding?.etPeopleCount?.text.toString()
-            val people = peopleStr.toIntOrNull() ?: 1
-            if (people > 1) {
-                val perPerson = state.finalToPay / people
-                sb.append("--------------------------------\n")
-                sb.append("${String.format(ctx.getString(R.string.print_split_people), people)}\n")
-                sb.append(String.format("%-15s %16s\n", ctx.getString(R.string.print_value_per_person), cm.format(perPerson)))
-            }
-        }
-
-        PrinterHelper.printReceipt(ctx, sb.toString())
+        PrinterHelper.printReceipt(requireContext(), sb.toString())
     }
 
-    private fun printPaymentReceipt(method: String, amountPaid: Double) {
-        val currentTable = table ?: return
-        val ctx = context?.let { com.plugpdv.pdv.utils.LanguageManager.updateResources(it, com.plugpdv.pdv.utils.LanguageManager.getLanguage(it)) } ?: return
-        val sb = java.lang.StringBuilder()
+    private fun printPaymentReceipt(method: String, amount: Double) {
+        val ctx = context ?: return
         val cm = CurrencyManager.getInstance()
-        val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(ctx)
-        val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
+        val currentCurrency = cm.selectedCurrency
+        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+        val dateStr = sdf.format(Date())
         
-        sb.append(ctx.getString(R.string.print_payment_receipt_title)).append("\n")
-        sb.append("--------------------------------\n")
-        sb.append(ctx.getString(R.string.print_table_label)).append(" ").append(currentTable.number).append("\n")
-        sb.append(ctx.getString(R.string.print_date_label)).append(" ").append(dateStr).append("\n")
-        sb.append(ctx.getString(R.string.print_paid_amount_label)).append(" ").append(cm.format(amountPaid)).append("\n")
-        sb.append(ctx.getString(R.string.print_payment_method_label)).append(" ").append(method).append("\n")
-        
-        val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        val operatorName = prefs.getString(Constants.OPERATOR_NAME, "Operador")
-        sb.append(ctx.getString(R.string.print_operator_label)).append(" ").append(operatorName).append("\n")
-        sb.append("--------------------------------\n")
-        
+        val sb = StringBuilder()
+        sb.append("================================\n")
+        sb.append("      COMPROVANTE DE PAGAMENTO  \n")
+        sb.append("================================\n")
+        sb.append("Data/Hora: $dateStr\n")
+        sb.append("Forma: $method\n")
+        sb.append("Valor Pago: ${cm.formatExplicit(amount, currentCurrency)}\n")
+        sb.append("================================\n\n\n")
+
         PrinterHelper.printReceipt(ctx, sb.toString())
     }
 
     private fun refreshUI() {
-        // Recalculate taxes and totals without resetting split state (items selected or people count)
         viewModel.refreshCalculations()
     }
 
     private fun onUpdateNotify() {
-        (activity as? com.plugpdv.pdv.ui.sale.TableOrderActivity)?.updateUI()
-        (activity as? com.plugpdv.pdv.ui.sale.CommandOrderActivity)?.updateUI()
+        (activity as? TableOrderActivity)?.updateUI()
+        (activity as? CommandOrderActivity)?.updateUI()
     }
 
     override fun onDestroyView() {

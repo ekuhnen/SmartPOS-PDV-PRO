@@ -1,33 +1,38 @@
 package com.plugpdv.pdv.ui.sale
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.plugpdv.pdv.api.PosApiService
+import com.google.gson.Gson
+import com.plugpdv.pdv.database.ComandaSnapshotEntity
+import com.plugpdv.pdv.database.OutboxDao
+import com.plugpdv.pdv.database.OutboxOperationEntity
+import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.TaxEntity
 import com.plugpdv.pdv.models.*
+import com.plugpdv.pdv.outbox.SaleSyncScheduler
+import com.plugpdv.pdv.repository.ComandaSnapshotRepository
+import com.plugpdv.pdv.repository.TableReadRepository
 import com.plugpdv.pdv.repository.TaxRepository
-import android.content.Context
-import com.plugpdv.pdv.utils.CurrencyManager
-import com.plugpdv.pdv.utils.MoneyDecimal
-import com.plugpdv.pdv.utils.PaymentMethod
-import com.plugpdv.pdv.utils.ServiceFeeManager
-import com.plugpdv.pdv.utils.TableManager
-import com.plugpdv.pdv.utils.retryIO
+import com.plugpdv.pdv.utils.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
+import retrofit2.HttpException
+import java.math.BigDecimal
+import java.util.UUID
 import javax.inject.Inject
 
 enum class MoneyAuthorityState {
     LOADING,
-    READY,
     READY_LOCAL,
     READY_REMOTE,
     LOAD_ERROR,
@@ -65,16 +70,24 @@ data class CheckoutUiState(
     val paymentsHistory: List<ComandaPaymentDto> = emptyList()
 )
 
+data class DurableBlockerResult(
+    val isBlocked: Boolean = false,
+    val isPendingSync: Boolean = false,
+    val requiresReconciliation: Boolean = false,
+    val reason: String? = null
+)
+
 @HiltViewModel
 class CheckoutViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val apiService: PosApiService,
     private val taxRepository: TaxRepository,
-    private val outboxDao: com.plugpdv.pdv.database.OutboxDao,
-    private val paymentAttemptDao: com.plugpdv.pdv.database.PaymentAttemptDao,
-    private val outboxSyncManager: com.plugpdv.pdv.utils.OutboxSyncManager,
-    private val saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler,
-    private val comandaSnapshotRepository: com.plugpdv.pdv.repository.ComandaSnapshotRepository? = null
+    private val outboxDao: OutboxDao,
+    private val paymentAttemptDao: PaymentAttemptDao,
+    private val outboxSyncManager: OutboxSyncManager,
+    private val saleSyncScheduler: SaleSyncScheduler,
+    private val comandaSnapshotRepository: ComandaSnapshotRepository,
+    private val tableReadRepository: TableReadRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CheckoutUiState())
@@ -86,30 +99,88 @@ class CheckoutViewModel @Inject constructor(
     private var operatorId: String? = null
     private var operatorName: String? = null
 
+    var comandaBaseCurrency: String? = null
+    var moneyAuthorityLoaded: Boolean = false
+
     // Split by items tracking
     val itemsToPay = mutableListOf<TableItemPayment>()
 
     fun init(table: Table, token: String, sessionId: String?, opId: String?, opName: String?) {
         this.table = table
+        init(table.id, table.number, table.sectorId, token, sessionId, opId, opName)
+    }
+
+    fun init(
+        tableId: String?,
+        tableNumber: Int,
+        sectorId: String?,
+        token: String,
+        sessionId: String?,
+        opId: String?,
+        opName: String?
+    ) {
         this.token = token
         this.sessionId = sessionId
         this.operatorId = opId
         this.operatorName = opName
-        
+
         val serviceFeeConfig = ServiceFeeManager.getConfig(context)
         _uiState.value = _uiState.value.copy(
-            currentToPay = table.getPendingBalance(),
             serviceFeeConfig = serviceFeeConfig,
-            serviceFeeKind = if (serviceFeeConfig?.fixedEnabled == true) "fixed" else null
+            serviceFeeKind = if (serviceFeeConfig?.fixedEnabled == true) "fixed" else null,
+            moneyAuthorityState = MoneyAuthorityState.LOADING,
+            isPayButtonBlocked = true,
+            blockReason = "Carregando dados financeiros..."
         )
-        
-        restoreDurableStateFromRoom()
-        loadLocalSnapshotFirst(table)
-        fetchComandaPayments()
 
         viewModelScope.launch {
+            // 1. Resolve table from Room if not already set
+            var currentTable = this@CheckoutViewModel.table
+            if (currentTable == null) {
+                currentTable = if (!tableId.isNullOrEmpty()) {
+                    tableReadRepository.getTableById(tableId)
+                } else if (tableNumber > 0) {
+                    tableReadRepository.getTableByNumber(tableNumber, sectorId)
+                } else {
+                    null
+                }
+                this@CheckoutViewModel.table = currentTable
+            }
+
+            if (currentTable == null) {
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    isPayButtonBlocked = true,
+                    blockReason = "Mesa não encontrada no banco de dados.",
+                    error = "Mesa não encontrada."
+                )
+                return@launch
+            }
+
+            // 2. Evaluate durable blockers from Room
+            val durableBlock = checkDurablePaymentBlockers(currentTable)
+
+            // 3. Load & evaluate local snapshot
+            val localSnapshot = loadLocalSnapshot(currentTable)
+            val cId = currentTable.comandaId.orEmpty()
+            val localAuthorityDecision = if (localSnapshot != null && cId.isNotEmpty()) {
+                ComandaSnapshotAuthorityPolicy.evaluate(localSnapshot, cId, context)
+            } else {
+                SnapshotAuthorityDecision.MISSING_AUTHORITY
+            }
+
+            // 4. Apply local authority state deterministically
+            applyLocalAuthorityState(localSnapshot, localAuthorityDecision, durableBlock)
+
+            // 5. Perform remote refresh sequentially
+            performRemoteRefresh(currentTable, localAuthorityDecision, durableBlock)
+        }
+
+        // Listen for checkout sync events
+        viewModelScope.launch {
             outboxSyncManager.checkoutResultEvents.collect { event ->
-                if (event.comandaId == table.comandaId) {
+                val cId = table?.comandaId
+                if (cId != null && event.comandaId == cId) {
                     if (event.requiresReconciliation) {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
@@ -143,6 +214,7 @@ class CheckoutViewModel @Inject constructor(
             }
         }
 
+        // Active taxes
         viewModelScope.launch {
             taxRepository.getActiveTaxesLiveData().observeForever { taxes ->
                 _uiState.value = _uiState.value.copy(activeTaxes = taxes)
@@ -151,278 +223,325 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
-    fun restoreDurableStateFromRoom() {
-        val currentTable = table ?: return
-        val cId = currentTable.comandaId ?: return
+    suspend fun checkDurablePaymentBlockers(currentTable: Table): DurableBlockerResult = withContext(Dispatchers.IO) {
+        val cId = currentTable.comandaId ?: return@withContext DurableBlockerResult()
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val recentOps = outboxDao.getRecentOperationsForGroup(cId)
-                .filter { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
+        val recentOps = outboxDao.getRecentOperationsForGroup(cId)
+            .filter { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
 
-            val waitingOp = recentOps.find { it.status == "WAITING_PAYMENT" }
-            val pendingOrProcessingOp = recentOps.find { it.status == "PENDING" || it.status == "PROCESSING" }
-            val reconciliationOp = recentOps.find {
-                it.status == "REQUIRES_RECONCILIATION" || (it.status == "FAILED" && it.messageKey == "REQUIRES_RECONCILIATION")
-            }
+        val waitingOp = recentOps.find { it.status == "WAITING_PAYMENT" }
+        val pendingOrProcessingOp = recentOps.find { it.status == "PENDING" || it.status == "PROCESSING" }
+        val reconciliationOp = recentOps.find {
+            it.status == "REQUIRES_RECONCILIATION" || (it.status == "FAILED" && it.messageKey == "REQUIRES_RECONCILIATION")
+        }
 
-            var blocked = false
-            var pendingSync = false
-            var reconciliation = false
-            var reason: String? = null
-
-            if (reconciliationOp != null) {
-                blocked = true
-                pendingSync = false
-                reconciliation = true
+        if (reconciliationOp != null) {
+            return@withContext DurableBlockerResult(
+                isBlocked = true,
+                isPendingSync = false,
+                requiresReconciliation = true,
                 reason = "Pagamento aprovado requer conciliação"
-            } else if (waitingOp != null) {
-                val attempt = paymentAttemptDao.getByReference(waitingOp.idempotencyKey)
-                when (attempt?.status) {
-                    "PENDING" -> {
-                        blocked = true
-                        pendingSync = true
-                        reason = "Pagamento aguardando confirmação da maquininha"
-                    }
-                    "UNKNOWN" -> {
-                        blocked = true
-                        pendingSync = false
-                        reconciliation = true
-                        reason = "Pagamento com status indeterminado"
-                    }
-                    "APPROVED" -> {
-                        blocked = true
-                        pendingSync = true
-                        reason = "Pagamento aprovado aguardando sincronização com o servidor"
-                    }
-                    "CANCELLED", "REJECTED", "FAILED_TO_START" -> {
-                        blocked = false
-                        pendingSync = false
-                        reason = null
-                    }
-                    else -> {
-                        blocked = true
-                        pendingSync = false
-                        reconciliation = true
-                        reason = "Pagamento necessita verificação"
-                    }
-                }
-            } else if (pendingOrProcessingOp != null) {
-                blocked = true
-                pendingSync = true
-                reason = "Pagamento aprovado aguardando sincronização com o servidor"
-            } else {
-                // Caso B: PaymentAttempt APPROVED órfão sem Outbox correspondente
-                val approvedAttempts = paymentAttemptDao.getApprovedAttemptsForTableOrOrder(currentTable.number, cId)
-                for (att in approvedAttempts) {
-                    val matchingOp = outboxDao.getById(att.reference)
-                    if (matchingOp == null) {
-                        blocked = true
-                        reconciliation = true
-                        reason = "Pagamento aprovado na maquininha sem registro de checkout (Requer conciliação)"
-                        break
-                    }
-                }
-            }
+            )
+        }
 
-            withContext(Dispatchers.Main) {
-                if (blocked || reconciliation) {
+        if (waitingOp != null) {
+            val attempt = paymentAttemptDao.getByReference(waitingOp.idempotencyKey)
+            return@withContext when (attempt?.status) {
+                "PENDING" -> DurableBlockerResult(
+                    isBlocked = true,
+                    isPendingSync = true,
+                    requiresReconciliation = false,
+                    reason = "Pagamento aguardando confirmação da maquininha"
+                )
+                "UNKNOWN" -> DurableBlockerResult(
+                    isBlocked = true,
+                    isPendingSync = false,
+                    requiresReconciliation = true,
+                    reason = "Pagamento com status indeterminado"
+                )
+                "APPROVED" -> DurableBlockerResult(
+                    isBlocked = true,
+                    isPendingSync = true,
+                    requiresReconciliation = false,
+                    reason = "Pagamento aprovado aguardando sincronização com o servidor"
+                )
+                "CANCELLED", "REJECTED", "FAILED_TO_START" -> DurableBlockerResult()
+                else -> DurableBlockerResult(
+                    isBlocked = true,
+                    isPendingSync = false,
+                    requiresReconciliation = true,
+                    reason = "Pagamento necessita verificação"
+                )
+            }
+        }
+
+        if (pendingOrProcessingOp != null) {
+            return@withContext DurableBlockerResult(
+                isBlocked = true,
+                isPendingSync = true,
+                requiresReconciliation = false,
+                reason = "Pagamento aprovado aguardando sincronização com o servidor"
+            )
+        }
+
+        // Case B: Orphaned APPROVED PaymentAttempt
+        val approvedAttempts = paymentAttemptDao.getApprovedAttemptsForTableOrOrder(currentTable.number, cId)
+        for (att in approvedAttempts) {
+            val matchingOp = outboxDao.getById(att.reference)
+            if (matchingOp == null) {
+                return@withContext DurableBlockerResult(
+                    isBlocked = true,
+                    isPendingSync = false,
+                    requiresReconciliation = true,
+                    reason = "Pagamento aprovado na maquininha sem registro de checkout (Requer conciliação)"
+                )
+            }
+        }
+
+        DurableBlockerResult()
+    }
+
+    private suspend fun loadLocalSnapshot(currentTable: Table): ComandaSnapshotEntity? = withContext(Dispatchers.IO) {
+        val cId = currentTable.comandaId ?: return@withContext null
+        val tenantId = TenantBindingStore.getActiveTenantId(context) ?: return@withContext null
+        comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
+    }
+
+    private fun applyLocalAuthorityState(
+        snapshot: ComandaSnapshotEntity?,
+        decision: SnapshotAuthorityDecision,
+        durableBlock: DurableBlockerResult
+    ) {
+        if (snapshot == null) return
+
+        val digits = snapshot.baseMinorUnitDigits ?: 2
+        val balDecimal = snapshot.balanceBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
+
+        when (decision) {
+            SnapshotAuthorityDecision.USABLE -> {
+                moneyAuthorityLoaded = true
+                comandaBaseCurrency = snapshot.baseCurrency
+
+                val isBlocked = durableBlock.isBlocked || true // In Stage 03, READY_LOCAL always blocks payment mutation
+                val requiresRecon = durableBlock.requiresReconciliation
+
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = if (requiresRecon) MoneyAuthorityState.RECONCILIATION_REQUIRED else MoneyAuthorityState.READY_LOCAL,
+                    authoritySource = "LOCAL",
+                    baseCurrency = snapshot.baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = snapshot.totalBaseMinor,
+                    paidBaseMinor = snapshot.paidBaseMinor,
+                    balanceBaseMinor = snapshot.balanceBaseMinor,
+                    currentToPay = balDecimal.toDouble(),
+                    isPendingSync = durableBlock.isPendingSync,
+                    isPayButtonBlocked = isBlocked,
+                    requiresReconciliation = requiresRecon,
+                    blockReason = durableBlock.reason ?: "Sem conexão para processar pagamento"
+                )
+                calculateFinalAmount()
+            }
+            SnapshotAuthorityDecision.RECONCILIATION_REQUIRED -> {
+                moneyAuthorityLoaded = false
+                comandaBaseCurrency = snapshot.baseCurrency
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                    authoritySource = "LOCAL",
+                    baseCurrency = snapshot.baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = snapshot.totalBaseMinor,
+                    paidBaseMinor = snapshot.paidBaseMinor,
+                    balanceBaseMinor = snapshot.balanceBaseMinor,
+                    currentToPay = balDecimal.toDouble(),
+                    isPendingSync = durableBlock.isPendingSync,
+                    requiresReconciliation = true,
+                    isPayButtonBlocked = true,
+                    blockReason = durableBlock.reason ?: "Pagamento aprovado requer conciliação"
+                )
+                calculateFinalAmount()
+            }
+            else -> {
+                // Other non-usable local decisions remain in LOADING or durable blocker state
+                if (durableBlock.isBlocked) {
                     _uiState.value = _uiState.value.copy(
-                        isPayButtonBlocked = blocked,
-                        isPendingSync = pendingSync,
-                        requiresReconciliation = reconciliation,
-                        paymentSuccess = if (reconciliation) false else _uiState.value.paymentSuccess,
-                        blockReason = reason
+                        isPayButtonBlocked = true,
+                        isPendingSync = durableBlock.isPendingSync,
+                        requiresReconciliation = durableBlock.requiresReconciliation,
+                        blockReason = durableBlock.reason
                     )
                 }
-            }
-        }
-    }
-
-    var comandaBaseCurrency: String? = null
-    var moneyAuthorityLoaded: Boolean = false
-
-    fun applyComandaMoneyDetail(detail: ComandaDetailResponse, targetTable: Table): Double {
-        if (detail.baseCurrency.isNullOrBlank()) {
-            moneyAuthorityLoaded = false
-            comandaBaseCurrency = null
-            _uiState.value = _uiState.value.copy(
-                moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
-                isPayButtonBlocked = true,
-                requiresReconciliation = true,
-                blockReason = "Moeda-base da comanda não definida no servidor"
-            )
-        } else {
-            comandaBaseCurrency = detail.baseCurrency
-            moneyAuthorityLoaded = true
-            _uiState.value = _uiState.value.copy(
-                moneyAuthorityState = MoneyAuthorityState.READY
-            )
-        }
-
-        val serverPaidBase = detail.totalPagoBase ?: detail.totalPago
-        if (serverPaidBase > 0) {
-            targetTable.paidAmount = serverPaidBase
-            TableManager.updateTable(targetTable)
-        }
-        return serverPaidBase
-    }
-
-    private fun loadLocalSnapshotFirst(currentTable: Table) {
-        val cId = currentTable.comandaId ?: return
-        val tenantId = com.plugpdv.pdv.utils.TenantBindingStore.getActiveTenantId(context)
-        if (tenantId.isNullOrBlank() || comandaSnapshotRepository == null) return
-
-        viewModelScope.launch {
-            try {
-                val snapshot = comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
-                if (snapshot != null) {
-                    val decision = com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
-                    val digits = snapshot.baseMinorUnitDigits ?: 2
-                    when (decision) {
-                        com.plugpdv.pdv.utils.SnapshotAuthorityDecision.USABLE -> {
-                            moneyAuthorityLoaded = true
-                            comandaBaseCurrency = snapshot.baseCurrency
-                            val balDecimal = snapshot.balanceBaseMinor?.let {
-                                com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-                            } ?: java.math.BigDecimal.ZERO
-
-                            _uiState.value = _uiState.value.copy(
-                                moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
-                                authoritySource = "LOCAL",
-                                baseCurrency = snapshot.baseCurrency,
-                                baseMinorUnitDigits = digits,
-                                totalBaseMinor = snapshot.totalBaseMinor,
-                                paidBaseMinor = snapshot.paidBaseMinor,
-                                balanceBaseMinor = snapshot.balanceBaseMinor,
-                                currentToPay = balDecimal.toDouble(),
-                                isPayButtonBlocked = true,
-                                blockReason = "Sem conexão para processar pagamento"
-                            )
-                            calculateFinalAmount()
-                        }
-                        com.plugpdv.pdv.utils.SnapshotAuthorityDecision.RECONCILIATION_REQUIRED -> {
-                            _uiState.value = _uiState.value.copy(
-                                moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
-                                authoritySource = "LOCAL",
-                                baseCurrency = snapshot.baseCurrency,
-                                baseMinorUnitDigits = digits,
-                                totalBaseMinor = snapshot.totalBaseMinor,
-                                paidBaseMinor = snapshot.paidBaseMinor,
-                                balanceBaseMinor = snapshot.balanceBaseMinor,
-                                requiresReconciliation = true,
-                                isPayButtonBlocked = true,
-                                blockReason = "Pagamento aprovado requer conciliação"
-                            )
-                        }
-                        else -> {}
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "Error loading local snapshot: ${e.message}", e)
             }
         }
     }
 
     fun fetchComandaPayments() {
         val currentTable = table ?: return
+        viewModelScope.launch {
+            val durableBlock = checkDurablePaymentBlockers(currentTable)
+            val localSnapshot = loadLocalSnapshot(currentTable)
+            val cId = currentTable.comandaId.orEmpty()
+            val localAuthorityDecision = if (localSnapshot != null && cId.isNotEmpty()) {
+                ComandaSnapshotAuthorityPolicy.evaluate(localSnapshot, cId, context)
+            } else {
+                SnapshotAuthorityDecision.MISSING_AUTHORITY
+            }
+            performRemoteRefresh(currentTable, localAuthorityDecision, durableBlock)
+        }
+    }
+
+    private suspend fun performRemoteRefresh(
+        currentTable: Table,
+        localAuthorityDecision: SnapshotAuthorityDecision,
+        durableBlock: DurableBlockerResult
+    ) {
         val currentToken = token ?: return
         val cId = currentTable.comandaId ?: return
 
-        val wasReadyLocal = _uiState.value.moneyAuthorityState == MoneyAuthorityState.READY_LOCAL
-
-        if (!wasReadyLocal) {
-            _uiState.value = _uiState.value.copy(
-                moneyAuthorityState = MoneyAuthorityState.LOADING,
-                isPayButtonBlocked = true,
-                blockReason = if (_uiState.value.requiresReconciliation) _uiState.value.blockReason else "Carregando dados financeiros...",
-                error = null
-            )
-        }
-
-        viewModelScope.launch {
-            try {
-                val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
-                val cachedSnapshot = try {
-                    comandaSnapshotRepository?.cacheRemoteDetail(detail, currentTable)
-                } catch (e: Exception) {
-                    Log.e("CheckoutViewModel", "Non-fatal failure caching comanda snapshot: ${e.message}", e)
-                    null
-                }
-                val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true)
-                val serverPaidBase = applyComandaMoneyDetail(detail, currentTable)
-
-                val digits = cachedSnapshot?.baseMinorUnitDigits ?: 2
-                val totalBaseMinor = cachedSnapshot?.totalBaseMinor
-                val paidBaseMinor = cachedSnapshot?.paidBaseMinor
-                val balanceBaseMinor = cachedSnapshot?.balanceBaseMinor
-
-                val currentReconciliation = _uiState.value.requiresReconciliation || !moneyAuthorityLoaded
-
-                if (isComandaClosed) {
-                    currentTable.id?.let { TableManager.markTableAvailable(it) }
-                    _uiState.value = _uiState.value.copy(
-                        moneyAuthorityState = if (currentReconciliation) MoneyAuthorityState.RECONCILIATION_REQUIRED else MoneyAuthorityState.READY_REMOTE,
-                        authoritySource = "REMOTE",
-                        baseCurrency = detail.baseCurrency,
-                        baseMinorUnitDigits = digits,
-                        totalBaseMinor = totalBaseMinor,
-                        paidBaseMinor = paidBaseMinor,
-                        balanceBaseMinor = balanceBaseMinor,
-                        paymentsHistory = detail.pagamentos,
-                        currentToPay = 0.0,
-                        isPendingSync = false,
-                        isPayButtonBlocked = currentReconciliation,
-                        paymentSuccess = !currentReconciliation,
-                        requiresReconciliation = currentReconciliation,
-                        blockReason = if (currentReconciliation) _uiState.value.blockReason else null,
-                        refreshWarning = null
-                    )
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        moneyAuthorityState = if (currentReconciliation) MoneyAuthorityState.RECONCILIATION_REQUIRED else MoneyAuthorityState.READY_REMOTE,
-                        authoritySource = "REMOTE",
-                        baseCurrency = detail.baseCurrency,
-                        baseMinorUnitDigits = digits,
-                        totalBaseMinor = totalBaseMinor,
-                        paidBaseMinor = paidBaseMinor,
-                        balanceBaseMinor = balanceBaseMinor,
-                        paymentsHistory = detail.pagamentos,
-                        currentToPay = currentTable.getPendingBalance(),
-                        isPendingSync = if (currentReconciliation) false else _uiState.value.isPendingSync,
-                        isPayButtonBlocked = if (currentReconciliation) true else _uiState.value.isPendingSync,
-                        requiresReconciliation = currentReconciliation,
-                        paymentSuccess = if (currentReconciliation) false else _uiState.value.paymentSuccess,
-                        blockReason = if (currentReconciliation) _uiState.value.blockReason else null,
-                        refreshWarning = null
-                    )
-                }
-                calculateFinalAmount()
+        try {
+            val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+            val cachedSnapshot = try {
+                comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
             } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "Falha ao buscar pagamentos da comanda: ${e.message}")
-                if (wasReadyLocal) {
-                    _uiState.value = _uiState.value.copy(
-                        refreshWarning = "Sem conexão — exibindo dados salvos",
-                        isPayButtonBlocked = true,
-                        blockReason = "Sem conexão para processar pagamento"
-                    )
-                } else {
-                    moneyAuthorityLoaded = false
-                    _uiState.value = _uiState.value.copy(
-                        moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
-                        isPayButtonBlocked = true,
-                        requiresReconciliation = false,
-                        blockReason = "Não foi possível carregar os dados financeiros da comanda.",
-                        error = "Não foi possível carregar os dados financeiros da comanda."
-                    )
-                }
+                Log.e("CheckoutViewModel", "Non-fatal failure caching comanda snapshot: ${e.message}", e)
+                null
+            }
+
+            val snapshotToEvaluate = cachedSnapshot ?: loadLocalSnapshot(currentTable)
+            val decision = if (snapshotToEvaluate != null) {
+                ComandaSnapshotAuthorityPolicy.evaluate(snapshotToEvaluate, cId, context)
+            } else {
+                SnapshotAuthorityDecision.MISSING_AUTHORITY
+            }
+
+            val digits = snapshotToEvaluate?.baseMinorUnitDigits ?: 2
+            val baseCurrency = snapshotToEvaluate?.baseCurrency ?: detail.baseCurrency
+            val totalBaseMinor = snapshotToEvaluate?.totalBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.total ?: 0.0), digits) else null)
+            val paidBaseMinor = snapshotToEvaluate?.paidBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.totalPagoBase ?: detail.totalPago ?: 0.0), digits) else null)
+            val balanceBaseMinor = snapshotToEvaluate?.balanceBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.saldoBase ?: ((detail.total ?: 0.0) - (detail.totalPagoBase ?: detail.totalPago ?: 0.0))), digits) else null)
+
+            val balDecimal = balanceBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
+
+            val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true) || decision == SnapshotAuthorityDecision.CLOSED
+            val requiresRecon = durableBlock.requiresReconciliation || decision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || detail.requiresReconciliation || baseCurrency.isNullOrBlank()
+
+            if (requiresRecon) {
+                moneyAuthorityLoaded = false
+                comandaBaseCurrency = baseCurrency
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                    authoritySource = "REMOTE",
+                    baseCurrency = baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = totalBaseMinor,
+                    paidBaseMinor = paidBaseMinor,
+                    balanceBaseMinor = balanceBaseMinor,
+                    paymentsHistory = detail.pagamentos.orEmpty(),
+                    currentToPay = balDecimal.toDouble(),
+                    isPendingSync = durableBlock.isPendingSync,
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = true,
+                    paymentSuccess = false,
+                    blockReason = durableBlock.reason ?: if (baseCurrency.isNullOrBlank()) "Moeda-base não definida no servidor" else "Pagamento aprovado requer conciliação",
+                    refreshWarning = null
+                )
+            } else if (isComandaClosed) {
+                moneyAuthorityLoaded = true
+                comandaBaseCurrency = baseCurrency
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.READY_REMOTE,
+                    authoritySource = "REMOTE",
+                    baseCurrency = baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = totalBaseMinor,
+                    paidBaseMinor = paidBaseMinor,
+                    balanceBaseMinor = balanceBaseMinor,
+                    paymentsHistory = detail.pagamentos.orEmpty(),
+                    currentToPay = 0.0,
+                    isPendingSync = false,
+                    isPayButtonBlocked = false,
+                    paymentSuccess = true,
+                    requiresReconciliation = false,
+                    blockReason = null,
+                    refreshWarning = null
+                )
+            } else {
+                moneyAuthorityLoaded = true
+                comandaBaseCurrency = baseCurrency
+                val isBlocked = durableBlock.isBlocked
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.READY_REMOTE,
+                    authoritySource = "REMOTE",
+                    baseCurrency = baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = totalBaseMinor,
+                    paidBaseMinor = paidBaseMinor,
+                    balanceBaseMinor = balanceBaseMinor,
+                    paymentsHistory = detail.pagamentos.orEmpty(),
+                    currentToPay = balDecimal.toDouble(),
+                    isPendingSync = durableBlock.isPendingSync,
+                    isPayButtonBlocked = isBlocked,
+                    requiresReconciliation = false,
+                    paymentSuccess = false,
+                    blockReason = durableBlock.reason,
+                    refreshWarning = null
+                )
+            }
+            calculateFinalAmount()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            Log.e("CheckoutViewModel", "HTTP error ${e.code()} fetching comanda detail: ${e.message}", e)
+            moneyAuthorityLoaded = false
+            _uiState.value = _uiState.value.copy(
+                moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                isPayButtonBlocked = true,
+                blockReason = "Erro ao carregar dados financeiros (Código: ${e.code()})",
+                error = "Erro no servidor (Código: ${e.code()})"
+            )
+        } catch (e: Exception) {
+            Log.e("CheckoutViewModel", "Network error fetching comanda payments: ${e.message}", e)
+            if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
+                // Keep READY_LOCAL, do not downgrade to LOAD_ERROR
+                _uiState.value = _uiState.value.copy(
+                    refreshWarning = "Sem conexão — exibindo dados salvos",
+                    isPayButtonBlocked = true,
+                    blockReason = durableBlock.reason ?: "Sem conexão para processar pagamento"
+                )
+            } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
+                // Keep RECONCILIATION_REQUIRED, network failure must never erase reconciliation requirement
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = true,
+                    blockReason = durableBlock.reason ?: "Comanda requer conciliação com o servidor.",
+                    refreshWarning = "Sem conexão — exibindo dados salvos"
+                )
+            } else {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Não foi possível carregar os dados financeiros da comanda.",
+                    error = "Erro de conexão ao carregar pagamentos da comanda."
+                )
             }
         }
     }
 
     fun setSplitMode(mode: Int) {
         _uiState.value = _uiState.value.copy(splitMode = mode)
+        val digits = _uiState.value.baseMinorUnitDigits
+        val balDecimal = _uiState.value.balanceBaseMinor?.let {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+        } ?: BigDecimal.ZERO
+
         when (mode) {
-            0 -> _uiState.value = _uiState.value.copy(currentToPay = table?.getPendingBalance() ?: 0.0)
+            0 -> _uiState.value = _uiState.value.copy(currentToPay = balDecimal.toDouble())
             1 -> updatePeopleSplit(1) // Default 1 person
             2 -> setupItemsSplit()
         }
@@ -430,10 +549,12 @@ class CheckoutViewModel @Inject constructor(
     }
 
     fun updatePeopleSplit(count: Int) {
-        val currentTable = table ?: return
         if (count > 0) {
-            val fullBalance = currentTable.getPendingBalance() + currentTable.paidAmount
-            _uiState.value = _uiState.value.copy(currentToPay = fullBalance / count)
+            val digits = _uiState.value.baseMinorUnitDigits
+            val totalDecimal = _uiState.value.totalBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
+            _uiState.value = _uiState.value.copy(currentToPay = totalDecimal.toDouble() / count)
         } else {
             _uiState.value = _uiState.value.copy(currentToPay = 0.0)
         }
@@ -449,8 +570,10 @@ class CheckoutViewModel @Inject constructor(
     }
 
     fun onItemSelected(position: Int, isSelected: Boolean) {
-        itemsToPay[position].selected = isSelected
-        calculateItemsTotal()
+        if (position in 0 until itemsToPay.size) {
+            itemsToPay[position].selected = isSelected
+            calculateItemsTotal()
+        }
     }
 
     private fun calculateItemsTotal() {
@@ -467,14 +590,14 @@ class CheckoutViewModel @Inject constructor(
         val cm = CurrencyManager.getInstance()
         val currentCurrency = cm.selectedCurrency
         var taxPercentage = 0.0
-        
+
         state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach {
             taxPercentage += it.percentage
         }
-        
+
         val baseToPay = state.currentToPay.coerceAtLeast(0.0)
         val tax = if (taxPercentage > 0) baseToPay * (taxPercentage / 100.0) else 0.0
-        
+
         var sfAmount = 0.0
         if (state.serviceFeeKind != null) {
             when (state.serviceFeeKind) {
@@ -493,7 +616,7 @@ class CheckoutViewModel @Inject constructor(
                 }
             }
         }
-        
+
         _uiState.value = _uiState.value.copy(
             taxAmount = tax,
             serviceFeeAmount = sfAmount,
@@ -539,7 +662,7 @@ class CheckoutViewModel @Inject constructor(
     ): CommandCheckoutCommitRequest {
         val currentTable = table ?: throw IllegalStateException("Table is null")
         val cm = CurrencyManager.getInstance()
-        val baseCurrency = requireNotNull(comandaBaseCurrency?.takeIf { it.isNotBlank() }) {
+        val baseCurrency = requireNotNull(comandaBaseCurrency?.takeIf { it.isNotBlank() } ?: _uiState.value.baseCurrency?.takeIf { it.isNotBlank() }) {
             "COMANDA_BASE_CURRENCY_NOT_LOADED: Base currency not loaded from backend"
         }
         val currentCurrency = manualCurrency ?: suppliedQuote?.transactionCurrency ?: cm.selectedCurrency
@@ -569,15 +692,11 @@ class CheckoutViewModel @Inject constructor(
             }
         }
 
-        val pendingBase = MoneyDecimal.roundToCurrency(
-            MoneyDecimal.of(currentTable.getPendingBalance()),
-            baseCurrency
-        )
-        val remaining = MoneyDecimal.roundToCurrency(
-            pendingBase.subtract(quote.baseAmount),
-            baseCurrency
-        )
-        val isFinalPayment = remaining.signum() <= 0
+        val digits = _uiState.value.baseMinorUnitDigits
+        val balanceBaseMinor = _uiState.value.balanceBaseMinor ?: 0L
+        val pendingBase = ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(balanceBaseMinor, digits)
+        val remaining = pendingBase.subtract(quote.baseAmount)
+        val isFinalPayment = remaining.compareTo(BigDecimal.ZERO) <= 0
 
         val shouldRegisterSale = when (_uiState.value.splitMode) {
             0 -> true
@@ -611,7 +730,7 @@ class CheckoutViewModel @Inject constructor(
             exchangeRatesSnapshot = quote.snapshot,
             shouldRegisterSale = shouldRegisterSale,
             saleItems = saleItems,
-            discount = java.math.BigDecimal.ZERO,
+            discount = BigDecimal.ZERO,
             serviceFee = MoneyDecimal.of(sfAmount2),
             serviceFeeKind = sfKind2
         )
@@ -624,14 +743,14 @@ class CheckoutViewModel @Inject constructor(
         manualBaseAmount: Double? = null,
         suppliedQuote: SelectedPaymentQuote? = null
     ): PreparedCheckoutResult {
-        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY) {
-            throw IllegalStateException("COMANDA_BASE_CURRENCY_NOT_LOADED: Base currency not loaded from backend")
+        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY_REMOTE || _uiState.value.isPayButtonBlocked || _uiState.value.requiresReconciliation) {
+            throw IllegalStateException("PAYMENT_MUTATION_FORBIDDEN: Authoritative remote checkout required")
         }
         val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
-        val key = java.util.UUID.randomUUID().toString()
-        val gson = com.google.gson.Gson()
+        val key = UUID.randomUUID().toString()
+        val gson = Gson()
 
-        val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
+        val entity = OutboxOperationEntity(
             id = key,
             operationType = "COMANDA_CHECKOUT_COMMIT",
             targetGroupKey = finalRequest.comandaId,
@@ -644,7 +763,7 @@ class CheckoutViewModel @Inject constructor(
         outboxDao.insert(entity)
         Log.d("CheckoutViewModel", "Operação de checkout K=$key persistida como WAITING_PAYMENT antes do deeplink")
 
-        withContext(kotlinx.coroutines.Dispatchers.Main) {
+        withContext(Dispatchers.Main) {
             _uiState.value = _uiState.value.copy(
                 isPendingSync = true,
                 isPayButtonBlocked = true,
@@ -655,12 +774,12 @@ class CheckoutViewModel @Inject constructor(
     }
 
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
-        val gson = com.google.gson.Gson()
+        val gson = Gson()
         val amountToPay = _uiState.value.finalToPay
 
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val op = outboxDao.getById(checkoutOperationId)
                 if (op != null) {
@@ -681,7 +800,7 @@ class CheckoutViewModel @Inject constructor(
                     outboxSyncManager.triggerSync()
                     saleSyncScheduler.scheduleSync(context)
 
-                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    withContext(Dispatchers.Main) {
                         fetchComandaPayments()
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
@@ -694,13 +813,15 @@ class CheckoutViewModel @Inject constructor(
                         )
                     }
                 } else {
-                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(isLoading = false, error = "Operação de checkout não encontrada no Room: K=$checkoutOperationId")
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("CheckoutViewModel", "Erro ao promover checkout K=$checkoutOperationId: ${e.message}")
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao promover checkout: ${e.message}")
                 }
             }
@@ -714,23 +835,23 @@ class CheckoutViewModel @Inject constructor(
         manualBaseAmount: Double? = null,
         suppliedQuote: SelectedPaymentQuote? = null
     ) {
-        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY) {
+        if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY_REMOTE || _uiState.value.isPayButtonBlocked || _uiState.value.requiresReconciliation) {
             _uiState.value = _uiState.value.copy(
-                error = "Não foi possível iniciar pagamento: dados financeiros da comanda não carregados"
+                error = "Não foi possível iniciar pagamento: autorização remota necessária"
             )
             return
         }
-        val gson = com.google.gson.Gson()
+        val gson = Gson()
         val amountToPay = manualAmount ?: suppliedQuote?.transactionAmount?.toDouble() ?: _uiState.value.finalToPay
 
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
-                val key = java.util.UUID.randomUUID().toString()
+                val key = UUID.randomUUID().toString()
 
-                val entity = com.plugpdv.pdv.database.OutboxOperationEntity(
+                val entity = OutboxOperationEntity(
                     id = key,
                     operationType = "COMANDA_CHECKOUT_COMMIT",
                     targetGroupKey = finalRequest.comandaId,
@@ -746,70 +867,26 @@ class CheckoutViewModel @Inject constructor(
                 outboxSyncManager.triggerSync()
                 saleSyncScheduler.scheduleSync(context)
 
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     fetchComandaPayments()
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         paymentSuccess = false,
                         isPendingSync = true,
                         isPayButtonBlocked = true,
-                        blockReason = "Pagamento aguardando sincronização com o servidor",
+                        blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
                         lastPaymentAmount = amountToPay
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "Erro ao registrar checkout localmente: ${e.message}")
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = "Erro ao registrar pagamento na Outbox: ${e.message}"
-                    )
+                Log.e("CheckoutViewModel", "Erro ao executar checkout: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao executar checkout: ${e.message}")
                 }
             }
         }
     }
-
-    private fun processLocalPaymentResult(commitRes: ComandaCheckoutCommitResponse?) {
-        val currentTable = table ?: return
-        val state = _uiState.value
-
-        when (state.splitMode) {
-            0 -> {
-                currentTable.paidAmount = currentTable.calculateTotal()
-            }
-            1 -> {
-                currentTable.paidAmount += state.currentToPay
-            }
-            2 -> {
-                itemsToPay.filter { it.selected }.forEach { tip ->
-                    val paidValue = (tip.item.product.selling_price ?: 0.0) * tip.selectedQuantity
-                    currentTable.paidAmount += paidValue
-                    
-                    tip.item.paidQuantity += tip.selectedQuantity
-                    if (tip.item.paidQuantity >= tip.item.quantity) {
-                        tip.item.isPaid = true
-                    }
-                }
-            }
-        }
-
-        val isFullyPaidOnServer = commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)
-
-        if (isFullyPaidOnServer) {
-            currentTable.status = Table.Status.AVAILABLE
-            currentTable.comandaId = null
-            currentTable.customerName = ""
-            currentTable.paidAmount = 0.0
-            currentTable.items.clear()
-        }
-
-        // SALVAR ESTADO LOCAL NA BASE DO TABLE_MANAGER
-        TableManager.updateTable(currentTable)
-    }
-}
-
-class TableItemPayment(val item: TableItem) {
-    var selected: Boolean = false
-    var selectedQuantity: Int = item.quantity - item.paidQuantity
 }

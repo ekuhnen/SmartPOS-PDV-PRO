@@ -20,7 +20,9 @@ import com.plugpdv.pdv.utils.TenantBindingStore
 import com.plugpdv.pdv.utils.retryIO
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 import javax.inject.Inject
 
 enum class ReadProvenance {
@@ -28,6 +30,14 @@ enum class ReadProvenance {
     LOCAL_CACHED,
     REMOTE_REFRESHED
 }
+
+data class ComandaAccountingSummary(
+    val baseCurrency: String,
+    val baseMinorUnitDigits: Int,
+    val totalBaseMinor: Long,
+    val paidBaseMinor: Long,
+    val balanceBaseMinor: Long
+)
 
 @HiltViewModel
 class TableOrderViewModel @Inject constructor(
@@ -54,6 +64,12 @@ class TableOrderViewModel @Inject constructor(
 
     private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
+
+    private val _sessionExpired = MutableLiveData<Boolean>()
+    val sessionExpired: LiveData<Boolean> = _sessionExpired
+
+    private val _accountingSummary = MutableLiveData<ComandaAccountingSummary?>()
+    val accountingSummary: LiveData<ComandaAccountingSummary?> = _accountingSummary
 
     private var token: String? = null
     private var tableId: String? = null
@@ -103,7 +119,7 @@ class TableOrderViewModel @Inject constructor(
                 val snapshot = comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
                 if (snapshot != null) {
                     val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
-                    if (decision == SnapshotAuthorityDecision.USABLE || snapshot.syncStatus == "PENDING_MUTATIONS") {
+                    if (decision == SnapshotAuthorityDecision.USABLE) {
                         applySnapshotToTable(resolvedTable, snapshot)
                         _readProvenance.value = ReadProvenance.LOCAL_CACHED
                         _table.value = resolvedTable
@@ -113,7 +129,7 @@ class TableOrderViewModel @Inject constructor(
         }
     }
 
-    private fun applySnapshotToTable(targetTable: Table, snapshot: ComandaSnapshotEntity) {
+    private suspend fun applySnapshotToTable(targetTable: Table, snapshot: ComandaSnapshotEntity) {
         try {
             val itemsDto: List<MesaItemDto> = gson.fromJson(snapshot.itemsJson, Array<MesaItemDto>::class.java)?.toList().orEmpty()
 
@@ -127,9 +143,11 @@ class TableOrderViewModel @Inject constructor(
                 val firstDto = dtoList.first()
                 val serverQty = dtoList.sumOf { it.quantidade ?: 0 }
 
-                val localProduct = runCatching {
-                    kotlinx.coroutines.runBlocking { catalogDao.getProductById(pId) }
-                }.getOrNull()
+                val localProduct = try {
+                    catalogDao.getProductById(pId)
+                } catch (e: Exception) {
+                    null
+                }
 
                 var productName = localProduct?.name
                 if (productName.isNullOrEmpty()) {
@@ -161,6 +179,16 @@ class TableOrderViewModel @Inject constructor(
                 })
             }
             targetTable.calculateTotal()
+
+            if (snapshot.totalBaseMinor != null && snapshot.paidBaseMinor != null && snapshot.balanceBaseMinor != null && !snapshot.baseCurrency.isNullOrBlank()) {
+                _accountingSummary.value = ComandaAccountingSummary(
+                    baseCurrency = snapshot.baseCurrency,
+                    baseMinorUnitDigits = snapshot.baseMinorUnitDigits ?: 2,
+                    totalBaseMinor = snapshot.totalBaseMinor,
+                    paidBaseMinor = snapshot.paidBaseMinor,
+                    balanceBaseMinor = snapshot.balanceBaseMinor
+                )
+            }
         } catch (e: Exception) {
             Log.e("TableOrderViewModel", "Error applying snapshot to table: ${e.message}", e)
         }
@@ -188,7 +216,10 @@ class TableOrderViewModel @Inject constructor(
                 val snapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
                 if (snapshot != null) {
-                    applySnapshotToTable(currentTable, snapshot)
+                    val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
+                    if (decision == SnapshotAuthorityDecision.USABLE) {
+                        applySnapshotToTable(currentTable, snapshot)
+                    }
                 }
                 _readProvenance.value = ReadProvenance.REMOTE_REFRESHED
                 _refreshWarning.value = null
@@ -197,13 +228,35 @@ class TableOrderViewModel @Inject constructor(
                 tableReadRepository.refreshTables(currentToken)
                 loadLocalTableAndSnapshot()
             }
-        } catch (e: Exception) {
-            Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            Log.e("TableOrderViewModel", "HTTP error ${e.code()}: ${e.message()}", e)
+            when (e.code()) {
+                401 -> {
+                    _sessionExpired.value = true
+                    _error.value = "Sessão expirada. Faça login novamente."
+                }
+                403 -> {
+                    _error.value = "Terminal bloqueado. Contate o suporte."
+                }
+                426 -> {
+                    _error.value = "Atualização obrigatória do aplicativo necessária."
+                }
+                else -> {
+                    _error.value = "Erro no servidor (Código: ${e.code()})"
+                }
+            }
+        } catch (e: java.io.IOException) {
+            Log.e("TableOrderViewModel", "IO error during sync: ${e.message}", e)
             if (_readProvenance.value == ReadProvenance.LOCAL_CACHED) {
                 _refreshWarning.value = "Sem conexão — exibindo dados salvos"
             } else {
                 _error.value = "Erro de conexão ao carregar mesa"
             }
+        } catch (e: Exception) {
+            Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
+            _error.value = "Erro ao carregar mesa: ${e.message}"
         } finally {
             _isLoading.value = false
         }
@@ -212,6 +265,12 @@ class TableOrderViewModel @Inject constructor(
     fun addItem(product: Product) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
+        val cId = currentTable.comandaId
+
+        if (cId.isNullOrEmpty()) {
+            _error.value = "ID da comanda não encontrado"
+            return
+        }
 
         if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
             _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
@@ -221,9 +280,10 @@ class TableOrderViewModel @Inject constructor(
         val request = CommandActionRequest().apply {
             action = "add_item"
             mesaId = currentTable.id
-            comandaId = currentTable.comandaId
+            comandaId = cId
             product_id = product.id
             quantity = 1
+            status = "RASCUNHO"
         }
 
         viewModelScope.launch {
@@ -231,6 +291,8 @@ class TableOrderViewModel @Inject constructor(
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
                 syncTable()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
@@ -251,11 +313,13 @@ class TableOrderViewModel @Inject constructor(
         }
 
         val request = CommandActionRequest().apply {
-            action = "remove_item"
+            action = "cancel_item"
             mesaId = currentTable.id
             comandaId = currentTable.comandaId
             order_id = item.id
+            product_id = item.product.id
             reason = reasonStr
+            itemIds = item.serverIds
         }
 
         viewModelScope.launch {
@@ -263,6 +327,8 @@ class TableOrderViewModel @Inject constructor(
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
                 syncTable()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
@@ -276,6 +342,12 @@ class TableOrderViewModel @Inject constructor(
     fun enviarCozinha(onSuccess: () -> Unit) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
+        val cId = currentTable.comandaId
+
+        if (cId.isNullOrEmpty()) {
+            _error.value = "ID da comanda não encontrado"
+            return
+        }
 
         if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
             _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
@@ -283,9 +355,8 @@ class TableOrderViewModel @Inject constructor(
         }
 
         val request = CommandActionRequest().apply {
-            action = "send_kitchen"
-            mesaId = currentTable.id
-            comandaId = currentTable.comandaId
+            action = "enviar_cozinha"
+            comandaId = cId
         }
 
         viewModelScope.launch {
@@ -293,6 +364,8 @@ class TableOrderViewModel @Inject constructor(
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
             } catch (e: Exception) {
