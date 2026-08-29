@@ -56,7 +56,8 @@ class MoneyFinalGateTest {
             .build()
 
         mockTaxRepo = mock()
-        mockComandaSnapshotRepo = mock()
+        TenantBindingStore.setActiveTenantId(context, "tenant-test")
+        mockComandaSnapshotRepo = ComandaSnapshotRepository(context, db.comandaSnapshotDao(), gson)
         mockTableReadRepo = mock()
         whenever(mockTaxRepo.getActiveTaxesLiveData()).thenReturn(MutableLiveData(emptyList()))
 
@@ -756,7 +757,6 @@ class MoneyFinalGateTest {
             viewModel.finalizeApprovedSale(operationId, "pay-123", "CREDITO")
             org.robolectric.shadows.ShadowLooper.idleMainLooper()
 
-            val updated = saleOutboxRepo.finalizeApprovedSaleAtomic(operationId, "pay-123", "CREDITO")
             val persisted = db.localSaleDao().getById(operationId)
             assertNotNull(persisted)
             val saleReq = gson.fromJson(persisted!!.payloadJson, SaleRequest::class.java)

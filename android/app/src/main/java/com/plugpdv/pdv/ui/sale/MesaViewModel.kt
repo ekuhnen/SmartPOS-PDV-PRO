@@ -205,9 +205,15 @@ class MesaViewModel @Inject constructor(
                 val response = retryIO { apiService.manageComanda("Bearer $token", request) }
                 if (response.isSuccessful) {
                     val body = response.body()
-                    val comandaId = body?.get("id") as? String
+                    val comandaId = (body?.get("id") ?: body?.get("comanda_id") ?: body?.get("comandaId")) as? String
                     Log.d("MesaViewModel", "Mesa aberta com sucesso. ComandaId: $comandaId")
                     if (!comandaId.isNullOrEmpty()) {
+                        tableReadRepository.applyServerConfirmedOpen(
+                            tableId = table.id.orEmpty(),
+                            comandaId = comandaId,
+                            customerName = customerName,
+                            peopleCount = 1
+                        )
                         _openedComandaId.value = comandaId
                         _openSuccess.value = true
                     } else {

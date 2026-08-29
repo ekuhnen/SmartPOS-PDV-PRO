@@ -51,6 +51,7 @@ data class CheckoutUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val paymentSuccess: Boolean = false,
+    val isComandaClosed: Boolean = false,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -403,23 +404,48 @@ class CheckoutViewModel @Inject constructor(
             val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
             val cachedSnapshot = try {
                 comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("CheckoutViewModel", "Non-fatal failure caching comanda snapshot: ${e.message}", e)
                 null
             }
 
-            val snapshotToEvaluate = cachedSnapshot ?: loadLocalSnapshot(currentTable)
-            val decision = if (snapshotToEvaluate != null) {
-                ComandaSnapshotAuthorityPolicy.evaluate(snapshotToEvaluate, cId, context)
-            } else {
-                SnapshotAuthorityDecision.MISSING_AUTHORITY
+            if (cachedSnapshot == null) {
+                // If remote caching failed to produce a valid snapshot, DO NOT synthesize money or create READY_REMOTE
+                if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
+                    _uiState.value = _uiState.value.copy(
+                        refreshWarning = "Sem conexão — exibindo dados salvos",
+                        isPayButtonBlocked = true,
+                        blockReason = durableBlock.reason ?: "Sem conexão para processar pagamento"
+                    )
+                } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                        isPayButtonBlocked = true,
+                        requiresReconciliation = true,
+                        blockReason = durableBlock.reason ?: "Comanda requer conciliação com o servidor.",
+                        refreshWarning = "Sem conexão — exibindo dados salvos"
+                    )
+                } else {
+                    moneyAuthorityLoaded = false
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                        isPayButtonBlocked = true,
+                        requiresReconciliation = false,
+                        blockReason = "Não foi possível carregar os dados financeiros da comanda.",
+                        error = "Falha ao processar autoridade da comanda."
+                    )
+                }
+                return
             }
 
-            val digits = snapshotToEvaluate?.baseMinorUnitDigits ?: 2
-            val baseCurrency = snapshotToEvaluate?.baseCurrency ?: detail.baseCurrency
-            val totalBaseMinor = snapshotToEvaluate?.totalBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.total ?: 0.0), digits) else null)
-            val paidBaseMinor = snapshotToEvaluate?.paidBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.totalPagoBase ?: detail.totalPago ?: 0.0), digits) else null)
-            val balanceBaseMinor = snapshotToEvaluate?.balanceBaseMinor ?: (if (!baseCurrency.isNullOrBlank()) ComandaSnapshotRepository.toMinorUnitsWithFrozenScale(BigDecimal.valueOf(detail.saldoBase ?: ((detail.total ?: 0.0) - (detail.totalPagoBase ?: detail.totalPago ?: 0.0))), digits) else null)
+            val decision = ComandaSnapshotAuthorityPolicy.evaluate(cachedSnapshot, cId, context)
+            val digits = cachedSnapshot.baseMinorUnitDigits ?: 2
+            val baseCurrency = cachedSnapshot.baseCurrency
+            val totalBaseMinor = cachedSnapshot.totalBaseMinor
+            val paidBaseMinor = cachedSnapshot.paidBaseMinor
+            val balanceBaseMinor = cachedSnapshot.balanceBaseMinor
 
             val balDecimal = balanceBaseMinor?.let {
                 ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
@@ -445,7 +471,8 @@ class CheckoutViewModel @Inject constructor(
                     isPayButtonBlocked = true,
                     requiresReconciliation = true,
                     paymentSuccess = false,
-                    blockReason = durableBlock.reason ?: if (baseCurrency.isNullOrBlank()) "Moeda-base não definida no servidor" else "Pagamento aprovado requer conciliação",
+                    isComandaClosed = false,
+                    blockReason = cachedSnapshot.reconciliationReason ?: durableBlock.reason ?: if (baseCurrency.isNullOrBlank()) "Moeda-base não definida no servidor" else "Comanda requer conciliação com o servidor.",
                     refreshWarning = null
                 )
             } else if (isComandaClosed) {
@@ -462,32 +489,89 @@ class CheckoutViewModel @Inject constructor(
                     paymentsHistory = detail.pagamentos.orEmpty(),
                     currentToPay = 0.0,
                     isPendingSync = false,
-                    isPayButtonBlocked = false,
-                    paymentSuccess = true,
+                    isPayButtonBlocked = true,
+                    paymentSuccess = false,
+                    isComandaClosed = true,
                     requiresReconciliation = false,
-                    blockReason = null,
+                    blockReason = "Comanda já está fechada.",
                     refreshWarning = null
                 )
+            } else if (decision == SnapshotAuthorityDecision.USABLE) {
+                if (durableBlock.isBlocked) {
+                    if (durableBlock.requiresReconciliation) {
+                        moneyAuthorityLoaded = false
+                        _uiState.value = _uiState.value.copy(
+                            moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                            authoritySource = "REMOTE",
+                            baseCurrency = baseCurrency,
+                            baseMinorUnitDigits = digits,
+                            totalBaseMinor = totalBaseMinor,
+                            paidBaseMinor = paidBaseMinor,
+                            balanceBaseMinor = balanceBaseMinor,
+                            paymentsHistory = detail.pagamentos.orEmpty(),
+                            currentToPay = balDecimal.toDouble(),
+                            isPendingSync = durableBlock.isPendingSync,
+                            isPayButtonBlocked = true,
+                            requiresReconciliation = true,
+                            paymentSuccess = false,
+                            isComandaClosed = false,
+                            blockReason = durableBlock.reason ?: "Pagamento aprovado requer conciliação",
+                            refreshWarning = null
+                        )
+                    } else {
+                        moneyAuthorityLoaded = true
+                        _uiState.value = _uiState.value.copy(
+                            moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
+                            authoritySource = "REMOTE",
+                            baseCurrency = baseCurrency,
+                            baseMinorUnitDigits = digits,
+                            totalBaseMinor = totalBaseMinor,
+                            paidBaseMinor = paidBaseMinor,
+                            balanceBaseMinor = balanceBaseMinor,
+                            paymentsHistory = detail.pagamentos.orEmpty(),
+                            currentToPay = balDecimal.toDouble(),
+                            isPendingSync = durableBlock.isPendingSync,
+                            isPayButtonBlocked = true,
+                            requiresReconciliation = false,
+                            paymentSuccess = false,
+                            isComandaClosed = false,
+                            blockReason = durableBlock.reason,
+                            refreshWarning = null
+                        )
+                    }
+                } else {
+                    moneyAuthorityLoaded = true
+                    comandaBaseCurrency = baseCurrency
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.READY_REMOTE,
+                        authoritySource = "REMOTE",
+                        baseCurrency = baseCurrency,
+                        baseMinorUnitDigits = digits,
+                        totalBaseMinor = totalBaseMinor,
+                        paidBaseMinor = paidBaseMinor,
+                        balanceBaseMinor = balanceBaseMinor,
+                        paymentsHistory = detail.pagamentos.orEmpty(),
+                        currentToPay = balDecimal.toDouble(),
+                        isPendingSync = durableBlock.isPendingSync,
+                        isPayButtonBlocked = false,
+                        requiresReconciliation = false,
+                        paymentSuccess = false,
+                        isComandaClosed = false,
+                        blockReason = null,
+                        refreshWarning = null
+                    )
+                }
             } else {
-                moneyAuthorityLoaded = true
-                comandaBaseCurrency = baseCurrency
-                val isBlocked = durableBlock.isBlocked
+                moneyAuthorityLoaded = false
                 _uiState.value = _uiState.value.copy(
-                    moneyAuthorityState = MoneyAuthorityState.READY_REMOTE,
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
                     authoritySource = "REMOTE",
-                    baseCurrency = baseCurrency,
-                    baseMinorUnitDigits = digits,
-                    totalBaseMinor = totalBaseMinor,
-                    paidBaseMinor = paidBaseMinor,
-                    balanceBaseMinor = balanceBaseMinor,
-                    paymentsHistory = detail.pagamentos.orEmpty(),
-                    currentToPay = balDecimal.toDouble(),
-                    isPendingSync = durableBlock.isPendingSync,
-                    isPayButtonBlocked = isBlocked,
+                    isPayButtonBlocked = true,
                     requiresReconciliation = false,
                     paymentSuccess = false,
-                    blockReason = durableBlock.reason,
-                    refreshWarning = null
+                    isComandaClosed = false,
+                    blockReason = "Snapshot de comanda inválido (${decision.name}).",
+                    error = "Dados da comanda inválidos."
                 )
             }
             calculateFinalAmount()
@@ -496,12 +580,45 @@ class CheckoutViewModel @Inject constructor(
         } catch (e: HttpException) {
             Log.e("CheckoutViewModel", "HTTP error ${e.code()} fetching comanda detail: ${e.message}", e)
             moneyAuthorityLoaded = false
-            _uiState.value = _uiState.value.copy(
-                moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
-                isPayButtonBlocked = true,
-                blockReason = "Erro ao carregar dados financeiros (Código: ${e.code()})",
-                error = "Erro no servidor (Código: ${e.code()})"
-            )
+            if (e.code() == 401 || e.code() == 403 || e.code() == 426) {
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    isPayButtonBlocked = true,
+                    blockReason = if (e.code() == 426) "Atualização obrigatória do aplicativo necessária." else "Sessão expirada. Faça login novamente.",
+                    error = if (e.code() == 426) "Atualização obrigatória do aplicativo necessária." else "Sessão expirada."
+                )
+            } else if (e.code() in 500..599) {
+                if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
+                    _uiState.value = _uiState.value.copy(
+                        refreshWarning = "Sem conexão — exibindo dados salvos",
+                        isPayButtonBlocked = true,
+                        blockReason = durableBlock.reason ?: "Servidor indisponível — exibindo dados salvos"
+                    )
+                } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                        isPayButtonBlocked = true,
+                        requiresReconciliation = true,
+                        blockReason = durableBlock.reason ?: "Comanda requer conciliação com o servidor.",
+                        refreshWarning = "Sem conexão — exibindo dados salvos"
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                        isPayButtonBlocked = true,
+                        requiresReconciliation = false,
+                        blockReason = "Servidor indisponível (Código: ${e.code()}).",
+                        error = "Servidor indisponível (Código: ${e.code()})."
+                    )
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    isPayButtonBlocked = true,
+                    blockReason = "Erro ao carregar dados financeiros (Código: ${e.code()})",
+                    error = "Erro no servidor (Código: ${e.code()})"
+                )
+            }
         } catch (e: Exception) {
             Log.e("CheckoutViewModel", "Network error fetching comanda payments: ${e.message}", e)
             if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {

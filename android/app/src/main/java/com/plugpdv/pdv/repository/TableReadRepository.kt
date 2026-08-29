@@ -81,15 +81,56 @@ class TableReadRepository @Inject constructor(
         return tableDao.getAllTables().map { mapEntityToTable(it) }
     }
 
+    suspend fun applyServerConfirmedOpen(
+        tableId: String,
+        comandaId: String,
+        customerName: String?,
+        peopleCount: Int = 1
+    ) {
+        val existing = tableDao.getTableById(tableId)
+        if (existing != null) {
+            val updated = existing.copy(
+                status = Table.Status.OCCUPIED,
+                comandaId = comandaId,
+                customerName = customerName ?: existing.customerName,
+                peopleCount = peopleCount,
+                updatedAt = System.currentTimeMillis()
+            )
+            tableDao.insert(updated)
+        } else {
+            val newEntity = TableEntity(
+                id = tableId,
+                number = 0,
+                status = Table.Status.OCCUPIED,
+                sectorName = "",
+                sectorId = "",
+                customerName = customerName,
+                comandaId = comandaId,
+                peopleCount = peopleCount,
+                updatedAt = System.currentTimeMillis()
+            )
+            tableDao.insert(newEntity)
+        }
+    }
+
     /**
      * Refreshes tables from network and persists atomically into Room.
-     * On network/parsing failure, existing Room tables are preserved untouched.
+     * On network/parsing failure or invalid topology, existing Room tables are preserved untouched.
      */
     suspend fun refreshTables(token: String): Result<Unit> {
         return try {
             val response = retryIO { apiService.getMesas("Bearer $token") }
-            val entities = response.setores.orEmpty().flatMap { sector ->
-                sector.mesas.orEmpty().mapNotNull { mesaDto ->
+            val setores = response.setores
+            if (setores == null) {
+                Log.w(TAG, "getMesas returned null setores; preserving existing Room cache")
+                return Result.failure(IllegalStateException("Invalid topology: setores is null"))
+            }
+
+            var rawTablesCount = 0
+            val entities = setores.flatMap { sector ->
+                val mesas = sector.mesas.orEmpty()
+                rawTablesCount += mesas.size
+                mesas.mapNotNull { mesaDto ->
                     val mesaId = mesaDto.id
                     if (mesaId.isNullOrBlank()) return@mapNotNull null
                     val mappedStatus = mapStatus(mesaDto.status, mesaDto.comanda_id, mesaDto.itens)
@@ -109,6 +150,11 @@ class TableReadRepository @Inject constructor(
                         updatedAt = System.currentTimeMillis()
                     )
                 }
+            }
+
+            if (rawTablesCount > 0 && entities.isEmpty()) {
+                Log.w(TAG, "getMesas contained $rawTablesCount tables but 0 valid entities; preserving existing Room cache")
+                return Result.failure(IllegalStateException("Invalid topology: all table IDs were invalid"))
             }
 
             tableDao.replaceAll(entities)

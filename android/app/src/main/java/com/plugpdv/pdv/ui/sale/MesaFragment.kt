@@ -42,8 +42,6 @@ class MesaFragment : Fragment() {
         
         setupRecyclerViews()
         observeViewModel()
-        
-        token?.let { viewModel.fetchTables(it) }
     }
 
     private fun setupRecyclerViews() {
