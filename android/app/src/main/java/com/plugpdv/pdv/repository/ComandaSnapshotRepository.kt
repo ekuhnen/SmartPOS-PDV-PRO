@@ -62,20 +62,23 @@ class ComandaSnapshotRepository(
         val serverUpdatedAt: Long? = null
         val cachedAt = System.currentTimeMillis()
 
-        var requiresReconciliation = detail.requiresReconciliation || (existing?.requiresReconciliation == true)
-        var reconciliationReason: String? = when {
-            existing?.reconciliationReason != null -> existing.reconciliationReason
-            detail.requiresReconciliation -> "SERVER_RECONCILIATION_REQUIRED"
-            else -> null
-        }
-
         val remoteBaseCurrency = detail.baseCurrency?.trim()?.takeIf { it.isNotEmpty() }?.uppercase()
 
         val entity: ComandaSnapshotEntity
 
         if (hasLocalPendingState && existing != null) {
             // PENDING LOCAL STATE MERGE: Remote refresh MUST NOT destroy the local operational projection
-            if (remoteBaseCurrency == null) {
+            var requiresReconciliation = existing.requiresReconciliation || detail.requiresReconciliation
+            var reconciliationReason: String? = when {
+                existing.reconciliationReason != null -> existing.reconciliationReason
+                detail.requiresReconciliation -> "SERVER_RECONCILIATION_REQUIRED"
+                else -> null
+            }
+
+            if (existing.baseCurrency != null && existing.baseMinorUnitDigits == null) {
+                requiresReconciliation = true
+                reconciliationReason = "FROZEN_MINOR_UNIT_MISSING"
+            } else if (remoteBaseCurrency == null) {
                 requiresReconciliation = true
                 if (reconciliationReason == null) reconciliationReason = "BASE_CURRENCY_MISSING"
             } else if (existing.baseCurrency != null && !remoteBaseCurrency.equals(existing.baseCurrency, ignoreCase = true)) {
@@ -111,7 +114,7 @@ class ComandaSnapshotRepository(
                 cachedAt = cachedAt
             )
         } else {
-            // Normal SYNCED refresh or initial snapshot
+            // Normal SYNCED refresh or initial snapshot: derive reconciliation dynamically from verified invariants
             val normalizedLocalStatus = when (detail.status.uppercase()) {
                 "ABERTA", "EM_CONSUMO", "AGUARDANDO_PAGAMENTO" -> "OPEN"
                 "FECHADA" -> "CLOSED"
@@ -119,13 +122,25 @@ class ComandaSnapshotRepository(
                 else -> "UNKNOWN"
             }
 
+            var requiresReconciliation = detail.requiresReconciliation
+            var reconciliationReason: String? = if (detail.requiresReconciliation) "SERVER_RECONCILIATION_REQUIRED" else null
+
             val frozenBaseCurrency: String?
             val frozenBaseMinorUnitDigits: Int?
             val totalBaseMinor: Long?
             val paidBaseMinor: Long?
             val balanceBaseMinor: Long?
 
-            if (existing?.baseCurrency != null) {
+            if (existing?.reconciliationReason == "BASE_CURRENCY_CHANGED") {
+                // For V1, keep BASE_CURRENCY_CHANGED sticky
+                frozenBaseCurrency = existing.baseCurrency
+                frozenBaseMinorUnitDigits = existing.baseMinorUnitDigits
+                totalBaseMinor = existing.totalBaseMinor
+                paidBaseMinor = existing.paidBaseMinor
+                balanceBaseMinor = existing.balanceBaseMinor
+                requiresReconciliation = true
+                reconciliationReason = "BASE_CURRENCY_CHANGED"
+            } else if (existing?.baseCurrency != null) {
                 // Existing snapshot with frozen currency
                 frozenBaseCurrency = existing.baseCurrency
                 frozenBaseMinorUnitDigits = existing.baseMinorUnitDigits
@@ -138,7 +153,7 @@ class ComandaSnapshotRepository(
                     balanceBaseMinor = existing.balanceBaseMinor
                 } else if (remoteBaseCurrency == null) {
                     requiresReconciliation = true
-                    reconciliationReason = "BASE_CURRENCY_MISSING"
+                    if (reconciliationReason == null) reconciliationReason = "BASE_CURRENCY_MISSING"
                     totalBaseMinor = existing.totalBaseMinor
                     paidBaseMinor = existing.paidBaseMinor
                     balanceBaseMinor = existing.balanceBaseMinor
@@ -160,7 +175,7 @@ class ComandaSnapshotRepository(
                     }
                 }
             } else {
-                // New snapshot or existing with null base currency
+                // New snapshot or existing snapshot with previously missing baseCurrency (Case 4: recovery)
                 if (remoteBaseCurrency == null) {
                     frozenBaseCurrency = null
                     frozenBaseMinorUnitDigits = null
@@ -168,9 +183,9 @@ class ComandaSnapshotRepository(
                     paidBaseMinor = null
                     balanceBaseMinor = null
                     requiresReconciliation = true
-                    reconciliationReason = "BASE_CURRENCY_MISSING"
+                    if (reconciliationReason == null) reconciliationReason = "BASE_CURRENCY_MISSING"
                 } else {
-                    // Freeze new base currency and minor unit digits
+                    // Legitimate first establishment of previously missing authority
                     frozenBaseCurrency = remoteBaseCurrency
                     val digits = MoneyDecimal.getDecimals(remoteBaseCurrency)
                     frozenBaseMinorUnitDigits = digits
@@ -269,9 +284,16 @@ class ComandaSnapshotRepository(
             }
         }
 
-        if (paidBaseMinor == null || balanceBaseMinor == null) {
+        if (totalBaseMinor == null) {
             reqRec = true
-            reason = "BASE_MONEY_SUMMARY_MISSING"
+            reason = "BASE_MONEY_SUMMARY_INVALID"
+        } else if (paidBaseMinor == null || balanceBaseMinor == null) {
+            reqRec = true
+            reason = if (detail.totalPagoBase == null || detail.saldoBase == null) {
+                "BASE_MONEY_SUMMARY_MISSING"
+            } else {
+                "BASE_MONEY_SUMMARY_INVALID"
+            }
         }
 
         return MoneyComputationResult(

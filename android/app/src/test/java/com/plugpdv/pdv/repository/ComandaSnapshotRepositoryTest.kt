@@ -889,4 +889,220 @@ class ComandaSnapshotRepositoryTest {
         assertEquals("SYNCED", snap2.syncStatus)
         assertFalse(snap2.requiresReconciliation)
     }
+
+    /**
+     * OFFLINE-SNAPSHOT-20: existing SYNCED with BASE_CURRENCY_MISSING.
+     * New valid BRL detail + complete summary -> reconciliation clears.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_20_transientBaseCurrencyMissingCanRecoverOnAuthoritativeRefresh() = runBlocking {
+        // Step 1: Initial detail with missing baseCurrency
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-120",
+            mesaId = "tbl-20",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = null
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+        assertTrue(snap1!!.requiresReconciliation)
+        assertEquals("BASE_CURRENCY_MISSING", snap1.reconciliationReason)
+        assertNull(snap1.baseCurrency)
+        val localId = snap1.localComandaId
+
+        // Step 2: New authoritative detail arrives with valid BRL and complete summary
+        val detail2 = ComandaDetailResponse(
+            id = "cmd-srv-120",
+            mesaId = "tbl-20",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap2 = repository.cacheRemoteDetail(detail2)
+        assertNotNull(snap2)
+
+        assertEquals("localComandaId must be stable across recovery", localId, snap2!!.localComandaId)
+        assertEquals("BRL", snap2.baseCurrency)
+        assertEquals(2, snap2.baseMinorUnitDigits)
+        assertEquals(10000L, snap2.totalBaseMinor)
+        assertEquals(0L, snap2.paidBaseMinor)
+        assertEquals(10000L, snap2.balanceBaseMinor)
+        assertFalse("Reconciliation must clear after valid currency establishment", snap2.requiresReconciliation)
+        assertNull(snap2.reconciliationReason)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-21: existing SYNCED with BASE_MONEY_SUMMARY_MISSING.
+     * New valid complete summary -> reconciliation clears.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_21_transientBaseMoneySummaryMissingCanRecoverOnAuthoritativeRefresh() = runBlocking {
+        // Step 1: Initial detail with missing saldoBase
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-121",
+            mesaId = "tbl-21",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = null, // Missing!
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+        assertTrue(snap1!!.requiresReconciliation)
+        assertEquals("BASE_MONEY_SUMMARY_MISSING", snap1.reconciliationReason)
+        assertNull(snap1.balanceBaseMinor)
+
+        // Step 2: Subsequent authoritative detail arrives with complete saldoBase
+        val detail2 = ComandaDetailResponse(
+            id = "cmd-srv-121",
+            mesaId = "tbl-21",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0, // Now provided!
+            baseCurrency = "BRL"
+        )
+        val snap2 = repository.cacheRemoteDetail(detail2)
+        assertNotNull(snap2)
+
+        assertEquals(10000L, snap2!!.totalBaseMinor)
+        assertEquals(0L, snap2.paidBaseMinor)
+        assertEquals(10000L, snap2.balanceBaseMinor)
+        assertFalse("Reconciliation must clear once money summary is complete", snap2.requiresReconciliation)
+        assertNull(snap2.reconciliationReason)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-22: existing frozen BRL. remote USD causes BASE_CURRENCY_CHANGED.
+     * Subsequent BRL refresh: BASE_CURRENCY_CHANGED remains reconciliation-required for V1.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_22_baseCurrencyChangedRemainsStickyInV1() = runBlocking {
+        // Step 1: Establish frozen BRL
+        val detailBrl = ComandaDetailResponse(
+            id = "cmd-srv-122",
+            mesaId = "tbl-22",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detailBrl)
+        assertNotNull(snap1)
+        assertFalse(snap1!!.requiresReconciliation)
+
+        // Step 2: Remote conflicting USD arrives
+        val detailUsd = ComandaDetailResponse(
+            id = "cmd-srv-122",
+            mesaId = "tbl-22",
+            status = "ABERTA",
+            total = 20.0,
+            totalPagoBase = 0.0,
+            saldoBase = 20.0,
+            baseCurrency = "USD"
+        )
+        val snap2 = repository.cacheRemoteDetail(detailUsd)
+        assertNotNull(snap2)
+        assertTrue(snap2!!.requiresReconciliation)
+        assertEquals("BASE_CURRENCY_CHANGED", snap2.reconciliationReason)
+
+        // Step 3: Remote reverts to BRL
+        val detailBrlAgain = ComandaDetailResponse(
+            id = "cmd-srv-122",
+            mesaId = "tbl-22",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap3 = repository.cacheRemoteDetail(detailBrlAgain)
+        assertNotNull(snap3)
+        assertTrue("BASE_CURRENCY_CHANGED must remain sticky for V1", snap3!!.requiresReconciliation)
+        assertEquals("BASE_CURRENCY_CHANGED", snap3.reconciliationReason)
+        assertEquals("BRL", snap3.baseCurrency)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-23: PENDING_MUTATIONS with baseCurrency=BRL, baseMinorUnitDigits=null.
+     * Expected: local projection preserved, requires=true, reason=FROZEN_MINOR_UNIT_MISSING.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_23_pendingMutationsMissingFrozenDigitsFailsClosed() = runBlocking {
+        // Manually inject a snapshot with null digits under PENDING_MUTATIONS
+        val corruptedPending = ComandaSnapshotEntity(
+            localComandaId = "loc-pending-corrupted",
+            serverComandaId = "cmd-srv-123",
+            tenantId = TENANT_A,
+            tableId = "tbl-23",
+            tableNumber = 23,
+            customerIdentifier = "Mesa 23",
+            baseCurrency = "BRL",
+            baseMinorUnitDigits = null, // Missing frozen scale!
+            serverStatus = "ABERTA",
+            localStatus = "OPEN",
+            syncStatus = "PENDING_MUTATIONS",
+            serverRevision = null,
+            localRevision = 1L,
+            totalBaseMinor = 5000L,
+            paidBaseMinor = 0L,
+            balanceBaseMinor = 5000L,
+            itemsJson = "[]",
+            paymentsJson = "[]",
+            requiresReconciliation = false,
+            reconciliationReason = null,
+            serverUpdatedAt = null,
+            cachedAt = System.currentTimeMillis()
+        )
+        db.comandaSnapshotDao().upsert(corruptedPending)
+
+        // Remote refresh
+        val remoteDetail = ComandaDetailResponse(
+            id = "cmd-srv-123",
+            mesaId = "tbl-23",
+            status = "ABERTA",
+            total = 50.0,
+            totalPagoBase = 0.0,
+            saldoBase = 50.0,
+            baseCurrency = "BRL"
+        )
+        val snap = repository.cacheRemoteDetail(remoteDetail)
+        assertNotNull(snap)
+
+        assertTrue(snap!!.requiresReconciliation)
+        assertEquals("FROZEN_MINOR_UNIT_MISSING", snap.reconciliationReason)
+        assertEquals("PENDING_MUTATIONS", snap.syncStatus)
+        assertEquals(5000L, snap.totalBaseMinor)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-24: conversion of an authoritative base amount fails/overflows.
+     * Expected: requires=true, money authority not treated healthy (BASE_MONEY_SUMMARY_INVALID).
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_24_authoritativeBaseAmountCalculationFailureFailsClosed() = runBlocking {
+        // detail with Double.NaN for total
+        val detail = ComandaDetailResponse(
+            id = "cmd-srv-124",
+            mesaId = "tbl-24",
+            status = "ABERTA",
+            total = Double.NaN,
+            totalPagoBase = 0.0,
+            saldoBase = 0.0,
+            baseCurrency = "BRL"
+        )
+        val snap = repository.cacheRemoteDetail(detail)
+        assertNotNull(snap)
+
+        assertTrue("Snapshot with invalid money calculation must require reconciliation", snap!!.requiresReconciliation)
+        assertEquals("BASE_MONEY_SUMMARY_INVALID", snap.reconciliationReason)
+        assertNull(snap.totalBaseMinor)
+    }
 }
