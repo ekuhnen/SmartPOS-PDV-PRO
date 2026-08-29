@@ -588,4 +588,305 @@ class ComandaSnapshotRepositoryTest {
         val all = db.comandaSnapshotDao().getAllForTenant(TENANT_A)
         assertEquals(0, all.size)
     }
+
+    /**
+     * OFFLINE-SNAPSHOT-14: Initial BRL digits=2. Change CurrencyRulesProvider fixture so BRL now reports 3.
+     * Refresh same comanda. baseMinorUnitDigits remains 2, 123.45 still persists as 12345L (NOT 123450L).
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_14_frozenMinorUnitDigitsPreservedAgainstCapabilitiesChange() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-114",
+            mesaId = "tbl-14",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+        assertEquals(2, snap1!!.baseMinorUnitDigits)
+
+        // Simulate external/dynamic capability change for BRL from 2 to 3 decimals
+        val customRulesProvider = com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider()
+        customRulesProvider.setCapabilities(
+            mapOf(
+                "BRL" to com.plugpdv.pdv.models.CurrencyCapability(
+                    currencyCode = "BRL",
+                    symbol = "R$",
+                    symbolPosition = "PREFIX",
+                    thousandsSeparator = ".",
+                    decimalSeparator = ",",
+                    displayDecimals = 3,
+                    minorUnitDigits = 3
+                )
+            )
+        )
+        MoneyDecimal.setRulesProvider(customRulesProvider)
+
+        try {
+            // Verify MoneyDecimal now returns 3 decimals for new queries
+            assertEquals(3, MoneyDecimal.getDecimals("BRL"))
+
+            // Refresh existing comanda snapshot with total = 123.45
+            val detail2 = ComandaDetailResponse(
+                id = "cmd-srv-114",
+                mesaId = "tbl-14",
+                status = "ABERTA",
+                total = 123.45,
+                totalPagoBase = 23.45,
+                saldoBase = 100.00,
+                baseCurrency = "BRL"
+            )
+            val snap2 = repository.cacheRemoteDetail(detail2)
+            assertNotNull(snap2)
+
+            // Frozen scale of 2 must be respected!
+            assertEquals("baseMinorUnitDigits must remain frozen at 2", 2, snap2!!.baseMinorUnitDigits)
+            assertEquals("123.45 with 2 digits must produce 12345, not 123450", 12345L, snap2.totalBaseMinor)
+            assertEquals(2345L, snap2.paidBaseMinor)
+            assertEquals(10000L, snap2.balanceBaseMinor)
+        } finally {
+            MoneyDecimal.setRulesProvider(com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider())
+        }
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-15: Existing localStatus=CLOSED, syncStatus=PENDING_MUTATIONS.
+     * Remote status=ABERTA.
+     * Expected: serverStatus=ABERTA, localStatus=CLOSED, syncStatus=PENDING_MUTATIONS.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_15_pendingMutationsPreservesLocalStatusClosedWhileUpdatingServerStatus() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-115",
+            mesaId = "tbl-15",
+            status = "ABERTA",
+            total = 50.0,
+            totalPagoBase = 0.0,
+            saldoBase = 50.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+
+        // Mutate locally to CLOSED with PENDING_MUTATIONS
+        val mutated = snap1!!.copy(
+            localStatus = "CLOSED",
+            syncStatus = "PENDING_MUTATIONS"
+        )
+        db.comandaSnapshotDao().upsert(mutated)
+
+        // Remote refresh reports ABERTA
+        val detail2 = ComandaDetailResponse(
+            id = "cmd-srv-115",
+            mesaId = "tbl-15",
+            status = "ABERTA",
+            total = 50.0,
+            totalPagoBase = 0.0,
+            saldoBase = 50.0,
+            baseCurrency = "BRL"
+        )
+        val snap2 = repository.cacheRemoteDetail(detail2)
+        assertNotNull(snap2)
+
+        assertEquals("serverStatus must reflect remote status", "ABERTA", snap2!!.serverStatus)
+        assertEquals("localStatus must remain CLOSED", "CLOSED", snap2.localStatus)
+        assertEquals("syncStatus must remain PENDING_MUTATIONS", "PENDING_MUTATIONS", snap2.syncStatus)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-16: Existing PENDING_MUTATIONS contains local projection fields.
+     * Remote older detail contains different values.
+     * Expected: all local projection fields remain unchanged.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_16_pendingMutationsPreservesLocalProjectionAmountsAndItems() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-116",
+            mesaId = "tbl-16",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+
+        val localItems = "[{\"nome\":\"Local Burger\",\"quantidade\":1}]"
+        val localPayments = "[{\"forma\":\"MONEY\",\"valor\":50.0}]"
+
+        val localMutated = snap1!!.copy(
+            syncStatus = "PENDING_MUTATIONS",
+            totalBaseMinor = 15000L,
+            paidBaseMinor = 5000L,
+            balanceBaseMinor = 10000L,
+            itemsJson = localItems,
+            paymentsJson = localPayments,
+            localRevision = 2L
+        )
+        db.comandaSnapshotDao().upsert(localMutated)
+
+        // Remote older detail arrives with different values
+        val remoteDetail = ComandaDetailResponse(
+            id = "cmd-srv-116",
+            mesaId = "tbl-16",
+            status = "ABERTA",
+            total = 80.0,
+            totalPagoBase = 0.0,
+            saldoBase = 80.0,
+            baseCurrency = "BRL",
+            itens = listOf(MesaItemDto(id = "old-item", nome = "Old Item", subtotal = 80.0))
+        )
+        val snap2 = repository.cacheRemoteDetail(remoteDetail)
+        assertNotNull(snap2)
+
+        assertEquals(15000L, snap2!!.totalBaseMinor)
+        assertEquals(5000L, snap2.paidBaseMinor)
+        assertEquals(10000L, snap2.balanceBaseMinor)
+        assertEquals(localItems, snap2.itemsJson)
+        assertEquals(localPayments, snap2.paymentsJson)
+        assertEquals(2L, snap2.localRevision)
+        assertEquals("PENDING_MUTATIONS", snap2.syncStatus)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-17: Existing PENDING_MUTATIONS. Remote requires_reconciliation=true.
+     * Expected: local projection preserved, requiresReconciliation=true.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_17_pendingMutationsSurfacesRemoteReconciliationWithoutDestroyingProjection() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-117",
+            mesaId = "tbl-17",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+
+        val localMutated = snap1!!.copy(
+            syncStatus = "PENDING_MUTATIONS",
+            totalBaseMinor = 12000L,
+            paidBaseMinor = 2000L,
+            balanceBaseMinor = 10000L
+        )
+        db.comandaSnapshotDao().upsert(localMutated)
+
+        // Remote refresh flags reconciliation
+        val remoteDetail = ComandaDetailResponse(
+            id = "cmd-srv-117",
+            mesaId = "tbl-17",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL",
+            requiresReconciliation = true
+        )
+        val snap2 = repository.cacheRemoteDetail(remoteDetail)
+        assertNotNull(snap2)
+
+        assertTrue(snap2!!.requiresReconciliation)
+        assertEquals("SERVER_RECONCILIATION_REQUIRED", snap2.reconciliationReason)
+        assertEquals(12000L, snap2.totalBaseMinor)
+        assertEquals(2000L, snap2.paidBaseMinor)
+        assertEquals(10000L, snap2.balanceBaseMinor)
+        assertEquals("PENDING_MUTATIONS", snap2.syncStatus)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-18: Existing PENDING_MUTATIONS BRL. Remote base_currency=USD.
+     * Expected: BRL remains frozen, local financial projection remains, syncStatus remains PENDING_MUTATIONS,
+     * requiresReconciliation=true, reason=BASE_CURRENCY_CHANGED.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_18_pendingMutationsConflictingRemoteCurrencySurfacesReconciliation() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-118",
+            mesaId = "tbl-18",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+
+        val localMutated = snap1!!.copy(
+            syncStatus = "PENDING_MUTATIONS",
+            totalBaseMinor = 10000L,
+            paidBaseMinor = 0L,
+            balanceBaseMinor = 10000L
+        )
+        db.comandaSnapshotDao().upsert(localMutated)
+
+        // Remote comes back as USD
+        val remoteDetail = ComandaDetailResponse(
+            id = "cmd-srv-118",
+            mesaId = "tbl-18",
+            status = "ABERTA",
+            total = 20.0,
+            totalPagoBase = 0.0,
+            saldoBase = 20.0,
+            baseCurrency = "USD"
+        )
+        val snap2 = repository.cacheRemoteDetail(remoteDetail)
+        assertNotNull(snap2)
+
+        assertEquals("BRL", snap2!!.baseCurrency)
+        assertEquals(2, snap2.baseMinorUnitDigits)
+        assertEquals(10000L, snap2.totalBaseMinor)
+        assertEquals("PENDING_MUTATIONS", snap2.syncStatus)
+        assertTrue(snap2.requiresReconciliation)
+        assertEquals("BASE_CURRENCY_CHANGED", snap2.reconciliationReason)
+    }
+
+    /**
+     * OFFLINE-SNAPSHOT-19: Existing SYNCED snapshot. Remote same currency with changed authoritative totals.
+     * Expected: normal remote refresh succeeds using frozen digits.
+     */
+    @Test
+    fun testOFFLINE_SNAPSHOT_19_syncedSnapshotNormalRefreshUpdatesAuthoritativeTotalsWithFrozenDigits() = runBlocking {
+        val detail1 = ComandaDetailResponse(
+            id = "cmd-srv-119",
+            mesaId = "tbl-19",
+            status = "ABERTA",
+            total = 100.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            baseCurrency = "BRL"
+        )
+        val snap1 = repository.cacheRemoteDetail(detail1)
+        assertNotNull(snap1)
+        assertEquals(10000L, snap1!!.totalBaseMinor)
+
+        // Remote detail has updated items and payments
+        val detail2 = ComandaDetailResponse(
+            id = "cmd-srv-119",
+            mesaId = "tbl-19",
+            status = "EM_CONSUMO",
+            total = 180.50,
+            totalPagoBase = 50.00,
+            saldoBase = 130.50,
+            baseCurrency = "BRL"
+        )
+        val snap2 = repository.cacheRemoteDetail(detail2)
+        assertNotNull(snap2)
+
+        assertEquals("BRL", snap2!!.baseCurrency)
+        assertEquals(2, snap2.baseMinorUnitDigits)
+        assertEquals(18050L, snap2.totalBaseMinor)
+        assertEquals(5000L, snap2.paidBaseMinor)
+        assertEquals(13050L, snap2.balanceBaseMinor)
+        assertEquals("OPEN", snap2.localStatus)
+        assertEquals("SYNCED", snap2.syncStatus)
+        assertFalse(snap2.requiresReconciliation)
+    }
 }
