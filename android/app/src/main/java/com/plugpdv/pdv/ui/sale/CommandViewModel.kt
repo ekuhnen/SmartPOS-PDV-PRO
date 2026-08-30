@@ -126,6 +126,11 @@ class CommandViewModel @Inject constructor(
                         Log.e("CommandViewModel", "Fallback search failed", e2)
                     }
                     _notFound.value = code
+                } else if (e is retrofit2.HttpException && e.code() == 403) {
+                    val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                    _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "comanda")
+                } else if (e is retrofit2.HttpException && e.code() == 401) {
+                    _error.value = "Sessão expirada. Faça login novamente."
                 } else {
                     _error.value = "Erro ao carregar comanda"
                 }
@@ -165,7 +170,13 @@ class CommandViewModel @Inject constructor(
                     _openFinished.value = serverId
                 } else {
                     val errorBody = response.errorBody()?.string() ?: "Sem detalhes"
-                    _error.value = "API recusou (Status ${response.code()}): $errorBody"
+                    if (response.code() == 403) {
+                        _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "comanda")
+                    } else if (response.code() == 401) {
+                        _error.value = "Sessão expirada. Faça login novamente."
+                    } else {
+                        _error.value = "API recusou (Status ${response.code()}): $errorBody"
+                    }
                 }
             } catch (e: Exception) {
                 _error.value = "Erro de conexão: ${e.message}"

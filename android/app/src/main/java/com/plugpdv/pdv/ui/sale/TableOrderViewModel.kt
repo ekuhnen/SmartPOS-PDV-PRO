@@ -243,7 +243,8 @@ class TableOrderViewModel @Inject constructor(
                     _error.value = "Sessão expirada. Faça login novamente."
                 }
                 403 -> {
-                    _error.value = "Terminal bloqueado. Contate o suporte."
+                    val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                    _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                 }
                 426 -> {
                     _error.value = "Atualização obrigatória do aplicativo necessária."

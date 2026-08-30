@@ -163,7 +163,8 @@ class MesaViewModel @Inject constructor(
                     return
                 }
                 403 -> {
-                    _error.value = "Terminal bloqueado. Contate o suporte."
+                    val errorBody = try { error.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                    _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                     return
                 }
                 426 -> {
@@ -230,6 +231,8 @@ class MesaViewModel @Inject constructor(
                     if (errorCode == 401) {
                         _sessionExpired.value = true
                         _error.value = "Sessão expirada. Faça login novamente."
+                    } else if (errorCode == 403) {
+                        _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                     } else {
                         _error.value = "Erro ao abrir mesa (Código: $errorCode)"
                     }
@@ -278,9 +281,12 @@ class MesaViewModel @Inject constructor(
                     _transferSuccess.value = true
                 } else {
                     val errorCode = response.code()
+                    val errorBody = response.errorBody()?.string() ?: ""
                     if (errorCode == 401) {
                         _sessionExpired.value = true
                         _error.value = "Sessão expirada. Faça login novamente."
+                    } else if (errorCode == 403) {
+                        _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                     } else {
                         _error.value = "Erro ao transferir mesa (Código: $errorCode)"
                     }

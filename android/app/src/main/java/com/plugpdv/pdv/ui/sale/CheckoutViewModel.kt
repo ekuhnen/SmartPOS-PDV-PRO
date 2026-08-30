@@ -649,11 +649,20 @@ class CheckoutViewModel @Inject constructor(
             Log.e("CheckoutViewModel", "HTTP error ${e.code()} fetching comanda detail: ${e.message}", e)
             if (e.code() == 401 || e.code() == 403 || e.code() == 426) {
                 moneyAuthorityLoaded = false
+                val reason = when (e.code()) {
+                    426 -> "Atualização obrigatória do aplicativo necessária."
+                    401 -> "Sessão expirada. Faça login novamente."
+                    403 -> {
+                        val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                        com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "comanda")
+                    }
+                    else -> "Erro no servidor (Código: ${e.code()})"
+                }
                 _uiState.value = _uiState.value.copy(
                     moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
                     isPayButtonBlocked = true,
-                    blockReason = if (e.code() == 426) "Atualização obrigatória do aplicativo necessária." else "Sessão expirada. Faça login novamente.",
-                    error = if (e.code() == 426) "Atualização obrigatória do aplicativo necessária." else "Sessão expirada."
+                    blockReason = reason,
+                    error = reason
                 )
             } else if (e.code() in 500..599) {
                 if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
