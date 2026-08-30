@@ -212,7 +212,10 @@ class MesaViewModel @Inject constructor(
                             tableId = table.id.orEmpty(),
                             comandaId = comandaId,
                             customerName = customerName,
-                            peopleCount = 1
+                            peopleCount = 1,
+                            knownNumber = table.number,
+                            knownSectorId = table.sectorId,
+                            knownSectorName = table.sectorName
                         )
                         _openedComandaId.value = comandaId
                         _openSuccess.value = true

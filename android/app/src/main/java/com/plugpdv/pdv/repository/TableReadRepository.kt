@@ -85,7 +85,10 @@ class TableReadRepository @Inject constructor(
         tableId: String,
         comandaId: String,
         customerName: String?,
-        peopleCount: Int = 1
+        peopleCount: Int = 1,
+        knownNumber: Int? = null,
+        knownSectorId: String? = null,
+        knownSectorName: String? = null
     ) {
         val existing = tableDao.getTableById(tableId)
         if (existing != null) {
@@ -94,16 +97,19 @@ class TableReadRepository @Inject constructor(
                 comandaId = comandaId,
                 customerName = customerName ?: existing.customerName,
                 peopleCount = peopleCount,
+                number = if (existing.number > 0) existing.number else (knownNumber ?: existing.number),
+                sectorId = if (existing.sectorId.isNotBlank()) existing.sectorId else (knownSectorId ?: existing.sectorId),
+                sectorName = if (existing.sectorName.isNotBlank()) existing.sectorName else (knownSectorName ?: existing.sectorName),
                 updatedAt = System.currentTimeMillis()
             )
             tableDao.insert(updated)
         } else {
             val newEntity = TableEntity(
                 id = tableId,
-                number = 0,
+                number = knownNumber ?: 0,
                 status = Table.Status.OCCUPIED,
-                sectorName = "",
-                sectorId = "",
+                sectorName = knownSectorName ?: "",
+                sectorId = knownSectorId ?: "",
                 customerName = customerName,
                 comandaId = comandaId,
                 peopleCount = peopleCount,

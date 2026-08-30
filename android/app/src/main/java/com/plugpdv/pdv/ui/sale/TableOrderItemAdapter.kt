@@ -42,8 +42,8 @@ class TableOrderItemAdapter(
 
         fun bind(item: TableItem, listener: (TableItem) -> Unit) {
             tvName.text = item.product.name ?: "Sem Nome"
-            tvQuantity.text = "x${item.quantity}"
-            tvPrice.text = CurrencyManager.getInstance().format((item.product.selling_price ?: 0.0) * item.quantity.toDouble())
+            val price = item.product.selling_price
+            tvPrice.text = if (price != null) CurrencyManager.getInstance().format(price * item.quantity.toDouble()) else "UNKNOWN"
             
             if (item.observation.isNullOrEmpty()) {
                 tvObservation.visibility = View.GONE

@@ -82,6 +82,7 @@ class TableReadModelTest {
         outboxSyncManager = mock()
         saleSyncScheduler = mock()
 
+        whenever(outboxSyncManager.checkoutResultEvents).thenReturn(kotlinx.coroutines.flow.MutableSharedFlow())
         whenever(taxRepository.getActiveTaxesLiveData()).thenReturn(androidx.lifecycle.MutableLiveData(emptyList()))
 
         tableReadRepository = TableReadRepository(context, tableDao, apiService, catalogDao)
@@ -1941,9 +1942,8 @@ class TableReadModelTest {
         val table = orderViewModel.table.value
         assertEquals(1, table?.items?.size)
         val item = table?.items?.first()
-        // Must NOT fallback to catalog 15.0
-        assertEquals(0.0, item?.product?.selling_price ?: 0.0, 0.001)
-        assertNotEquals(15.0, item?.product?.selling_price ?: 0.0, 0.001)
+        // Must NOT fallback to catalog 15.0 and must remain null (UNKNOWN), never converted to 0.0
+        assertNull(item?.product?.selling_price)
     }
 
     /**
@@ -1962,5 +1962,279 @@ class TableReadModelTest {
         } catch (e: kotlinx.coroutines.CancellationException) {
             assertEquals("Coroutine cancelled intentionally", e.message)
         }
+    }
+
+    /**
+     * OFFLINE-READ-33: Item split with unknown historical price fails closed.
+     */
+    @Test
+    fun testOFFLINE_READ_33_itemSplitWithUnknownHistoricalPrice_failsClosed() = runBlocking {
+        val testTable = Table(
+            id = "tbl-33",
+            number = 33,
+            status = "OCCUPIED",
+            comandaId = "cmd-33",
+            total = 100.0,
+            paidAmount = 0.0
+        )
+        // Item with UNKNOWN price (null selling_price)
+        val itemUnknown = TableItem(
+            product = Product(id = "p-unknown", name = "Special Dish", selling_price = null),
+            quantity = 2
+        )
+        testTable.items.add(itemUnknown)
+
+        val checkoutViewModel = CheckoutViewModel(
+            context = context,
+            apiService = apiService,
+            taxRepository = taxRepository,
+            outboxDao = outboxDao,
+            paymentAttemptDao = paymentAttemptDao,
+            outboxSyncManager = outboxSyncManager,
+            saleSyncScheduler = saleSyncScheduler,
+            comandaSnapshotRepository = comandaSnapshotRepository,
+            tableReadRepository = tableReadRepository
+        )
+
+        val detail = ComandaDetailResponse(
+            id = "cmd-33",
+            mesaId = "tbl-33",
+            status = "ABERTA",
+            baseCurrency = "BRL",
+            total = 100.0,
+            totalPago = 0.0,
+            totalPagoBase = 0.0,
+            saldoBase = 100.0,
+            itens = listOf(
+                MesaItemDto(id = "it-1", produto_id = "p-unknown", nome = "Special Dish", quantidade = 2, preco_unitario = null, subtotal = null)
+            )
+        )
+        whenever(apiService.getComandaDetail(any(), any())).thenReturn(detail)
+
+        checkoutViewModel.init(testTable, "token", "session-1", "op-1", "Operador")
+        waitUntil { checkoutViewModel.uiState.value.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE }
+
+        // Switch to split by items (mode 2)
+        checkoutViewModel.setSplitMode(2)
+        assertTrue(checkoutViewModel.uiState.value.isPayButtonBlocked)
+        assertEquals("Divisão por itens indisponível: item com preço histórico desconhecido.", checkoutViewModel.uiState.value.blockReason)
+
+        // Select the item and attempt commit
+        checkoutViewModel.onItemSelected(0, true)
+        assertTrue(checkoutViewModel.uiState.value.isPayButtonBlocked)
+
+        try {
+            checkoutViewModel.buildCommitRequest(PaymentMethod.CASH)
+            fail("Expected IllegalStateException for unknown price item in split")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message?.contains("ITEM_SPLIT_UNKNOWN_PRICE") == true)
+        }
+    }
+
+    /**
+     * OFFLINE-READ-34: Snapshot with null baseMinorUnitDigits does NOT default to 2.
+     * Expected: Accounting summary null, money display blocked/unavailable.
+     */
+    @Test
+    fun testOFFLINE_READ_34_missingFrozenDigits_noDefault2_blocksMoneyDisplay() = runBlocking {
+        val snapshotMissingDigits = ComandaSnapshotEntity(
+            localComandaId = UUID.randomUUID().toString(),
+            serverComandaId = "cmd-34",
+            tenantId = TEST_TENANT,
+            tableId = "tbl-34",
+            tableNumber = 34,
+            customerIdentifier = "Mesa 34",
+            baseCurrency = "BRL",
+            baseMinorUnitDigits = null, // MISSING frozen digits
+            serverStatus = "ABERTA",
+            localStatus = "OPEN",
+            syncStatus = "SYNCED",
+            serverRevision = 1L,
+            localRevision = 1L,
+            totalBaseMinor = 10000L,
+            paidBaseMinor = 0L,
+            balanceBaseMinor = 10000L,
+            itemsJson = "[]",
+            paymentsJson = "[]",
+            requiresReconciliation = false,
+            reconciliationReason = null,
+            serverUpdatedAt = null,
+            cachedAt = System.currentTimeMillis()
+        )
+        comandaSnapshotDao.upsert(snapshotMissingDigits)
+        tableDao.insert(
+            TableEntity(id = "tbl-34", number = 34, status = "OCCUPIED", sectorName = "Geral", sectorId = "sec-1", comandaId = "cmd-34", updatedAt = System.currentTimeMillis())
+        )
+
+        val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshotMissingDigits, "cmd-34", context)
+        assertEquals(SnapshotAuthorityDecision.MISSING_AUTHORITY, decision)
+
+        val orderViewModel = TableOrderViewModel(
+            context = context,
+            apiService = apiService,
+            catalogDao = catalogDao,
+            tableReadRepository = tableReadRepository,
+            comandaSnapshotRepository = comandaSnapshotRepository
+        )
+
+        // Mock network error to load exclusively from local snapshot
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw IOException("Offline") }
+
+        orderViewModel.init("tbl-34", 34, "sec-1", "token")
+        waitUntil { orderViewModel.table.value != null }
+
+        // Accounting summary must NOT be created with invented scale of 2
+        assertNull(orderViewModel.accountingSummary.value)
+    }
+
+    /**
+     * OFFLINE-READ-35: applyServerConfirmedOpen preserves known topology metadata.
+     */
+    @Test
+    fun testOFFLINE_READ_35_applyServerConfirmedOpen_preservesKnownTopology() = runBlocking {
+        // Apply confirmed open when table was not in Room yet
+        tableReadRepository.applyServerConfirmedOpen(
+            tableId = "tbl-35",
+            comandaId = "cmd-35",
+            customerName = "João Silva",
+            peopleCount = 4,
+            knownNumber = 35,
+            knownSectorId = "sec-vip",
+            knownSectorName = "VIP Lounge"
+        )
+
+        val table = tableReadRepository.getTableById("tbl-35")
+        assertNotNull(table)
+        assertEquals(35, table?.number)
+        assertEquals("sec-vip", table?.sectorId)
+        assertEquals("VIP Lounge", table?.sectorName)
+        assertEquals("cmd-35", table?.comandaId)
+        assertEquals("João Silva", table?.customerName)
+        assertEquals(4, table?.people_count)
+        assertEquals(Table.Status.OCCUPIED, table?.status)
+    }
+
+    /**
+     * OFFLINE-READ-36: HTTP 5xx during checkout remote refresh preserves READY_LOCAL with warning.
+     */
+    @Test
+    fun testOFFLINE_READ_36_http5xx_preservesReadyLocalWithWarning() = runBlocking {
+        val usableSnapshot = ComandaSnapshotEntity(
+            localComandaId = UUID.randomUUID().toString(),
+            serverComandaId = "cmd-36",
+            tableId = "tbl-36",
+            tenantId = TEST_TENANT,
+            tableNumber = 36,
+            customerIdentifier = "Mesa 36",
+            baseCurrency = "BRL",
+            baseMinorUnitDigits = 2,
+            serverStatus = "ABERTA",
+            localStatus = "OPEN",
+            syncStatus = "SYNCED",
+            serverRevision = 1L,
+            localRevision = 1L,
+            totalBaseMinor = 5000L,
+            paidBaseMinor = 0L,
+            balanceBaseMinor = 5000L,
+            itemsJson = "[]",
+            paymentsJson = "[]",
+            requiresReconciliation = false,
+            reconciliationReason = null,
+            serverUpdatedAt = null,
+            cachedAt = System.currentTimeMillis()
+        )
+        comandaSnapshotDao.upsert(usableSnapshot)
+
+        val testTable = Table(id = "tbl-36", number = 36, status = "OCCUPIED", comandaId = "cmd-36")
+        tableDao.insert(
+            TableEntity(id = "tbl-36", number = 36, status = "OCCUPIED", sectorName = "Geral", sectorId = "sec-1", comandaId = "cmd-36", updatedAt = System.currentTimeMillis())
+        )
+
+        // Mock 500 Server Error
+        val errorResponse = Response.error<ComandaDetailResponse>(
+            500,
+            "Internal Server Error".toResponseBody("application/json".toMediaTypeOrNull())
+        )
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw HttpException(errorResponse) }
+
+        val checkoutViewModel = CheckoutViewModel(
+            context = context,
+            apiService = apiService,
+            taxRepository = taxRepository,
+            outboxDao = outboxDao,
+            paymentAttemptDao = paymentAttemptDao,
+            outboxSyncManager = outboxSyncManager,
+            saleSyncScheduler = saleSyncScheduler,
+            comandaSnapshotRepository = comandaSnapshotRepository,
+            tableReadRepository = tableReadRepository
+        )
+
+        checkoutViewModel.init(testTable, "token", "session-1", "op-1", "Operador")
+        waitUntil { checkoutViewModel.uiState.value.refreshWarning != null }
+
+        // Must preserve READY_LOCAL, NOT drop to LOAD_ERROR
+        assertEquals(MoneyAuthorityState.READY_LOCAL, checkoutViewModel.uiState.value.moneyAuthorityState)
+        assertTrue(checkoutViewModel.uiState.value.isPayButtonBlocked)
+        assertEquals("Sem conexão — exibindo dados salvos", checkoutViewModel.uiState.value.refreshWarning)
+        assertTrue(checkoutViewModel.moneyAuthorityLoaded)
+    }
+
+    /**
+     * OFFLINE-READ-37: HTTP 5xx during TableOrder sync preserves LOCAL_CACHED and warning.
+     */
+    @Test
+    fun testOFFLINE_READ_37_http5xx_tableOrderPreservesLocalCached() = runBlocking {
+        val usableSnapshot = ComandaSnapshotEntity(
+            localComandaId = UUID.randomUUID().toString(),
+            serverComandaId = "cmd-37",
+            tableId = "tbl-37",
+            tenantId = TEST_TENANT,
+            tableNumber = 37,
+            customerIdentifier = "Mesa 37",
+            baseCurrency = "BRL",
+            baseMinorUnitDigits = 2,
+            serverStatus = "ABERTA",
+            localStatus = "OPEN",
+            syncStatus = "SYNCED",
+            serverRevision = 1L,
+            localRevision = 1L,
+            totalBaseMinor = 8000L,
+            paidBaseMinor = 0L,
+            balanceBaseMinor = 8000L,
+            itemsJson = "[]",
+            paymentsJson = "[]",
+            requiresReconciliation = false,
+            reconciliationReason = null,
+            serverUpdatedAt = null,
+            cachedAt = System.currentTimeMillis()
+        )
+        comandaSnapshotDao.upsert(usableSnapshot)
+
+        tableDao.insert(
+            TableEntity(id = "tbl-37", number = 37, status = "OCCUPIED", sectorName = "Geral", sectorId = "sec-1", comandaId = "cmd-37", updatedAt = System.currentTimeMillis())
+        )
+
+        // Mock 503 Service Unavailable
+        val errorResponse = Response.error<ComandaDetailResponse>(
+            503,
+            "Service Unavailable".toResponseBody("application/json".toMediaTypeOrNull())
+        )
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw HttpException(errorResponse) }
+
+        val orderViewModel = TableOrderViewModel(
+            context = context,
+            apiService = apiService,
+            catalogDao = catalogDao,
+            tableReadRepository = tableReadRepository,
+            comandaSnapshotRepository = comandaSnapshotRepository
+        )
+
+        orderViewModel.init("tbl-37", 37, "sec-1", "token")
+        waitUntil { orderViewModel.refreshWarning.value != null }
+
+        // Must preserve LOCAL_CACHED, not destructive error
+        assertEquals(ReadProvenance.LOCAL_CACHED, orderViewModel.readProvenance.value)
+        assertEquals("Sem conexão — exibindo dados salvos", orderViewModel.refreshWarning.value)
+        assertNull(orderViewModel.error.value)
     }
 }

@@ -160,35 +160,42 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val digits = state.baseMinorUnitDigits
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
 
-        val totalDecimal = state.totalBaseMinor?.let {
-            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-        } ?: BigDecimal.ZERO
+        if (digits == null || state.baseCurrency.isNullOrBlank()) {
+            b.tvComandaTotal.text = "--"
+            b.tvTotalPaid.text = "--"
+            b.tvPendingBalance.text = "--"
+            b.tvTotalToPay.text = "--"
+        } else {
+            val totalDecimal = state.totalBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
 
-        val paidDecimal = state.paidBaseMinor?.let {
-            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-        } ?: BigDecimal.ZERO
+            val paidDecimal = state.paidBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
 
-        val balanceDecimal = state.balanceBaseMinor?.let {
-            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-        } ?: BigDecimal.ZERO
+            val balanceDecimal = state.balanceBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
 
-        fun formatMoney(amount: BigDecimal): String {
-            val selectedCurrency = cm.selectedCurrency
-            if (selectedCurrency.equals(baseCurrency, ignoreCase = true)) {
-                return cm.formatExplicit(amount.toDouble(), baseCurrency)
+            fun formatMoney(amount: BigDecimal): String {
+                val selectedCurrency = cm.selectedCurrency
+                if (selectedCurrency.equals(baseCurrency, ignoreCase = true)) {
+                    return cm.formatExplicit(amount.toDouble(), baseCurrency)
+                }
+                val quote = cm.quoteTransactionAmount(amount, selectedCurrency, baseCurrency).getOrNull()
+                return if (quote != null) {
+                    cm.formatExplicit(quote.transactionAmount.toDouble(), selectedCurrency)
+                } else {
+                    cm.formatExplicit(amount.toDouble(), baseCurrency)
+                }
             }
-            val quote = cm.quoteTransactionAmount(amount, selectedCurrency, baseCurrency).getOrNull()
-            return if (quote != null) {
-                cm.formatExplicit(quote.transactionAmount.toDouble(), selectedCurrency)
-            } else {
-                cm.formatExplicit(amount.toDouble(), baseCurrency)
-            }
+
+            b.tvComandaTotal.text = formatMoney(totalDecimal)
+            b.tvTotalPaid.text = formatMoney(paidDecimal)
+            b.tvPendingBalance.text = formatMoney(balanceDecimal)
+            b.tvTotalToPay.text = cm.format(state.finalToPay)
         }
-
-        b.tvComandaTotal.text = formatMoney(totalDecimal)
-        b.tvTotalPaid.text = formatMoney(paidDecimal)
-        b.tvPendingBalance.text = formatMoney(balanceDecimal)
-        b.tvTotalToPay.text = cm.format(state.finalToPay)
 
         if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
             b.btnPayLink.isEnabled = true
@@ -196,8 +203,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             b.btnPayLink.setOnClickListener { viewModel.fetchComandaPayments() }
         } else {
             b.btnPayLink.setOnClickListener { finalizePayment() }
-            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation
-            if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
+            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation && state.baseMinorUnitDigits != null
+            if (state.baseMinorUnitDigits == null && state.moneyAuthorityState != MoneyAuthorityState.LOAD_ERROR) {
+                b.btnPayLink.text = "Dados financeiros indisponíveis"
+            } else if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
                 b.btnPayLink.text = "Carregando comanda..."
             } else if (state.requiresReconciliation) {
                 b.btnPayLink.text = "Pagamento aprovado requer conciliação"
@@ -414,7 +423,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         sb.append(ctx.getString(R.string.print_table_label)).append("\n")
         sb.append("--------------------------------\n")
 
-        val digits = state.baseMinorUnitDigits
+        val digits = state.baseMinorUnitDigits ?: return
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
         val totalDecimal = state.totalBaseMinor?.let {
             ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
@@ -495,8 +504,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             val tip = items[position]
             holder.binding.cbItemSelected.isChecked = tip.selected
             holder.binding.tvItemName.text = "${tip.item.product.name ?: "Sem Nome"} (x${tip.selectedQuantity})"
-            holder.binding.tvItemValue.text = CurrencyManager.getInstance().format(tip.item.product.selling_price ?: 0.0)
-            holder.binding.tvItemSubtotal.text = CurrencyManager.getInstance().format((tip.item.product.selling_price ?: 0.0) * tip.selectedQuantity)
+            val price = tip.item.product.selling_price
+            holder.binding.tvItemValue.text = if (price != null) CurrencyManager.getInstance().format(price) else "UNKNOWN"
+            holder.binding.tvItemSubtotal.text = if (price != null) CurrencyManager.getInstance().format(price * tip.selectedQuantity) else "UNKNOWN"
             
             holder.itemView.setOnClickListener {
                 tip.selected = !tip.selected

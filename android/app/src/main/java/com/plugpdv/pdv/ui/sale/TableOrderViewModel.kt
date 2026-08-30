@@ -169,7 +169,7 @@ class TableOrderViewModel @Inject constructor(
                 val product = Product(
                     id = pId,
                     name = productName,
-                    selling_price = itemPrice ?: 0.0
+                    selling_price = itemPrice
                 )
                 targetTable.items.add(TableItem(product = product, quantity = serverQty).apply {
                     id = firstDto.id
@@ -181,14 +181,16 @@ class TableOrderViewModel @Inject constructor(
             }
             targetTable.calculateTotal()
 
-            if (snapshot.totalBaseMinor != null && snapshot.paidBaseMinor != null && snapshot.balanceBaseMinor != null && !snapshot.baseCurrency.isNullOrBlank()) {
+            if (snapshot.totalBaseMinor != null && snapshot.paidBaseMinor != null && snapshot.balanceBaseMinor != null && !snapshot.baseCurrency.isNullOrBlank() && snapshot.baseMinorUnitDigits != null) {
                 _accountingSummary.value = ComandaAccountingSummary(
                     baseCurrency = snapshot.baseCurrency,
-                    baseMinorUnitDigits = snapshot.baseMinorUnitDigits ?: 2,
+                    baseMinorUnitDigits = snapshot.baseMinorUnitDigits,
                     totalBaseMinor = snapshot.totalBaseMinor,
                     paidBaseMinor = snapshot.paidBaseMinor,
                     balanceBaseMinor = snapshot.balanceBaseMinor
                 )
+            } else {
+                _accountingSummary.value = null
             }
         } catch (e: CancellationException) {
             throw e
@@ -245,6 +247,13 @@ class TableOrderViewModel @Inject constructor(
                 }
                 426 -> {
                     _error.value = "Atualização obrigatória do aplicativo necessária."
+                }
+                in 500..599 -> {
+                    if (_readProvenance.value == ReadProvenance.LOCAL_CACHED) {
+                        _refreshWarning.value = "Sem conexão — exibindo dados salvos"
+                    } else {
+                        _error.value = "Erro no servidor (Código: ${e.code()})"
+                    }
                 }
                 else -> {
                     _error.value = "Erro no servidor (Código: ${e.code()})"

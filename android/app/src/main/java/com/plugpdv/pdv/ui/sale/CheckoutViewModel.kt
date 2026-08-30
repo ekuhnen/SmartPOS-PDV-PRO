@@ -43,7 +43,7 @@ data class CheckoutUiState(
     val moneyAuthorityState: MoneyAuthorityState = MoneyAuthorityState.LOADING,
     val authoritySource: String? = null,
     val baseCurrency: String? = null,
-    val baseMinorUnitDigits: Int = 2,
+    val baseMinorUnitDigits: Int? = null,
     val totalBaseMinor: Long? = null,
     val paidBaseMinor: Long? = null,
     val balanceBaseMinor: Long? = null,
@@ -174,7 +174,7 @@ class CheckoutViewModel @Inject constructor(
             applyLocalAuthorityState(localSnapshot, localAuthorityDecision, durableBlock)
 
             // 5. Perform remote refresh sequentially
-            performRemoteRefresh(currentTable, localAuthorityDecision, durableBlock)
+            performRemoteRefresh(currentTable, token, cId, durableBlock, localAuthorityDecision)
         }
 
         // Listen for checkout sync events
@@ -315,13 +315,25 @@ class CheckoutViewModel @Inject constructor(
     ) {
         if (snapshot == null) return
 
-        val digits = snapshot.baseMinorUnitDigits ?: 2
-        val balDecimal = snapshot.balanceBaseMinor?.let {
-            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-        } ?: BigDecimal.ZERO
+        val digits = snapshot.baseMinorUnitDigits
+        val balDecimal = if (digits != null && snapshot.balanceBaseMinor != null) {
+            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(snapshot.balanceBaseMinor, digits)
+        } else {
+            null
+        }
 
         when (decision) {
             SnapshotAuthorityDecision.USABLE -> {
+                if (digits == null) {
+                    moneyAuthorityLoaded = false
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                        isPayButtonBlocked = true,
+                        blockReason = "Dígitos decimais da moeda não definidos no snapshot.",
+                        error = "Dados financeiros inválidos."
+                    )
+                    return
+                }
                 moneyAuthorityLoaded = true
                 comandaBaseCurrency = snapshot.baseCurrency
 
@@ -336,7 +348,7 @@ class CheckoutViewModel @Inject constructor(
                     totalBaseMinor = snapshot.totalBaseMinor,
                     paidBaseMinor = snapshot.paidBaseMinor,
                     balanceBaseMinor = snapshot.balanceBaseMinor,
-                    currentToPay = balDecimal.toDouble(),
+                    currentToPay = balDecimal?.toDouble() ?: 0.0,
                     isPendingSync = durableBlock.isPendingSync,
                     isPayButtonBlocked = isBlocked,
                     requiresReconciliation = requiresRecon,
@@ -355,71 +367,124 @@ class CheckoutViewModel @Inject constructor(
                     totalBaseMinor = snapshot.totalBaseMinor,
                     paidBaseMinor = snapshot.paidBaseMinor,
                     balanceBaseMinor = snapshot.balanceBaseMinor,
-                    currentToPay = balDecimal.toDouble(),
+                    currentToPay = balDecimal?.toDouble() ?: 0.0,
                     isPendingSync = durableBlock.isPendingSync,
                     requiresReconciliation = true,
                     isPayButtonBlocked = true,
-                    blockReason = durableBlock.reason ?: "Pagamento aprovado requer conciliação"
+                    blockReason = snapshot.reconciliationReason ?: durableBlock.reason ?: "Comanda requer conciliação com o servidor."
                 )
                 calculateFinalAmount()
             }
-            else -> {
-                // Other non-usable local decisions remain in LOADING or durable blocker state
-                if (durableBlock.isBlocked) {
-                    _uiState.value = _uiState.value.copy(
-                        isPayButtonBlocked = true,
-                        isPendingSync = durableBlock.isPendingSync,
-                        requiresReconciliation = durableBlock.requiresReconciliation,
-                        blockReason = durableBlock.reason
-                    )
-                }
+            SnapshotAuthorityDecision.CLOSED -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
+                    authoritySource = "LOCAL",
+                    baseCurrency = snapshot.baseCurrency,
+                    baseMinorUnitDigits = digits,
+                    totalBaseMinor = snapshot.totalBaseMinor,
+                    paidBaseMinor = snapshot.paidBaseMinor,
+                    balanceBaseMinor = snapshot.balanceBaseMinor,
+                    currentToPay = 0.0,
+                    isPayButtonBlocked = true,
+                    paymentSuccess = false,
+                    isComandaClosed = true,
+                    requiresReconciliation = false,
+                    blockReason = "Comanda já está fechada."
+                )
+            }
+            SnapshotAuthorityDecision.CANCELLED -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    authoritySource = "LOCAL",
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Comanda cancelada."
+                )
+            }
+            SnapshotAuthorityDecision.WRONG_TENANT -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    authoritySource = "LOCAL",
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Tenant mismatch: dados pertencem a outro estabelecimento."
+                )
+            }
+            SnapshotAuthorityDecision.WRONG_COMANDA -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    authoritySource = "LOCAL",
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Comanda mismatch: snapshot pertence a outra comanda."
+                )
+            }
+            SnapshotAuthorityDecision.CONFLICT -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
+                    authoritySource = "LOCAL",
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = true,
+                    blockReason = "Conflito de sincronização detectado na comanda."
+                )
+            }
+            SnapshotAuthorityDecision.MISSING_AUTHORITY -> {
+                moneyAuthorityLoaded = false
+                _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                    authoritySource = "LOCAL",
+                    isPayButtonBlocked = true,
+                    requiresReconciliation = false,
+                    blockReason = "Não foi possível carregar os dados financeiros da comanda."
+                )
             }
         }
     }
 
     fun fetchComandaPayments() {
         val currentTable = table ?: return
+        val currentToken = token ?: return
+        val cId = currentTable.comandaId ?: return
         viewModelScope.launch {
             val durableBlock = checkDurablePaymentBlockers(currentTable)
             val localSnapshot = loadLocalSnapshot(currentTable)
-            val cId = currentTable.comandaId.orEmpty()
             val localAuthorityDecision = if (localSnapshot != null && cId.isNotEmpty()) {
                 ComandaSnapshotAuthorityPolicy.evaluate(localSnapshot, cId, context)
             } else {
                 SnapshotAuthorityDecision.MISSING_AUTHORITY
             }
-            performRemoteRefresh(currentTable, localAuthorityDecision, durableBlock)
+            performRemoteRefresh(currentTable, currentToken, cId, durableBlock, localAuthorityDecision)
         }
     }
 
     private suspend fun performRemoteRefresh(
         currentTable: Table,
-        localAuthorityDecision: SnapshotAuthorityDecision,
-        durableBlock: DurableBlockerResult
+        currentToken: String,
+        cId: String,
+        durableBlock: DurableBlockerResult,
+        localAuthorityDecision: SnapshotAuthorityDecision
     ) {
-        val currentToken = token ?: return
-        val cId = currentTable.comandaId ?: return
-
         try {
             val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
-            val cachedSnapshot = try {
-                comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e("CheckoutViewModel", "Non-fatal failure caching comanda snapshot: ${e.message}", e)
-                null
-            }
+            val cachedSnapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
             if (cachedSnapshot == null) {
-                // If remote caching failed to produce a valid snapshot, DO NOT synthesize money or create READY_REMOTE
+                // Remote detail could not be normalized into a snapshot
                 if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
+                    moneyAuthorityLoaded = true
                     _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
                         refreshWarning = "Sem conexão — exibindo dados salvos",
                         isPayButtonBlocked = true,
                         blockReason = durableBlock.reason ?: "Sem conexão para processar pagamento"
                     )
                 } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
+                    moneyAuthorityLoaded = false
                     _uiState.value = _uiState.value.copy(
                         moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
                         isPayButtonBlocked = true,
@@ -441,18 +506,20 @@ class CheckoutViewModel @Inject constructor(
             }
 
             val decision = ComandaSnapshotAuthorityPolicy.evaluate(cachedSnapshot, cId, context)
-            val digits = cachedSnapshot.baseMinorUnitDigits ?: 2
+            val digits = cachedSnapshot.baseMinorUnitDigits
             val baseCurrency = cachedSnapshot.baseCurrency
             val totalBaseMinor = cachedSnapshot.totalBaseMinor
             val paidBaseMinor = cachedSnapshot.paidBaseMinor
             val balanceBaseMinor = cachedSnapshot.balanceBaseMinor
 
-            val balDecimal = balanceBaseMinor?.let {
-                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-            } ?: BigDecimal.ZERO
+            val balDecimal = if (digits != null && balanceBaseMinor != null) {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(balanceBaseMinor, digits)
+            } else {
+                null
+            }
 
             val isComandaClosed = detail.status.equals("FECHADA", ignoreCase = true) || decision == SnapshotAuthorityDecision.CLOSED
-            val requiresRecon = durableBlock.requiresReconciliation || decision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || detail.requiresReconciliation || baseCurrency.isNullOrBlank()
+            val requiresRecon = durableBlock.requiresReconciliation || decision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || detail.requiresReconciliation || baseCurrency.isNullOrBlank() || digits == null
 
             if (requiresRecon) {
                 moneyAuthorityLoaded = false
@@ -466,13 +533,13 @@ class CheckoutViewModel @Inject constructor(
                     paidBaseMinor = paidBaseMinor,
                     balanceBaseMinor = balanceBaseMinor,
                     paymentsHistory = detail.pagamentos.orEmpty(),
-                    currentToPay = balDecimal.toDouble(),
+                    currentToPay = balDecimal?.toDouble() ?: 0.0,
                     isPendingSync = durableBlock.isPendingSync,
                     isPayButtonBlocked = true,
                     requiresReconciliation = true,
                     paymentSuccess = false,
                     isComandaClosed = false,
-                    blockReason = cachedSnapshot.reconciliationReason ?: durableBlock.reason ?: if (baseCurrency.isNullOrBlank()) "Moeda-base não definida no servidor" else "Comanda requer conciliação com o servidor.",
+                    blockReason = cachedSnapshot.reconciliationReason ?: durableBlock.reason ?: if (baseCurrency.isNullOrBlank()) "Moeda-base não definida no servidor" else if (digits == null) "Dígitos decimais da moeda não definidos" else "Comanda requer conciliação com o servidor.",
                     refreshWarning = null
                 )
             } else if (isComandaClosed) {
@@ -509,7 +576,7 @@ class CheckoutViewModel @Inject constructor(
                             paidBaseMinor = paidBaseMinor,
                             balanceBaseMinor = balanceBaseMinor,
                             paymentsHistory = detail.pagamentos.orEmpty(),
-                            currentToPay = balDecimal.toDouble(),
+                            currentToPay = balDecimal?.toDouble() ?: 0.0,
                             isPendingSync = durableBlock.isPendingSync,
                             isPayButtonBlocked = true,
                             requiresReconciliation = true,
@@ -520,22 +587,23 @@ class CheckoutViewModel @Inject constructor(
                         )
                     } else {
                         moneyAuthorityLoaded = true
+                        comandaBaseCurrency = baseCurrency
                         _uiState.value = _uiState.value.copy(
                             moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
-                            authoritySource = "REMOTE",
+                            authoritySource = "LOCAL",
                             baseCurrency = baseCurrency,
                             baseMinorUnitDigits = digits,
                             totalBaseMinor = totalBaseMinor,
                             paidBaseMinor = paidBaseMinor,
                             balanceBaseMinor = balanceBaseMinor,
                             paymentsHistory = detail.pagamentos.orEmpty(),
-                            currentToPay = balDecimal.toDouble(),
+                            currentToPay = balDecimal?.toDouble() ?: 0.0,
                             isPendingSync = durableBlock.isPendingSync,
                             isPayButtonBlocked = true,
                             requiresReconciliation = false,
                             paymentSuccess = false,
                             isComandaClosed = false,
-                            blockReason = durableBlock.reason,
+                            blockReason = durableBlock.reason ?: "Pagamento aguardando sincronização",
                             refreshWarning = null
                         )
                     }
@@ -551,7 +619,7 @@ class CheckoutViewModel @Inject constructor(
                         paidBaseMinor = paidBaseMinor,
                         balanceBaseMinor = balanceBaseMinor,
                         paymentsHistory = detail.pagamentos.orEmpty(),
-                        currentToPay = balDecimal.toDouble(),
+                        currentToPay = balDecimal?.toDouble() ?: 0.0,
                         isPendingSync = durableBlock.isPendingSync,
                         isPayButtonBlocked = false,
                         requiresReconciliation = false,
@@ -579,8 +647,8 @@ class CheckoutViewModel @Inject constructor(
             throw e
         } catch (e: HttpException) {
             Log.e("CheckoutViewModel", "HTTP error ${e.code()} fetching comanda detail: ${e.message}", e)
-            moneyAuthorityLoaded = false
             if (e.code() == 401 || e.code() == 403 || e.code() == 426) {
+                moneyAuthorityLoaded = false
                 _uiState.value = _uiState.value.copy(
                     moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
                     isPayButtonBlocked = true,
@@ -589,12 +657,15 @@ class CheckoutViewModel @Inject constructor(
                 )
             } else if (e.code() in 500..599) {
                 if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
+                    moneyAuthorityLoaded = true
                     _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
                         refreshWarning = "Sem conexão — exibindo dados salvos",
                         isPayButtonBlocked = true,
                         blockReason = durableBlock.reason ?: "Servidor indisponível — exibindo dados salvos"
                     )
                 } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
+                    moneyAuthorityLoaded = false
                     _uiState.value = _uiState.value.copy(
                         moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
                         isPayButtonBlocked = true,
@@ -603,6 +674,7 @@ class CheckoutViewModel @Inject constructor(
                         refreshWarning = "Sem conexão — exibindo dados salvos"
                     )
                 } else {
+                    moneyAuthorityLoaded = false
                     _uiState.value = _uiState.value.copy(
                         moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
                         isPayButtonBlocked = true,
@@ -612,6 +684,7 @@ class CheckoutViewModel @Inject constructor(
                     )
                 }
             } else {
+                moneyAuthorityLoaded = false
                 _uiState.value = _uiState.value.copy(
                     moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
                     isPayButtonBlocked = true,
@@ -623,13 +696,16 @@ class CheckoutViewModel @Inject constructor(
             Log.e("CheckoutViewModel", "Network error fetching comanda payments: ${e.message}", e)
             if (localAuthorityDecision == SnapshotAuthorityDecision.USABLE) {
                 // Keep READY_LOCAL, do not downgrade to LOAD_ERROR
+                moneyAuthorityLoaded = true
                 _uiState.value = _uiState.value.copy(
+                    moneyAuthorityState = MoneyAuthorityState.READY_LOCAL,
                     refreshWarning = "Sem conexão — exibindo dados salvos",
                     isPayButtonBlocked = true,
                     blockReason = durableBlock.reason ?: "Sem conexão para processar pagamento"
                 )
             } else if (localAuthorityDecision == SnapshotAuthorityDecision.RECONCILIATION_REQUIRED || durableBlock.requiresReconciliation) {
                 // Keep RECONCILIATION_REQUIRED, network failure must never erase reconciliation requirement
+                moneyAuthorityLoaded = false
                 _uiState.value = _uiState.value.copy(
                     moneyAuthorityState = MoneyAuthorityState.RECONCILIATION_REQUIRED,
                     isPayButtonBlocked = true,
@@ -653,9 +729,13 @@ class CheckoutViewModel @Inject constructor(
     fun setSplitMode(mode: Int) {
         _uiState.value = _uiState.value.copy(splitMode = mode)
         val digits = _uiState.value.baseMinorUnitDigits
-        val balDecimal = _uiState.value.balanceBaseMinor?.let {
-            ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-        } ?: BigDecimal.ZERO
+        val balDecimal = if (digits != null) {
+            _uiState.value.balanceBaseMinor?.let {
+                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+            } ?: BigDecimal.ZERO
+        } else {
+            BigDecimal.ZERO
+        }
 
         when (mode) {
             0 -> _uiState.value = _uiState.value.copy(currentToPay = balDecimal.toDouble())
@@ -668,9 +748,13 @@ class CheckoutViewModel @Inject constructor(
     fun updatePeopleSplit(count: Int) {
         if (count > 0) {
             val digits = _uiState.value.baseMinorUnitDigits
-            val totalDecimal = _uiState.value.totalBaseMinor?.let {
-                ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
-            } ?: BigDecimal.ZERO
+            val totalDecimal = if (digits != null) {
+                _uiState.value.totalBaseMinor?.let {
+                    ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
+                } ?: BigDecimal.ZERO
+            } else {
+                BigDecimal.ZERO
+            }
             _uiState.value = _uiState.value.copy(currentToPay = totalDecimal.toDouble() / count)
         } else {
             _uiState.value = _uiState.value.copy(currentToPay = 0.0)
@@ -680,10 +764,20 @@ class CheckoutViewModel @Inject constructor(
 
     private fun setupItemsSplit() {
         itemsToPay.clear()
-        table?.items?.filter { !it.removed && it.quantity > it.paidQuantity }?.forEach {
+        val activeItems = table?.items?.filter { !it.removed && it.quantity > it.paidQuantity }.orEmpty()
+        activeItems.forEach {
             itemsToPay.add(TableItemPayment(it))
         }
-        _uiState.value = _uiState.value.copy(currentToPay = 0.0)
+        val hasUnknownPrice = activeItems.any { it.product.selling_price == null }
+        if (hasUnknownPrice) {
+            _uiState.value = _uiState.value.copy(
+                currentToPay = 0.0,
+                isPayButtonBlocked = true,
+                blockReason = "Divisão por itens indisponível: item com preço histórico desconhecido."
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(currentToPay = 0.0)
+        }
     }
 
     fun onItemSelected(position: Int, isSelected: Boolean) {
@@ -694,11 +788,21 @@ class CheckoutViewModel @Inject constructor(
     }
 
     private fun calculateItemsTotal() {
-        var total = 0.0
-        itemsToPay.filter { it.selected }.forEach {
-            total += (it.item.product.selling_price ?: 0.0) * it.selectedQuantity
+        val selectedItems = itemsToPay.filter { it.selected }
+        val hasUnknownPrice = selectedItems.any { it.item.product.selling_price == null }
+        if (hasUnknownPrice) {
+            _uiState.value = _uiState.value.copy(
+                currentToPay = 0.0,
+                isPayButtonBlocked = true,
+                blockReason = "Divisão por itens indisponível: item selecionado com preço histórico desconhecido."
+            )
+        } else {
+            var total = 0.0
+            selectedItems.forEach {
+                total += (it.item.product.selling_price ?: 0.0) * it.selectedQuantity
+            }
+            _uiState.value = _uiState.value.copy(currentToPay = total)
         }
-        _uiState.value = _uiState.value.copy(currentToPay = total)
         calculateFinalAmount()
     }
 
@@ -809,7 +913,9 @@ class CheckoutViewModel @Inject constructor(
             }
         }
 
-        val digits = _uiState.value.baseMinorUnitDigits
+        val digits = requireNotNull(_uiState.value.baseMinorUnitDigits) {
+            "FROZEN_DIGITS_MISSING: baseMinorUnitDigits is required for monetary operations"
+        }
         val balanceBaseMinor = _uiState.value.balanceBaseMinor ?: 0L
         val pendingBase = ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(balanceBaseMinor, digits)
         val remaining = pendingBase.subtract(quote.baseAmount)
@@ -822,8 +928,19 @@ class CheckoutViewModel @Inject constructor(
             else -> true
         }
 
+        if (_uiState.value.splitMode == 2) {
+            val selectedToPay = itemsToPay.filter { it.selected }
+            val itemWithUnknownPrice = selectedToPay.find { it.item.product.selling_price == null }
+            if (itemWithUnknownPrice != null) {
+                throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${itemWithUnknownPrice.item.product.name}' has unknown historical price")
+            }
+        }
+
         val saleItems = if (_uiState.value.splitMode == 2) {
-            itemsToPay.filter { it.selected }.map { SaleItem(it.item.product.id, it.item.product.name, it.selectedQuantity, it.item.product.selling_price ?: 0.0) }
+            itemsToPay.filter { it.selected }.map {
+                val price = it.item.product.selling_price ?: throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${it.item.product.name}' has unknown price")
+                SaleItem(it.item.product.id, it.item.product.name, it.selectedQuantity, price)
+            }
         } else if (_uiState.value.splitMode == 1) {
             currentTable.items.filter { !it.removed }
                 .map { SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0) }
@@ -862,6 +979,13 @@ class CheckoutViewModel @Inject constructor(
     ): PreparedCheckoutResult {
         if (!moneyAuthorityLoaded || comandaBaseCurrency.isNullOrBlank() || _uiState.value.moneyAuthorityState != MoneyAuthorityState.READY_REMOTE || _uiState.value.isPayButtonBlocked || _uiState.value.requiresReconciliation) {
             throw IllegalStateException("PAYMENT_MUTATION_FORBIDDEN: Authoritative remote checkout required")
+        }
+        if (_uiState.value.splitMode == 2) {
+            val selectedToPay = itemsToPay.filter { it.selected }
+            val itemWithUnknownPrice = selectedToPay.find { it.item.product.selling_price == null }
+            if (itemWithUnknownPrice != null) {
+                throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${itemWithUnknownPrice.item.product.name}' has unknown historical price")
+            }
         }
         val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
         val key = UUID.randomUUID().toString()
