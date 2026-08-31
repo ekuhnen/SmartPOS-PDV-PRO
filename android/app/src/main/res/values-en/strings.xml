@@ -117,4 +117,5 @@
     <string name="print_transaction_label">TRANSACTION:</string>
     <string name="print_doc_label">DOC:</string>
     <string name="print_sn_label">S/N:</string>
+    <string name="no_sale_mode_enabled">No sales mode is enabled for this user.</string>
 </resources>

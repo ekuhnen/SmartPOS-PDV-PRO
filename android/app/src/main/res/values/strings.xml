@@ -141,4 +141,5 @@
     <string name="print_transaction_label">TRANSACAO:</string>
     <string name="print_doc_label">DOC:</string>
     <string name="print_sn_label">S/N:</string>
+    <string name="no_sale_mode_enabled">Nenhum modo de venda está habilitado para este usuário.</string>
 </resources>

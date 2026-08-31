@@ -44,7 +44,7 @@ class DirectSaleActivity : BaseActivity() {
     private fun setupViewPager() {
         val prefs = getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val hasMesa = prefs.getBoolean(com.plugpdv.pdv.utils.Constants.HAS_MESA, false)
-        val hasVendaDireta = prefs.getBoolean(com.plugpdv.pdv.utils.Constants.HAS_VENDA_DIRETA, true)
+        val hasVendaDireta = prefs.getBoolean(com.plugpdv.pdv.utils.Constants.HAS_VENDA_DIRETA, false)
         val hasComanda = prefs.getBoolean(com.plugpdv.pdv.utils.Constants.HAS_COMANDA, false)
 
         val fragments = mutableListOf<androidx.fragment.app.Fragment>()
@@ -65,11 +65,17 @@ class DirectSaleActivity : BaseActivity() {
             titles.add(getString(R.string.tab_comanda))
         }
 
-        // Fallback se nada estiver liberado
         if (fragments.isEmpty()) {
-            fragments.add(VendaRapidaFragment.newInstance(token ?: ""))
-            titles.add(getString(R.string.tab_venda_rapida))
+            // Fail-closed non-sale state: no sale fragments, hide tabs & viewpager, show explicit message
+            binding.tabLayout.visibility = android.view.View.GONE
+            binding.viewPager.visibility = android.view.View.GONE
+            binding.noSaleModeContainer.visibility = android.view.View.VISIBLE
+            return
         }
+
+        binding.tabLayout.visibility = android.view.View.VISIBLE
+        binding.viewPager.visibility = android.view.View.VISIBLE
+        binding.noSaleModeContainer.visibility = android.view.View.GONE
 
         val adapter = SalePagerAdapter(this, fragments)
         binding.viewPager.adapter = adapter
@@ -88,5 +94,21 @@ class DirectSaleActivity : BaseActivity() {
 
     fun switchToTab(position: Int) {
         binding.viewPager.setCurrentItem(position, true)
+    }
+
+    companion object {
+        enum class AuthorizedMode {
+            MESA,
+            VENDA_DIRETA,
+            COMANDA
+        }
+
+        fun getAuthorizedModes(hasMesa: Boolean, hasVendaDireta: Boolean, hasComanda: Boolean): List<AuthorizedMode> {
+            val list = mutableListOf<AuthorizedMode>()
+            if (hasMesa) list.add(AuthorizedMode.MESA)
+            if (hasVendaDireta) list.add(AuthorizedMode.VENDA_DIRETA)
+            if (hasComanda) list.add(AuthorizedMode.COMANDA)
+            return list
+        }
     }
 }

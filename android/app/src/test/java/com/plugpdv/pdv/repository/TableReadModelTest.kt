@@ -13,6 +13,7 @@ import com.plugpdv.pdv.utils.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -779,7 +780,20 @@ class TableReadModelTest {
         assertFalse(state.requiresReconciliation)
 
         // Prepare checkout operation must succeed in READY_REMOTE
-        val prepared = checkoutViewModel.prepareCheckoutOperation(PaymentMethod.CREDIT)
+        val preparedDeferred = async {
+            checkoutViewModel.prepareCheckoutOperation(PaymentMethod.CREDIT)
+        }
+
+        waitUntil {
+            preparedDeferred.isCompleted
+        }
+
+        assertTrue(
+            "prepareCheckoutOperation did not complete",
+            preparedDeferred.isCompleted
+        )
+
+        val prepared = preparedDeferred.await()
         assertNotNull(prepared.operationKey)
         assertEquals("cmd-14", prepared.request.comandaId)
 
@@ -927,7 +941,7 @@ class TableReadModelTest {
             )
 
             checkoutViewModel.init(testTable, "token", "session-1", "op-1", "Operador")
-            waitUntil { checkoutViewModel.uiState.value.refreshWarning != null || checkoutViewModel.uiState.value.moneyAuthorityState != MoneyAuthorityState.LOADING }
+            waitUntil { checkoutViewModel.uiState.value.refreshWarning != null }
 
             val state = checkoutViewModel.uiState.value
             assertEquals("Trial $trial must be READY_LOCAL", MoneyAuthorityState.READY_LOCAL, state.moneyAuthorityState)

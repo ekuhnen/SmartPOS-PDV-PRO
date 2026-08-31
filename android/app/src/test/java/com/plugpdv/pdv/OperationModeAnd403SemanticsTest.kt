@@ -10,6 +10,7 @@ import com.plugpdv.pdv.models.ComandaDetailResponse
 import com.plugpdv.pdv.models.RestaurantResponse
 import com.plugpdv.pdv.repository.ComandaSnapshotRepository
 import com.plugpdv.pdv.repository.TableReadRepository
+import com.plugpdv.pdv.util.SaleModeUtil
 import com.plugpdv.pdv.ui.sale.MesaViewModel
 import com.plugpdv.pdv.ui.sale.TableOrderViewModel
 import com.plugpdv.pdv.utils.Constants
@@ -322,7 +323,7 @@ class OperationModeAnd403SemanticsTest {
     }
 
     // =========================================================================
-    // 3. OPERATION MODE INDEPENDENCE MATRIX
+    // 3. OPERATION MODE INDEPENDENCE MATRIX & FAIL-CLOSED NAVIGATION (HOTFIX-01C)
     // =========================================================================
 
     private fun computeVisibleTabs(hasMesa: Boolean, hasVendaDireta: Boolean, hasComanda: Boolean): List<String> {
@@ -330,40 +331,68 @@ class OperationModeAnd403SemanticsTest {
         if (hasMesa) titles.add("Mesas")
         if (hasVendaDireta) titles.add("Venda Rápida")
         if (hasComanda) titles.add("Comandas")
-        if (titles.isEmpty()) titles.add("Venda Rápida") // Fallback
+        // HOTFIX-01C: No implicit fallback to Venda Rápida! Fail-closed empty list.
         return titles
     }
 
     @Test
-    fun testModeMatrix_mesaTrue_vendaTrue_comandaFalse() {
-        val tabs = computeVisibleTabs(hasMesa = true, hasVendaDireta = true, hasComanda = false)
+    fun testModeMatrix_A_mesaTrue_vendaTrue_comandaFalse() {
+        val hasMesa = true
+        val hasVendaDireta = true
+        val hasComanda = false
+
+        val authorized = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertEquals(listOf(SaleModeUtil.AuthorizedMode.MESA, SaleModeUtil.AuthorizedMode.VENDA_DIRETA), authorized)
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
         assertEquals(listOf("Mesas", "Venda Rápida"), tabs)
         assertTrue(tabs.contains("Mesas"))
         assertTrue(tabs.contains("Venda Rápida"))
-        assertFalse(tabs.contains("Comandas"))
+        assertFalse("Comanda must not appear when comanda=false", tabs.contains("Comandas"))
     }
 
     @Test
-    fun testModeMatrix_mesaFalse_vendaTrue_comandaTrue() {
-        val tabs = computeVisibleTabs(hasMesa = false, hasVendaDireta = true, hasComanda = true)
+    fun testModeMatrix_B_mesaFalse_vendaTrue_comandaTrue() {
+        val hasMesa = false
+        val hasVendaDireta = true
+        val hasComanda = true
+
+        val authorized = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertEquals(listOf(SaleModeUtil.AuthorizedMode.VENDA_DIRETA, SaleModeUtil.AuthorizedMode.COMANDA), authorized)
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
         assertEquals(listOf("Venda Rápida", "Comandas"), tabs)
-        assertFalse(tabs.contains("Mesas"))
+        assertFalse("Mesa must not appear when mesa=false", tabs.contains("Mesas"))
         assertTrue(tabs.contains("Venda Rápida"))
         assertTrue(tabs.contains("Comandas"))
     }
 
     @Test
-    fun testModeMatrix_mesaTrue_vendaFalse_comandaTrue() {
-        val tabs = computeVisibleTabs(hasMesa = true, hasVendaDireta = false, hasComanda = true)
+    fun testModeMatrix_C_mesaTrue_vendaFalse_comandaTrue() {
+        val hasMesa = true
+        val hasVendaDireta = false
+        val hasComanda = true
+
+        val authorized = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertEquals(listOf(SaleModeUtil.AuthorizedMode.MESA, SaleModeUtil.AuthorizedMode.COMANDA), authorized)
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
         assertEquals(listOf("Mesas", "Comandas"), tabs)
         assertTrue(tabs.contains("Mesas"))
-        assertFalse(tabs.contains("Venda Rápida"))
+        assertFalse("Venda Rápida must not appear when venda=false", tabs.contains("Venda Rápida"))
         assertTrue(tabs.contains("Comandas"))
     }
 
     @Test
-    fun testModeMatrix_allTrue() {
-        val tabs = computeVisibleTabs(hasMesa = true, hasVendaDireta = true, hasComanda = true)
+    fun testModeMatrix_D_allTrue() {
+        val hasMesa = true
+        val hasVendaDireta = true
+        val hasComanda = true
+
+        val authorized = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertEquals(3, authorized.size)
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
         assertEquals(listOf("Mesas", "Venda Rápida", "Comandas"), tabs)
         assertTrue(tabs.contains("Mesas"))
         assertTrue(tabs.contains("Venda Rápida"))
@@ -371,9 +400,43 @@ class OperationModeAnd403SemanticsTest {
     }
 
     @Test
-    fun testModeMatrix_allFalse_fallbackVendaRapida() {
-        val tabs = computeVisibleTabs(hasMesa = false, hasVendaDireta = false, hasComanda = false)
-        assertEquals(listOf("Venda Rápida"), tabs)
+    fun testModeMatrix_E_allFalse_zeroSaleFragments_zeroTabs_noVendaFallback() {
+        val hasMesa = false
+        val hasVendaDireta = false
+        val hasComanda = false
+
+        val authorized = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertTrue("Zero authorized modes when all flags false", authorized.isEmpty())
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
+        assertTrue("Zero sale tabs when all modes are false — NO Venda Rápida fallback", tabs.isEmpty())
+        assertEquals(0, tabs.size)
+    }
+
+    @Test
+    fun testMissingPrefs_defaultsAllFalse_noSalesModeGranted() {
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+
+        val hasMesa = prefs.getBoolean(Constants.HAS_MESA, false)
+        val hasVendaDireta = prefs.getBoolean(Constants.HAS_VENDA_DIRETA, false)
+        val hasComanda = prefs.getBoolean(Constants.HAS_COMANDA, false)
+
+        assertFalse("HAS_MESA must default to false when absent", hasMesa)
+        assertFalse("HAS_VENDA_DIRETA must default to false when absent", hasVendaDireta)
+        assertFalse("HAS_COMANDA must default to false when absent", hasComanda)
+
+        val authorizedModes = SaleModeUtil.getAuthorizedModes(hasMesa, hasVendaDireta, hasComanda)
+        assertTrue("Missing prefs must never grant sales mode", authorizedModes.isEmpty())
+
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
+        assertTrue("Zero tabs and zero fragments when preferences are missing", tabs.isEmpty())
+    }
+
+    @Test
+    fun testExplicitNoModeState_exactMessageSemantics() {
+        val expectedNoModeMessage = "Nenhum modo de venda está habilitado para este usuário."
+        assertEquals("Nenhum modo de venda está habilitado para este usuário.", expectedNoModeMessage)
     }
 
     @Test
@@ -386,12 +449,16 @@ class OperationModeAnd403SemanticsTest {
             .apply()
 
         val hasMesa = prefs.getBoolean(Constants.HAS_MESA, false)
+        val hasVendaDireta = prefs.getBoolean(Constants.HAS_VENDA_DIRETA, false)
         val hasComanda = prefs.getBoolean(Constants.HAS_COMANDA, false)
 
         assertTrue("Mesa mode must be enabled", hasMesa)
+        assertTrue("Venda Direta must be enabled", hasVendaDireta)
         assertFalse("Comanda mode is disabled", hasComanda)
 
-        val tabs = computeVisibleTabs(hasMesa, true, hasComanda)
+        val tabs = computeVisibleTabs(hasMesa, hasVendaDireta, hasComanda)
         assertTrue("Mesa tab must be present even when comanda is false", tabs.contains("Mesas"))
+        assertTrue("Venda Rápida tab must be present", tabs.contains("Venda Rápida"))
+        assertFalse("Comanda tab must not be present", tabs.contains("Comandas"))
     }
 }
