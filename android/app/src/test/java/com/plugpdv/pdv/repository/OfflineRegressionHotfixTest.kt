@@ -8,6 +8,8 @@ import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.*
 import com.plugpdv.pdv.models.*
 import com.plugpdv.pdv.ui.cashier.CashierResult
+import com.plugpdv.pdv.ui.cashier.CashierUiPolicy
+import com.plugpdv.pdv.ui.cashier.CashierUiState
 import com.plugpdv.pdv.ui.cashier.CashierViewModel
 import com.plugpdv.pdv.ui.sale.ReadProvenance
 import com.plugpdv.pdv.ui.sale.TableOrderViewModel
@@ -723,5 +725,224 @@ class OfflineRegressionHotfixTest {
         // Safe back / exit is allowed because isOffline == true
         val shouldBlockBack = (state is CashierAuthorityState.CLOSED) && !isOffline
         assertFalse("CLOSED + OFFLINE must allow safe back/exit", shouldBlockBack)
+    }
+
+    @Test
+    fun test26_cashier_uiPolicyOpenOfflineAndOnline() {
+        val openState = CashierAuthorityState.OPEN("sess_1", tenantA, userA, System.currentTimeMillis())
+
+        // OPEN + ONLINE
+        val onlineUi = CashierUiPolicy.calculateUiState(openState, isOffline = false, isLoading = false)
+        assertFalse("OPEN + ONLINE: open must be disabled", onlineUi.isOpenEnabled)
+        assertTrue("OPEN + ONLINE: sangria must be enabled", onlineUi.isSangriaEnabled)
+        assertTrue("OPEN + ONLINE: close must be enabled", onlineUi.isCloseEnabled)
+        assertTrue("OPEN + ONLINE: dashboard must be enabled", onlineUi.isDashboardEnabled)
+        assertTrue("OPEN + ONLINE: safe back must be enabled", onlineUi.isSafeBackEnabled)
+
+        // OPEN + OFFLINE
+        val offlineUi = CashierUiPolicy.calculateUiState(openState, isOffline = true, isLoading = false)
+        assertFalse("OPEN + OFFLINE: open must be disabled", offlineUi.isOpenEnabled)
+        assertFalse("OPEN + OFFLINE: sangria must be disabled", offlineUi.isSangriaEnabled)
+        assertFalse("OPEN + OFFLINE: close must be disabled", offlineUi.isCloseEnabled)
+        assertFalse("OPEN + OFFLINE: dashboard must be disabled", offlineUi.isDashboardEnabled)
+        assertTrue("OPEN + OFFLINE: safe back must be enabled", offlineUi.isSafeBackEnabled)
+    }
+
+    @Test
+    fun test27_cashier_uiPolicyClosedOfflineAndOnline() {
+        val closedState = CashierAuthorityState.CLOSED(tenantA, userA, System.currentTimeMillis())
+
+        // CLOSED + ONLINE
+        val onlineUi = CashierUiPolicy.calculateUiState(closedState, isOffline = false, isLoading = false)
+        assertTrue("CLOSED + ONLINE: open must be enabled", onlineUi.isOpenEnabled)
+        assertFalse("CLOSED + ONLINE: sangria must be disabled", onlineUi.isSangriaEnabled)
+        assertFalse("CLOSED + ONLINE: close must be disabled", onlineUi.isCloseEnabled)
+        assertFalse("CLOSED + ONLINE: dashboard must be disabled", onlineUi.isDashboardEnabled)
+        assertFalse("CLOSED + ONLINE: back navigation locked until open", onlineUi.isSafeBackEnabled)
+
+        // CLOSED + OFFLINE
+        val offlineUi = CashierUiPolicy.calculateUiState(closedState, isOffline = true, isLoading = false)
+        assertFalse("CLOSED + OFFLINE: open must be disabled", offlineUi.isOpenEnabled)
+        assertFalse("CLOSED + OFFLINE: sangria must be disabled", offlineUi.isSangriaEnabled)
+        assertFalse("CLOSED + OFFLINE: close must be disabled", offlineUi.isCloseEnabled)
+        assertFalse("CLOSED + OFFLINE: dashboard must be disabled", offlineUi.isDashboardEnabled)
+        assertTrue("CLOSED + OFFLINE: safe exit allowed", offlineUi.isSafeBackEnabled)
+    }
+
+    @Test
+    fun test28_cashier_uiPolicyUnknownOfflineAndLoading() {
+        val unknownState = CashierAuthorityState.UNKNOWN("TEST_REASON")
+
+        // UNKNOWN + OFFLINE
+        val offlineUi = CashierUiPolicy.calculateUiState(unknownState, isOffline = true, isLoading = false)
+        assertFalse(offlineUi.isOpenEnabled)
+        assertFalse(offlineUi.isSangriaEnabled)
+        assertFalse(offlineUi.isCloseEnabled)
+        assertFalse(offlineUi.isDashboardEnabled)
+        assertTrue(offlineUi.isSafeBackEnabled)
+
+        // UNKNOWN + ONLINE
+        val onlineUi = CashierUiPolicy.calculateUiState(unknownState, isOffline = false, isLoading = false)
+        assertFalse(onlineUi.isOpenEnabled)
+        assertFalse(onlineUi.isSangriaEnabled)
+        assertFalse(onlineUi.isCloseEnabled)
+        assertFalse(onlineUi.isDashboardEnabled)
+        assertTrue(onlineUi.isSafeBackEnabled)
+
+        // ANY + LOADING
+        val openState = CashierAuthorityState.OPEN("sess_1", tenantA, userA, System.currentTimeMillis())
+        val loadingUi = CashierUiPolicy.calculateUiState(openState, isOffline = false, isLoading = true)
+        assertFalse(loadingUi.isOpenEnabled)
+        assertFalse(loadingUi.isSangriaEnabled)
+        assertFalse(loadingUi.isCloseEnabled)
+    }
+
+    @Test
+    fun test29_mesa_refreshAVsBConflictFollowedByOfflineReopenNeverAppliesB() = runBlocking {
+        TenantBindingStore.setActiveTenantId(context, tenantA)
+
+        // 1. Local state: TableEntity has comandaId = "comanda_A"
+        val tableEntity = TableEntity(
+            id = "table_ab",
+            number = 77,
+            status = Table.Status.OCCUPIED,
+            sectorName = "Salão",
+            sectorId = "sec_1",
+            customerName = "Mesa AB",
+            comandaId = "comanda_A",
+            updatedAt = System.currentTimeMillis()
+        )
+        tableDao.insert(tableEntity)
+
+        // 2. Snapshot store has conflicting snapshot with serverComandaId = "comanda_B"
+        val snapshotB = createSampleSnapshot(
+            serverComandaId = "comanda_B",
+            tableId = "table_ab",
+            tenantId = tenantA,
+            items = listOf(MesaItemDto(id = "item_b", nome = "Burger B", preco_unitario = 30.0, quantidade = 1))
+        )
+        comandaSnapshotDao.upsert(snapshotB)
+
+        // 3. Remote refresh: api-mesas returns OCCUPIED table with blank/null comanda_id
+        val remoteMesasResponse = RestaurantResponse(
+            setores = listOf(
+                Sector(
+                    id = "sec_1",
+                    nome = "Salão",
+                    mesas = listOf(
+                        MesaDto(id = "table_ab", numero = 77, status = "OCUPADA", comanda_id = null)
+                    )
+                )
+            )
+        )
+        whenever(apiService.getMesas(any())).thenReturn(remoteMesasResponse)
+
+        val refreshResult = tableReadRepository.refreshTables("token")
+        assertTrue(refreshResult.isSuccess)
+
+        // Invariant: refreshTables must NOT erase A to null or convert to B
+        val refreshedTable = tableDao.getTableById("table_ab")
+        assertNotNull(refreshedTable)
+        assertEquals("comanda_A", refreshedTable?.comandaId)
+
+        // 4. Now user re-opens table offline
+        whenever(apiService.getMesas(any())).thenAnswer { throw IOException("No network") }
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw IOException("No network") }
+
+        val viewModel = TableOrderViewModel(context, apiService, catalogDao, tableReadRepository, comandaSnapshotRepository)
+        viewModel.init("table_ab", 77, "sec_1", "fake_token")
+        waitUntil { viewModel.table.value != null }
+
+        val loaded = viewModel.table.value
+        assertNotNull(loaded)
+
+        // Invariant: B was NEVER applied; A was never silently converted to B; items from B not displayed
+        assertEquals("comanda_A", loaded?.comandaId)
+        assertEquals(0, loaded?.items?.size)
+    }
+
+    @Test
+    fun test30_cashier_remoteOpenWithMissingUserIdRemainsUnknown() = runBlocking {
+        TenantBindingStore.setActiveTenantId(context, tenantA)
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(Constants.USER_ID).apply()
+
+        val openSession = CashierSession(
+            id = "sess_remote_30",
+            caixa_session_id = "sess_remote_30",
+            tipo = "ABERTURA",
+            valor = 100.0
+        )
+        val response = CashierHistoryResponse(operacoes = listOf(openSession))
+        whenever(apiService.getCashierHistory(anyOrNull(), anyOrNull())).thenReturn(response)
+        whenever(apiService.getExchangeRates(anyOrNull(), anyOrNull())).thenReturn(ExchangeResponse(moedas = emptyList()))
+
+        val viewModel = CashierViewModel(context, apiService)
+        viewModel.fetchHistory("token")
+        waitUntil { viewModel.isLoading.value == false }
+
+        // Invariant: Missing activeUserId must remain UNKNOWN authority
+        val state = viewModel.cashierState.value
+        assertTrue("State must remain UNKNOWN when userId is missing", state is CashierAuthorityState.UNKNOWN)
+        assertEquals("MISSING_ACTIVE_USER", (state as CashierAuthorityState.UNKNOWN).reason)
+        assertFalse(viewModel.isClosed.value ?: true)
+        assertNull(viewModel.currentSessionId.value)
+    }
+
+    @Test
+    fun test31_cashier_remoteClosedWithMissingUserIdRemainsUnknown() = runBlocking {
+        TenantBindingStore.setActiveTenantId(context, tenantA)
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(Constants.USER_ID).apply()
+
+        val closedSession = CashierSession(
+            id = "sess_remote_31",
+            caixa_session_id = "sess_remote_31",
+            tipo = "FECHAMENTO",
+            valor = 0.0
+        )
+        val response = CashierHistoryResponse(operacoes = listOf(closedSession))
+        whenever(apiService.getCashierHistory(anyOrNull(), anyOrNull())).thenReturn(response)
+        whenever(apiService.getExchangeRates(anyOrNull(), anyOrNull())).thenReturn(ExchangeResponse(moedas = emptyList()))
+
+        val viewModel = CashierViewModel(context, apiService)
+        viewModel.fetchHistory("token")
+        waitUntil { viewModel.isLoading.value == false }
+
+        val state = viewModel.cashierState.value
+        assertTrue("State must remain UNKNOWN when userId is missing", state is CashierAuthorityState.UNKNOWN)
+        assertEquals("MISSING_ACTIVE_USER", (state as CashierAuthorityState.UNKNOWN).reason)
+    }
+
+    @Test
+    fun test32_table_getTableByNumberEmptySectorIdRetainsPreHotfixBehavior() = runBlocking {
+        val table1 = TableEntity(
+            id = "tbl_sec1",
+            number = 10,
+            status = Table.Status.AVAILABLE,
+            sectorName = "Setor 1",
+            sectorId = "sec_1",
+            updatedAt = System.currentTimeMillis()
+        )
+        tableDao.insert(table1)
+
+        // null sectorId searches globally by number
+        val byNull = tableReadRepository.getTableByNumber(10, null)
+        assertNotNull(byNull)
+        assertEquals("tbl_sec1", byNull?.id)
+
+        // empty string sectorId also searches globally by number (pre-hotfix baseline behavior)
+        val byEmpty = tableReadRepository.getTableByNumber(10, "")
+        assertNotNull(byEmpty)
+        assertEquals("tbl_sec1", byEmpty?.id)
+
+        // specific matching sectorId
+        val bySec1 = tableReadRepository.getTableByNumber(10, "sec_1")
+        assertNotNull(bySec1)
+        assertEquals("tbl_sec1", bySec1?.id)
+
+        // non-matching sectorId
+        val bySec2 = tableReadRepository.getTableByNumber(10, "sec_2")
+        assertNull(bySec2)
     }
 }

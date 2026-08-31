@@ -135,7 +135,7 @@ class CashierActivity : BaseActivity() {
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { loading ->
             binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
-            setButtonsEnabled(!loading)
+            updateCashierUI()
         }
 
         viewModel.cashierState.observe(this) {
@@ -176,54 +176,29 @@ class CashierActivity : BaseActivity() {
     private fun updateCashierUI() {
         val state = viewModel.cashierState.value ?: com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN()
         val isOffline = viewModel.isOffline.value == true
+        val isLoading = viewModel.isLoading.value == true
 
-        when (state) {
-            is com.plugpdv.pdv.utils.CashierAuthorityState.OPEN -> {
-                binding.tvOpen.setText(R.string.cashier_already_open)
-                binding.cardOpen.isEnabled = false
-                binding.cardOpen.alpha = 0.5f
-                binding.btnBack.visibility = View.VISIBLE
+        val uiState = CashierUiPolicy.calculateUiState(state, isOffline, isLoading)
 
-                if (isOffline) {
-                    binding.cardSangria.isEnabled = false
-                    binding.cardSangria.alpha = 0.5f
-                    binding.cardClose.isEnabled = false
-                    binding.cardClose.alpha = 0.5f
-                } else {
-                    binding.cardSangria.isEnabled = true
-                    binding.cardSangria.alpha = 1.0f
-                    binding.cardClose.isEnabled = true
-                    binding.cardClose.alpha = 1.0f
-                }
-            }
-            is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED -> {
-                binding.tvOpen.setText(R.string.open_cashier)
-                if (isOffline) {
-                    binding.cardOpen.isEnabled = false
-                    binding.cardOpen.alpha = 0.5f
-                    binding.btnBack.visibility = View.VISIBLE
-                } else {
-                    binding.cardOpen.isEnabled = true
-                    binding.cardOpen.alpha = 1.0f
-                    binding.btnBack.visibility = View.GONE
-                }
-                binding.cardSangria.isEnabled = false
-                binding.cardSangria.alpha = 0.5f
-                binding.cardClose.isEnabled = false
-                binding.cardClose.alpha = 0.5f
-            }
-            is com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN -> {
-                binding.tvOpen.text = if (isOffline) "Caixa Indisponível (Sem Conexão)" else getString(R.string.open_cashier)
-                binding.btnBack.visibility = View.VISIBLE
-                binding.cardOpen.isEnabled = !isOffline
-                binding.cardOpen.alpha = if (isOffline) 0.5f else 1.0f
-                binding.cardSangria.isEnabled = false
-                binding.cardSangria.alpha = 0.5f
-                binding.cardClose.isEnabled = false
-                binding.cardClose.alpha = 0.5f
-            }
+        if (uiState.openButtonTextRes != null) {
+            binding.tvOpen.setText(uiState.openButtonTextRes)
+        } else if (uiState.openButtonCustomText != null) {
+            binding.tvOpen.text = uiState.openButtonCustomText
         }
-        setButtonsEnabled(binding.progressBar.visibility == View.GONE)
+
+        binding.cardOpen.isEnabled = uiState.isOpenEnabled
+        binding.cardOpen.alpha = if (uiState.isOpenEnabled) 1.0f else 0.5f
+
+        binding.cardSangria.isEnabled = uiState.isSangriaEnabled
+        binding.cardSangria.alpha = if (uiState.isSangriaEnabled) 1.0f else 0.5f
+
+        binding.cardClose.isEnabled = uiState.isCloseEnabled
+        binding.cardClose.alpha = if (uiState.isCloseEnabled) 1.0f else 0.5f
+
+        binding.cardDashboard.isEnabled = uiState.isDashboardEnabled
+        binding.cardDashboard.alpha = if (uiState.isDashboardEnabled) 1.0f else 0.5f
+
+        binding.btnBack.visibility = if (uiState.isSafeBackEnabled) View.VISIBLE else View.GONE
     }
 
     private fun handleSuccess(action: String) {
@@ -252,21 +227,6 @@ class CashierActivity : BaseActivity() {
             startActivity(intent)
             finish()
         }
-    }
-
-    private fun setButtonsEnabled(enabled: Boolean) {
-        val isClosed = viewModel.isClosed.value == true
-        binding.cardOpen.isEnabled = enabled && isClosed
-        binding.cardOpen.alpha = if (enabled && isClosed) 1.0f else 0.5f
-        
-        binding.cardSangria.isEnabled = enabled && !isClosed
-        binding.cardSangria.alpha = if (enabled && !isClosed) 1.0f else 0.5f
-        
-        binding.cardClose.isEnabled = enabled && !isClosed
-        binding.cardClose.alpha = if (enabled && !isClosed) 1.0f else 0.5f
-        
-        binding.cardDashboard.isEnabled = enabled && !isClosed
-        binding.cardDashboard.alpha = if (enabled && !isClosed) 1.0f else 0.5f
     }
 
     private fun showConfirmation(action: String) {

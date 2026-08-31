@@ -61,7 +61,14 @@ class CashierViewModel @Inject constructor(
         val activeTenantId = com.plugpdv.pdv.utils.TenantBindingStore.getActiveTenantId(context)
         val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val activeUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
-        val initial = com.plugpdv.pdv.utils.CashierAuthorityStore.getAuthority(context, activeTenantId, activeUserId)
+
+        val initial = if (activeTenantId.isNullOrBlank() || activeUserId.isNullOrBlank()) {
+            com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN(
+                reason = if (activeTenantId.isNullOrBlank()) "MISSING_ACTIVE_TENANT" else "MISSING_ACTIVE_USER"
+            )
+        } else {
+            com.plugpdv.pdv.utils.CashierAuthorityStore.getAuthority(context, activeTenantId, activeUserId)
+        }
         _cashierState.value = initial
         _isClosed.value = (initial is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED)
         _currentSessionId.value = (initial as? com.plugpdv.pdv.utils.CashierAuthorityState.OPEN)?.sessionId
@@ -139,7 +146,16 @@ class CashierViewModel @Inject constructor(
         val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val activeUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
 
-        if (!closed && !sessionId.isNullOrEmpty() && !activeTenantId.isNullOrBlank()) {
+        if (activeTenantId.isNullOrBlank() || activeUserId.isNullOrBlank()) {
+            _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN(
+                reason = if (activeTenantId.isNullOrBlank()) "MISSING_ACTIVE_TENANT" else "MISSING_ACTIVE_USER"
+            )
+            _isClosed.value = false
+            _currentSessionId.value = null
+            return
+        }
+
+        if (!closed && !sessionId.isNullOrEmpty()) {
             com.plugpdv.pdv.utils.CashierAuthorityStore.setOpen(context, activeTenantId, activeUserId, sessionId)
             _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.OPEN(
                 sessionId = sessionId,
@@ -149,7 +165,7 @@ class CashierViewModel @Inject constructor(
             )
             _isClosed.value = false
             _currentSessionId.value = sessionId
-        } else if (closed && !activeTenantId.isNullOrBlank()) {
+        } else if (closed) {
             com.plugpdv.pdv.utils.CashierAuthorityStore.setClosed(context, activeTenantId, activeUserId)
             _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED(
                 tenantId = activeTenantId,
@@ -159,8 +175,9 @@ class CashierViewModel @Inject constructor(
             _isClosed.value = true
             _currentSessionId.value = null
         } else {
-            _isClosed.value = closed
-            _currentSessionId.value = sessionId
+            _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN("INCONSISTENT_REMOTE_RESPONSE")
+            _isClosed.value = false
+            _currentSessionId.value = null
         }
     }
 
