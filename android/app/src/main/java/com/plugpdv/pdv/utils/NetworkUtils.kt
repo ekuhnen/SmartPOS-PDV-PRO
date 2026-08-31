@@ -14,6 +14,11 @@ suspend fun <T> retryIO(
     repeat(times - 1) { attempt ->
         try {
             return block()
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() in 400..499) {
+                throw e
+            }
+            Log.e("NetworkRetry", "Attempt ${attempt + 1} failed: ${e.message}")
         } catch (e: Exception) {
             Log.e("NetworkRetry", "Attempt ${attempt + 1} failed: ${e.message}")
         }

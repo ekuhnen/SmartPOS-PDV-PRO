@@ -23,6 +23,12 @@ interface ComandaSnapshotDao {
         tableId: String
     ): ComandaSnapshotEntity?
 
+    @Query("SELECT * FROM comanda_snapshots WHERE tenantId = :tenantId AND tableId = :tableId")
+    suspend fun getSnapshotsByTableId(
+        tenantId: String,
+        tableId: String
+    ): List<ComandaSnapshotEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(snapshot: ComandaSnapshotEntity)
 

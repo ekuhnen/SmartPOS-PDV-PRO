@@ -56,6 +56,8 @@ object KillSwitchManager {
             .remove(Constants.LOGIN_TIME)
             .apply()
 
+        CashierAuthorityStore.clearAuthority(context)
+
         // Limpar banco de dados local
         val db = AppDatabase.getDatabase(context)
         CoroutineScope(Dispatchers.IO).launch {

@@ -45,9 +45,12 @@ class CashierActivity : BaseActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (viewModel.isClosed.value == true) {
+                val state = viewModel.cashierState.value
+                val isOffline = viewModel.isOffline.value == true
+                if (state is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED && !isOffline) {
                     Toast.makeText(this@CashierActivity, "Você precisa abrir o caixa para continuar.", Toast.LENGTH_SHORT).show()
                 } else {
+                    // Safe exit when OPEN, UNKNOWN, or offline
                     finish()
                 }
             }
@@ -96,6 +99,8 @@ class CashierActivity : BaseActivity() {
             e.printStackTrace()
         }
 
+        com.plugpdv.pdv.utils.CashierAuthorityStore.clearAuthority(this)
+
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .remove(Constants.TOKEN)
@@ -133,30 +138,15 @@ class CashierActivity : BaseActivity() {
             setButtonsEnabled(!loading)
         }
 
-        viewModel.isClosed.observe(this) { isClosed ->
-            if (isClosed) {
-                binding.tvOpen.setText(R.string.open_cashier)
-                binding.cardOpen.isEnabled = true
-                binding.cardOpen.alpha = 1.0f
-                binding.cardOpen.visibility = View.VISIBLE
-                binding.btnBack.visibility = View.GONE
-                binding.cardSangria.isEnabled = false
-                binding.cardSangria.alpha = 0.5f
-                binding.cardClose.isEnabled = false
-                binding.cardClose.alpha = 0.5f
-            } else {
-                binding.tvOpen.setText(R.string.cashier_already_open)
-                binding.cardOpen.isEnabled = false
-                binding.cardOpen.alpha = 0.5f
-                binding.btnBack.visibility = View.VISIBLE
-                binding.cardSangria.isEnabled = true
-                binding.cardSangria.alpha = 1.0f
-                binding.cardClose.isEnabled = true
-                binding.cardClose.alpha = 1.0f
+        viewModel.cashierState.observe(this) {
+            updateCashierUI()
+        }
+
+        viewModel.isOffline.observe(this) { isOffline ->
+            if (isOffline) {
+                Toast.makeText(this, "Sem conexão — exibindo estado salvo do caixa", Toast.LENGTH_SHORT).show()
             }
-            
-            // Atualiza os botões toda vez que o status mudar
-            setButtonsEnabled(binding.progressBar.visibility == View.GONE)
+            updateCashierUI()
         }
 
         viewModel.currentSessionId.observe(this) { id ->
@@ -181,6 +171,59 @@ class CashierActivity : BaseActivity() {
                 viewModel.clearResult()
             }
         }
+    }
+
+    private fun updateCashierUI() {
+        val state = viewModel.cashierState.value ?: com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN()
+        val isOffline = viewModel.isOffline.value == true
+
+        when (state) {
+            is com.plugpdv.pdv.utils.CashierAuthorityState.OPEN -> {
+                binding.tvOpen.setText(R.string.cashier_already_open)
+                binding.cardOpen.isEnabled = false
+                binding.cardOpen.alpha = 0.5f
+                binding.btnBack.visibility = View.VISIBLE
+
+                if (isOffline) {
+                    binding.cardSangria.isEnabled = false
+                    binding.cardSangria.alpha = 0.5f
+                    binding.cardClose.isEnabled = false
+                    binding.cardClose.alpha = 0.5f
+                } else {
+                    binding.cardSangria.isEnabled = true
+                    binding.cardSangria.alpha = 1.0f
+                    binding.cardClose.isEnabled = true
+                    binding.cardClose.alpha = 1.0f
+                }
+            }
+            is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED -> {
+                binding.tvOpen.setText(R.string.open_cashier)
+                if (isOffline) {
+                    binding.cardOpen.isEnabled = false
+                    binding.cardOpen.alpha = 0.5f
+                    binding.btnBack.visibility = View.VISIBLE
+                } else {
+                    binding.cardOpen.isEnabled = true
+                    binding.cardOpen.alpha = 1.0f
+                    binding.btnBack.visibility = View.GONE
+                }
+                binding.cardSangria.isEnabled = false
+                binding.cardSangria.alpha = 0.5f
+                binding.cardClose.isEnabled = false
+                binding.cardClose.alpha = 0.5f
+            }
+            is com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN -> {
+                binding.tvOpen.text = if (isOffline) "Caixa Indisponível (Sem Conexão)" else getString(R.string.open_cashier)
+                binding.btnBack.visibility = View.VISIBLE
+                binding.cardOpen.isEnabled = !isOffline
+                binding.cardOpen.alpha = if (isOffline) 0.5f else 1.0f
+                binding.cardSangria.isEnabled = false
+                binding.cardSangria.alpha = 0.5f
+                binding.cardClose.isEnabled = false
+                binding.cardClose.alpha = 0.5f
+            }
+        }
+        setButtonsEnabled(binding.progressBar.visibility == View.GONE)
     }
 
     private fun handleSuccess(action: String) {

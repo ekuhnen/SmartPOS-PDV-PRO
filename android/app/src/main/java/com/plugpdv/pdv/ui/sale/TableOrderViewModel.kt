@@ -112,20 +112,67 @@ class TableOrderViewModel @Inject constructor(
 
         _table.value = resolvedTable
 
+        val tenantId = TenantBindingStore.getActiveTenantId(context)
+        if (tenantId.isNullOrBlank()) return
+
+        var effectiveSnapshot: ComandaSnapshotEntity? = null
         val cId = resolvedTable.comandaId
+
+        // 1. Primary lookup: exact tenantId + serverComandaId
         if (!cId.isNullOrEmpty()) {
-            val tenantId = TenantBindingStore.getActiveTenantId(context)
-            if (!tenantId.isNullOrBlank()) {
-                val snapshot = comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
-                if (snapshot != null) {
-                    val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
-                    if (decision == SnapshotAuthorityDecision.USABLE) {
-                        applySnapshotToTable(resolvedTable, snapshot)
-                        _readProvenance.value = ReadProvenance.LOCAL_CACHED
-                        _table.value = resolvedTable
-                    }
+            val snapshot = comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
+            if (snapshot != null) {
+                val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
+                if (decision == SnapshotAuthorityDecision.USABLE) {
+                    effectiveSnapshot = snapshot
                 }
             }
+        }
+
+        // 2. Safe fallback: if primary lookup is unavailable and tableId is known, query by exact tenantId + tableId
+        val currentTableId = resolvedTable.id
+        if (effectiveSnapshot == null && !currentTableId.isNullOrEmpty()) {
+            val candidates = comandaSnapshotRepository.getSnapshotsByTableId(tenantId, currentTableId)
+            val usableCandidates = candidates.filter { candidate ->
+                val isNotClosedOrCancelled = candidate.localStatus !in listOf("CLOSED", "CANCELLED") &&
+                        candidate.serverStatus !in listOf("FECHADA", "CANCELADA")
+                val isTenantMatch = candidate.tenantId == tenantId
+                val isTableMatch = candidate.tableId == currentTableId
+                val decision = ComandaSnapshotAuthorityPolicy.evaluate(candidate, candidate.serverComandaId, context)
+
+                isTenantMatch && isTableMatch && isNotClosedOrCancelled && decision == SnapshotAuthorityDecision.USABLE
+            }
+
+            if (usableCandidates.size == 1) {
+                val candidate = usableCandidates[0]
+                // Correction 3: If known comandaId A and candidate B differ, classify as conflict/unknown. Never replace nonblank A with B.
+                if (!resolvedTable.comandaId.isNullOrEmpty() && !candidate.serverComandaId.isNullOrEmpty() && resolvedTable.comandaId != candidate.serverComandaId) {
+                    Log.w("TableOrderViewModel", "ComandaId mismatch between table (${resolvedTable.comandaId}) and snapshot candidate (${candidate.serverComandaId}) - conflict")
+                } else {
+                    effectiveSnapshot = candidate
+                    // Safely repair local comanda linkage ONLY if missing on table
+                    if (resolvedTable.comandaId.isNullOrEmpty() && !candidate.serverComandaId.isNullOrEmpty()) {
+                        resolvedTable.comandaId = candidate.serverComandaId
+                        tableReadRepository.applyServerConfirmedOpen(
+                            tableId = currentTableId,
+                            comandaId = candidate.serverComandaId,
+                            customerName = resolvedTable.customerName,
+                            peopleCount = resolvedTable.people_count,
+                            knownNumber = resolvedTable.number,
+                            knownSectorId = resolvedTable.sectorId,
+                            knownSectorName = resolvedTable.sectorName
+                        )
+                    }
+                }
+            } else if (usableCandidates.size > 1) {
+                Log.w("TableOrderViewModel", "Multiple usable snapshot candidates (${usableCandidates.size}) found for table $currentTableId - ambiguous/conflict, failing closed")
+            }
+        }
+
+        if (effectiveSnapshot != null) {
+            applySnapshotToTable(resolvedTable, effectiveSnapshot)
+            _readProvenance.value = ReadProvenance.LOCAL_CACHED
+            _table.value = resolvedTable
         }
     }
 
@@ -376,6 +423,12 @@ class TableOrderViewModel @Inject constructor(
             try {
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
+                try {
+                    val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                    comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
+                } catch (e: Exception) {
+                    Log.w("TableOrderViewModel", "Failed to cache snapshot after enviarCozinha: ${e.message}")
+                }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e

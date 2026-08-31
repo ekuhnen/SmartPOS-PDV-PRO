@@ -317,6 +317,10 @@ class ComandaSnapshotRepository(
         return comandaSnapshotDao.getByTableId(tenantId, tableId)
     }
 
+    suspend fun getSnapshotsByTableId(tenantId: String, tableId: String): List<ComandaSnapshotEntity> {
+        return comandaSnapshotDao.getSnapshotsByTableId(tenantId, tableId)
+    }
+
     suspend fun getAllForTenant(tenantId: String): List<ComandaSnapshotEntity> {
         return comandaSnapshotDao.getAllForTenant(tenantId)
     }

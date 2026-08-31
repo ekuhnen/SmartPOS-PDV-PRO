@@ -159,6 +159,12 @@ class AuthViewModel @Inject constructor(
                     val hasComanda = response.comanda ?: false
                     val userId = response.user?.id ?: ""
 
+                    if (isOpen && !sessionId.isNullOrEmpty()) {
+                        com.plugpdv.pdv.utils.CashierAuthorityStore.setOpen(context, ownerId, userId, sessionId)
+                    } else if (!isOpen) {
+                        com.plugpdv.pdv.utils.CashierAuthorityStore.setClosed(context, ownerId, userId)
+                    }
+
                     Log.d("AuthViewModel", "Login finalizado com sucesso para o usuário: $userId")
                     _loginResult.postValue(LoginResult.Success(userId, token, isOpen, sessionId, hasMesa, hasVendaDireta, hasComanda))
                 }

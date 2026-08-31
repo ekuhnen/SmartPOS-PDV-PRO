@@ -33,8 +33,19 @@ class CashierViewModel @Inject constructor(
     private val _currentSessionId = MutableLiveData<String?>(null)
     val currentSessionId: LiveData<String?> = _currentSessionId
 
-    private val _isClosed = MutableLiveData(true)
+    private val _cashierState = MutableLiveData<com.plugpdv.pdv.utils.CashierAuthorityState>(
+        com.plugpdv.pdv.utils.CashierAuthorityState.UNKNOWN()
+    )
+    val cashierState: LiveData<com.plugpdv.pdv.utils.CashierAuthorityState> = _cashierState
+
+    private val _isClosed = MutableLiveData(false)
     val isClosed: LiveData<Boolean> = _isClosed
+
+    private val _isOffline = MutableLiveData(false)
+    val isOffline: LiveData<Boolean> = _isOffline
+
+    private val _sessionExpired = MutableLiveData(false)
+    val sessionExpired: LiveData<Boolean> = _sessionExpired
 
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
@@ -42,13 +53,50 @@ class CashierViewModel @Inject constructor(
     private val _operationResult = MutableLiveData<CashierResult?>(null)
     val operationResult: LiveData<CashierResult?> = _operationResult
 
+    init {
+        loadInitialAuthority()
+    }
+
+    fun loadInitialAuthority() {
+        val activeTenantId = com.plugpdv.pdv.utils.TenantBindingStore.getActiveTenantId(context)
+        val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        val activeUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
+        val initial = com.plugpdv.pdv.utils.CashierAuthorityStore.getAuthority(context, activeTenantId, activeUserId)
+        _cashierState.value = initial
+        _isClosed.value = (initial is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED)
+        _currentSessionId.value = (initial as? com.plugpdv.pdv.utils.CashierAuthorityState.OPEN)?.sessionId
+    }
+
     fun fetchHistory(token: String) {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
                 fetchHistoryInternal(token)
+                _isOffline.value = false
+            } catch (e: java.io.IOException) {
+                Log.e("CashierViewModel", "IO error fetching cashier history: ${e.message}", e)
+                _isOffline.value = true
+                // INVARIANTE: Falha de rede NUNCA converte estado conhecido OPEN para CLOSED
+            } catch (e: retrofit2.HttpException) {
+                val code = e.code()
+                if (code in 500..599) {
+                    Log.e("CashierViewModel", "Server 5xx error ($code) fetching history: ${e.message}", e)
+                    _isOffline.value = true
+                    // Server degraded: preserve last-known authority
+                } else if (code == 401) {
+                    Log.w("CashierViewModel", "401 Unauthorized fetching history")
+                    _isOffline.value = false
+                    _sessionExpired.value = true
+                } else if (code == 403) {
+                    Log.w("CashierViewModel", "403 Forbidden fetching history")
+                    _isOffline.value = false
+                } else {
+                    Log.e("CashierViewModel", "HTTP $code fetching history: ${e.message}", e)
+                    _isOffline.value = false
+                }
             } catch (e: Exception) {
-                Log.e("CashierViewModel", "Failed to fetch history", e)
+                Log.e("CashierViewModel", "Failed to fetch history: ${e.message}", e)
+                _isOffline.value = true
             } finally {
                 _isLoading.value = false
             }
@@ -87,18 +135,41 @@ class CashierViewModel @Inject constructor(
             }
         }
 
-        _isClosed.value = closed
-        _currentSessionId.value = sessionId
-
+        val activeTenantId = com.plugpdv.pdv.utils.TenantBindingStore.getActiveTenantId(context)
         val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        if (!closed && !sessionId.isNullOrEmpty()) {
-            prefs.edit().putString(com.plugpdv.pdv.utils.Constants.SESSION_ID, sessionId).apply()
-        } else if (closed) {
-            prefs.edit().remove(com.plugpdv.pdv.utils.Constants.SESSION_ID).apply()
+        val activeUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
+
+        if (!closed && !sessionId.isNullOrEmpty() && !activeTenantId.isNullOrBlank()) {
+            com.plugpdv.pdv.utils.CashierAuthorityStore.setOpen(context, activeTenantId, activeUserId, sessionId)
+            _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.OPEN(
+                sessionId = sessionId,
+                tenantId = activeTenantId,
+                userId = activeUserId,
+                updatedAt = System.currentTimeMillis()
+            )
+            _isClosed.value = false
+            _currentSessionId.value = sessionId
+        } else if (closed && !activeTenantId.isNullOrBlank()) {
+            com.plugpdv.pdv.utils.CashierAuthorityStore.setClosed(context, activeTenantId, activeUserId)
+            _cashierState.value = com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED(
+                tenantId = activeTenantId,
+                userId = activeUserId,
+                updatedAt = System.currentTimeMillis()
+            )
+            _isClosed.value = true
+            _currentSessionId.value = null
+        } else {
+            _isClosed.value = closed
+            _currentSessionId.value = sessionId
         }
     }
 
     fun performOperation(token: String, action: String, amount: Double) {
+        if (_isOffline.value == true) {
+            _operationResult.value = CashierResult.Error("Sem conexão. Operações de caixa requerem conexão com o servidor.")
+            return
+        }
+
         viewModelScope.launch {
             try {
                 _isLoading.value = true

@@ -189,6 +189,8 @@ class LoginActivity : BaseActivity() {
             .remove(Constants.LOGIN_TIME)
             .remove(Constants.USER_ID)
             .apply()
+
+        com.plugpdv.pdv.utils.CashierAuthorityStore.clearAuthority(this)
     }
 
     private fun showBlockedBanner(reason: String) {
