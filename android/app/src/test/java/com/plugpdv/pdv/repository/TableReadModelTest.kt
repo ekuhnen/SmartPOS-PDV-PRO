@@ -13,9 +13,11 @@ import com.plugpdv.pdv.utils.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
@@ -780,20 +782,22 @@ class TableReadModelTest {
         assertFalse(state.requiresReconciliation)
 
         // Prepare checkout operation must succeed in READY_REMOTE
-        val preparedDeferred = async {
+        val preparedDeferred = async(Dispatchers.Default) {
             checkoutViewModel.prepareCheckoutOperation(PaymentMethod.CREDIT)
         }
 
-        waitUntil {
+        waitUntil(timeoutMs = 10_000) {
             preparedDeferred.isCompleted
         }
 
         assertTrue(
-            "prepareCheckoutOperation did not complete",
+            "prepareCheckoutOperation timed out",
             preparedDeferred.isCompleted
         )
 
-        val prepared = preparedDeferred.await()
+        val prepared = withTimeout(2_000) {
+            preparedDeferred.await()
+        }
         assertNotNull(prepared.operationKey)
         assertEquals("cmd-14", prepared.request.comandaId)
 
