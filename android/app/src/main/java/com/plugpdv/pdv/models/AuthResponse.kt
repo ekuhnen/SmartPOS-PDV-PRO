@@ -2,6 +2,13 @@ package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
 
+data class AuthDevice(
+    val id: String? = null,
+    @SerializedName("api_version")
+    val apiVersion: Int? = null,
+    val blocked: Boolean? = null
+)
+
 data class AuthResponse(
     val access_token: String? = null,
     val token_type: String? = null,
@@ -16,5 +23,6 @@ data class AuthResponse(
      * Se null/blank → login falha fechado (TENANT_ID_NOT_RETURNED).
      */
     @SerializedName("owner_id")
-    val ownerId: String? = null
+    val ownerId: String? = null,
+    val device: AuthDevice? = null
 )

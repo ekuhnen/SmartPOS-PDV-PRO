@@ -166,16 +166,38 @@ class AuthViewModel @Inject constructor(
                         com.plugpdv.pdv.utils.CashierAuthorityStore.setClosed(context, ownerId, userId)
                     }
 
-                    // 04A.2.3: Re-avaliar mutações pausadas por auth/device após login autenticado
+                    val currentDeviceId = DeviceIdProvider.get(context)
+
+                    // 04A.2.4: Re-avaliar mutações pausadas após login autenticado
                     if (hasMesa) {
+                        // 1. Resumo de autenticação: AUTH_REQUIRED / DIFFERENT_ACTOR
                         try {
                             comandaMutationRepository.resumeAfterAuthenticatedLogin(
                                 tenantId = ownerId,
                                 actorUserId = userId,
-                                deviceId = DeviceIdProvider.get(context)
+                                deviceId = currentDeviceId
                             )
                         } catch (e: Exception) {
-                            Log.w("AuthViewModel", "Failed to resume paused mutations on login: ${e.message}")
+                            Log.w("AuthViewModel", "Failed to resume auth-paused mutations on login: ${e.message}")
+                        }
+
+                        // 2. Resumo de dispositivo verificado: DEVICE_BLOCKED / DEVICE_NOT_REGISTERED
+                        // SOMENTE se response.device comprova autorização do terminal
+                        val deviceAuth = response.device
+                        val deviceAuthorizationVerified = deviceAuth != null &&
+                                deviceAuth.id == currentDeviceId &&
+                                deviceAuth.blocked != true
+
+                        if (deviceAuthorizationVerified) {
+                            try {
+                                comandaMutationRepository.resumeAfterVerifiedDeviceAuthorization(
+                                    tenantId = ownerId,
+                                    actorUserId = userId,
+                                    deviceId = currentDeviceId
+                                )
+                            } catch (e: Exception) {
+                                Log.w("AuthViewModel", "Failed to resume device-paused mutations on login: ${e.message}")
+                            }
                         }
                     }
 

@@ -190,7 +190,7 @@ class ComandaMutationRepository @Inject constructor(
 
     /**
      * Resumes eligible PAUSED comanda mutations after a successful authenticated login.
-     * Only transitions rows where tenantId, actorUserId, and deviceId all match.
+     * Only transitions rows where tenantId, actorUserId, and deviceId all match, for AUTH_REQUIRED/DIFFERENT_ACTOR.
      */
     suspend fun resumeAfterAuthenticatedLogin(
         tenantId: String,
@@ -200,6 +200,25 @@ class ComandaMutationRepository @Inject constructor(
         if (tenantId.isBlank() || actorUserId.isBlank() || deviceId.isBlank()) return 0
         val now = System.currentTimeMillis()
         return comandaMutationDao.resumeAfterAuthenticatedLogin(
+            tenantId = tenantId,
+            actorUserId = actorUserId,
+            deviceId = deviceId,
+            now = now
+        )
+    }
+
+    /**
+     * Resumes eligible PAUSED comanda mutations after verified terminal device authorization.
+     * Only transitions rows where tenantId, actorUserId, and deviceId all match, for DEVICE_BLOCKED/DEVICE_NOT_REGISTERED.
+     */
+    suspend fun resumeAfterVerifiedDeviceAuthorization(
+        tenantId: String,
+        actorUserId: String,
+        deviceId: String
+    ): Int {
+        if (tenantId.isBlank() || actorUserId.isBlank() || deviceId.isBlank()) return 0
+        val now = System.currentTimeMillis()
+        return comandaMutationDao.resumeAfterVerifiedDeviceAuthorization(
             tenantId = tenantId,
             actorUserId = actorUserId,
             deviceId = deviceId,

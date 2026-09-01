@@ -44,8 +44,16 @@ interface ComandaMutationDao {
     @Query("UPDATE comanda_mutations SET status = 'PENDING', pauseReason = NULL, updatedAt = :now WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND status = 'PAUSED' AND pauseReason IN ('AUTH_REQUIRED', 'DIFFERENT_ACTOR')")
     suspend fun unpauseEligibleMutations(tenantId: String, actorUserId: String, now: Long): Int
 
-    @Query("UPDATE comanda_mutations SET status = 'PENDING', pauseReason = NULL, claimToken = NULL, claimedAt = NULL, nextRetryAt = :now, updatedAt = :now WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId AND status = 'PAUSED' AND pauseReason IN ('AUTH_REQUIRED', 'DIFFERENT_ACTOR', 'DEVICE_BLOCKED', 'DEVICE_NOT_REGISTERED')")
+    @Query("UPDATE comanda_mutations SET status = 'PENDING', pauseReason = NULL, claimToken = NULL, claimedAt = NULL, nextRetryAt = :now, updatedAt = :now WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId AND status = 'PAUSED' AND pauseReason IN ('AUTH_REQUIRED', 'DIFFERENT_ACTOR')")
     suspend fun resumeAfterAuthenticatedLogin(
+        tenantId: String,
+        actorUserId: String,
+        deviceId: String,
+        now: Long
+    ): Int
+
+    @Query("UPDATE comanda_mutations SET status = 'PENDING', pauseReason = NULL, claimToken = NULL, claimedAt = NULL, nextRetryAt = :now, updatedAt = :now WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId AND status = 'PAUSED' AND pauseReason IN ('DEVICE_BLOCKED', 'DEVICE_NOT_REGISTERED')")
+    suspend fun resumeAfterVerifiedDeviceAuthorization(
         tenantId: String,
         actorUserId: String,
         deviceId: String,

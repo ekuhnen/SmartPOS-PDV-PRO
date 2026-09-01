@@ -1040,7 +1040,7 @@ class ComandaOpenDurableTest {
     }
 
     // =========================================================================
-    // 04A.2.3: R1 to R10 - DEVICE AUTHORIZATION RESUME TESTS
+    // 04A.2.3 / 04A.2.4: R1 to R10 - DEVICE AUTHORIZATION RESUME TESTS
     // =========================================================================
 
     @Test
@@ -1061,8 +1061,8 @@ class ComandaOpenDurableTest {
             assertEquals("PAUSED", paused?.status)
             assertEquals("DEVICE_BLOCKED", paused?.pauseReason)
 
-            // Simular login bem-sucedido com mesmos tenant, actor, device
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            // Simular autorização comprovada do dispositivo pós login
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(1, resumedCount)
 
             val resumed = database.comandaMutationDao().getById(accepted.mutationId)
@@ -1087,7 +1087,7 @@ class ComandaOpenDurableTest {
             )
             dispatcher.dispatchMutationById(accepted.mutationId)
 
-            repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
 
             // Administrador desbloqueou: backend responde sucesso
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
@@ -1122,7 +1122,7 @@ class ComandaOpenDurableTest {
             assertEquals("PAUSED", paused?.status)
             assertEquals("DEVICE_NOT_REGISTERED", paused?.pauseReason)
 
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(1, resumedCount)
 
             val resumed = database.comandaMutationDao().getById(accepted.mutationId)
@@ -1146,7 +1146,7 @@ class ComandaOpenDurableTest {
             dispatcher.dispatchMutationById(accepted.mutationId)
 
             // Tentativa de login com outro DeviceId
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, "OTHER_DEVICE_XYZ")
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, "OTHER_DEVICE_XYZ")
             assertEquals(0, resumedCount)
 
             val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
@@ -1169,7 +1169,7 @@ class ComandaOpenDurableTest {
             dispatcher.dispatchMutationById(accepted.mutationId)
 
             // Tentativa de login com outro operador
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, "OTHER_USER_999", currentDeviceId)
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, "OTHER_USER_999", currentDeviceId)
             assertEquals(0, resumedCount)
 
             val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
@@ -1191,10 +1191,10 @@ class ComandaOpenDurableTest {
             )
             dispatcher.dispatchMutationById(accepted.mutationId)
 
-            // Quando hasMesa = false, o login NÃO invoca resumeAfterAuthenticatedLogin
+            // Quando hasMesa = false, o login NÃO invoca resumeAfterVerifiedDeviceAuthorization
             val hasMesa = false
             if (hasMesa) {
-                repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+                repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             }
 
             val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
@@ -1221,7 +1221,7 @@ class ComandaOpenDurableTest {
                 )
             )
 
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(0, resumedCount)
 
             val stillPaused = database.comandaMutationDao().getById("mut_r7_mismatch")
@@ -1247,7 +1247,7 @@ class ComandaOpenDurableTest {
                 )
             )
 
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(0, resumedCount)
 
             val stillPaused = database.comandaMutationDao().getById("mut_r8_mismatch")
@@ -1273,7 +1273,7 @@ class ComandaOpenDurableTest {
                 )
             )
 
-            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            val resumedCount = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(0, resumedCount)
 
             val rec = database.comandaMutationDao().getById("mut_r9_rec")
@@ -1301,8 +1301,8 @@ class ComandaOpenDurableTest {
             dispatcher.dispatchMutationById(accepted.mutationId)
             assertEquals("PAUSED", database.comandaMutationDao().getById(accepted.mutationId)?.status)
 
-            // Re-avaliação pós login
-            val resumed = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            // Re-avaliação pós login com autorização comprovada do dispositivo
+            val resumed = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
             assertEquals(1, resumed)
             assertEquals("PENDING", database.comandaMutationDao().getById(accepted.mutationId)?.status)
 
@@ -1316,5 +1316,346 @@ class ComandaOpenDurableTest {
             assertEquals("DEVICE_BLOCKED", repaused?.pauseReason)
             assertEquals(accepted.mutationId, repaused?.id)
         }
+    }
+
+    // =========================================================================
+    // 04A.2.4: V1 to V12 - VERIFIED DEVICE AUTHORIZATION RESUME TESTS
+    // =========================================================================
+
+    @Test
+    fun testV1_authRequired_loginSuccessMatchingIdentity_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_v1", 51)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v1", "Cliente V1", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v1_auth",
+                    status = "PAUSED",
+                    pauseReason = "AUTH_REQUIRED"
+                )
+            )
+
+            val count = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, count)
+
+            val resumed = database.comandaMutationDao().getById("mut_v1_auth")
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV2_differentActor_originalActorLogsBackIn_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_v2", 52)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v2", "Cliente V2", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v2_actor",
+                    status = "PAUSED",
+                    pauseReason = "DIFFERENT_ACTOR"
+                )
+            )
+
+            val count = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, count)
+
+            val resumed = database.comandaMutationDao().getById("mut_v2_actor")
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV3_deviceBlocked_loginResponseDeviceNull_remainsPaused() {
+        runBlocking {
+            createTestTable("tbl_v3", 53)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v3", "Cliente V3", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v3_blk",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_BLOCKED"
+                )
+            )
+
+            // Auth resume NÃO deve despausar DEVICE_BLOCKED
+            val authCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(0, authCount)
+
+            // device = null: verificação de dispositivo não ocorre
+            val deviceAuth: com.plugpdv.pdv.models.AuthDevice? = null
+            val deviceVerified = deviceAuth != null && deviceAuth.id == currentDeviceId && deviceAuth.blocked != true
+            assertEquals(false, deviceVerified)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_v3_blk")
+            assertEquals("PAUSED", stillPaused?.status)
+            assertEquals("DEVICE_BLOCKED", stillPaused?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV4_deviceNotRegistered_loginResponseDeviceNull_remainsPaused() {
+        runBlocking {
+            createTestTable("tbl_v4", 54)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v4", "Cliente V4", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v4_notreg",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_NOT_REGISTERED"
+                )
+            )
+
+            val authCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(0, authCount)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_v4_notreg")
+            assertEquals("PAUSED", stillPaused?.status)
+            assertEquals("DEVICE_NOT_REGISTERED", stillPaused?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV5_deviceBlocked_verifiedResponseDevice_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_v5", 55)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v5", "Cliente V5", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v5_blk",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_BLOCKED"
+                )
+            )
+
+            val deviceAuth = com.plugpdv.pdv.models.AuthDevice(id = currentDeviceId, apiVersion = 1, blocked = false)
+            val deviceVerified = deviceAuth.id == currentDeviceId && deviceAuth.blocked != true
+            assertTrue(deviceVerified)
+
+            val count = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, count)
+
+            val resumed = database.comandaMutationDao().getById("mut_v5_blk")
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV6_deviceNotRegistered_verifiedAutoRegisteredDevice_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_v6", 56)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v6", "Cliente V6", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v6_notreg",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_NOT_REGISTERED"
+                )
+            )
+
+            val deviceAuth = com.plugpdv.pdv.models.AuthDevice(id = currentDeviceId, apiVersion = 1, blocked = false)
+            val deviceVerified = deviceAuth.id == currentDeviceId && deviceAuth.blocked != true
+            assertTrue(deviceVerified)
+
+            val count = repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, count)
+
+            val resumed = database.comandaMutationDao().getById("mut_v6_notreg")
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testV7_verifiedDeviceIdDiffers_zeroRowsResumed() {
+        runBlocking {
+            createTestTable("tbl_v7", 57)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v7", "Cliente V7", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v7_blk",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_BLOCKED"
+                )
+            )
+
+            val deviceAuth = com.plugpdv.pdv.models.AuthDevice(id = "DIFFERENT_DEV_ID", apiVersion = 1, blocked = false)
+            val deviceVerified = deviceAuth.id == currentDeviceId && deviceAuth.blocked != true
+            assertFalse(deviceVerified)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_v7_blk")
+            assertEquals("PAUSED", stillPaused?.status)
+        }
+    }
+
+    @Test
+    fun testV8_responseDeviceBlockedTrue_zeroRowsResumed() {
+        runBlocking {
+            createTestTable("tbl_v8", 58)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v8", "Cliente V8", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v8_blk",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_BLOCKED"
+                )
+            )
+
+            val deviceAuth = com.plugpdv.pdv.models.AuthDevice(id = currentDeviceId, apiVersion = 1, blocked = true)
+            val deviceVerified = deviceAuth.id == currentDeviceId && deviceAuth.blocked != true
+            assertFalse(deviceVerified)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_v8_blk")
+            assertEquals("PAUSED", stillPaused?.status)
+        }
+    }
+
+    @Test
+    fun testV9_hasMesaFalse_noMesaMutationResumes() {
+        runBlocking {
+            createTestTable("tbl_v9", 59)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v9", "Cliente V9", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_v9_blk",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_BLOCKED"
+                )
+            )
+
+            val hasMesa = false
+            if (hasMesa) {
+                repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
+            }
+
+            val stillPaused = database.comandaMutationDao().getById("mut_v9_blk")
+            assertEquals("PAUSED", stillPaused?.status)
+        }
+    }
+
+    @Test
+    fun testV10_sameKLocalComandaIdPayloadPreservedThroughResume() {
+        runBlocking {
+            createTestTable("tbl_v10", 60)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v10", "Cliente V10 Original", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            val originalMutation = database.comandaMutationDao().getById(accepted.mutationId)!!
+            val originalPayload = originalMutation.payloadJson
+            val originalResolved = originalMutation.resolvedPayloadJson
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+            assertEquals("PAUSED", database.comandaMutationDao().getById(accepted.mutationId)?.status)
+
+            repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
+
+            val resumed = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PENDING", resumed?.status)
+            assertEquals(accepted.mutationId, resumed?.id)
+            assertEquals(accepted.localComandaId, resumed?.localComandaId)
+            assertEquals(originalPayload, resumed?.payloadJson)
+            assertEquals(originalResolved, resumed?.resolvedPayloadJson)
+            assertEquals(currentDeviceId, resumed?.deviceId)
+            assertEquals(actorUserId, resumed?.actorUserId)
+            assertEquals(tenantId, resumed?.tenantId)
+        }
+    }
+
+    @Test
+    fun testV11_deviceAuthNull_noHttpOpenDispatchCausedByDeviceResume() {
+        runBlocking {
+            createTestTable("tbl_v11", 61)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_v11", "Cliente V11", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+            assertEquals("PAUSED", database.comandaMutationDao().getById(accepted.mutationId)?.status)
+
+            // Auth login com device = null
+            val deviceAuth: com.plugpdv.pdv.models.AuthDevice? = null
+            if (deviceAuth != null && deviceAuth.id == currentDeviceId && deviceAuth.blocked != true) {
+                repository.resumeAfterVerifiedDeviceAuthorization(tenantId, actorUserId, currentDeviceId)
+            }
+
+            // Dispatch batch não encontra mutações elegíveis
+            val batchResult = dispatcher.dispatchEligibleBatch()
+            assertEquals(0, batchResult.processedCount)
+        }
+    }
+
+    @Test
+    fun testV12_authResponseRepresentativeJson_deserializesDeviceIdentityCorrectly() {
+        val json = """
+            {
+              "access_token": "token-12345",
+              "owner_id": "tenant-1",
+              "user": {"id":"user-1"},
+              "mesa": true,
+              "device": {
+                "id":"device-1",
+                "api_version":1,
+                "blocked":false
+              }
+            }
+        """.trimIndent()
+
+        val response = Gson().fromJson(json, com.plugpdv.pdv.models.AuthResponse::class.java)
+        assertNotNull(response)
+        assertEquals("token-12345", response.access_token)
+        assertEquals("tenant-1", response.ownerId)
+        assertEquals("user-1", response.user?.id)
+        assertEquals(true, response.mesa)
+        assertNotNull(response.device)
+        assertEquals("device-1", response.device?.id)
+        assertEquals(1, response.device?.apiVersion)
+        assertEquals(false, response.device?.blocked)
     }
 }

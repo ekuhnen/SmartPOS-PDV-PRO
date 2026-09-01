@@ -52,7 +52,7 @@ class OperationModeAnd403SemanticsTest {
     private suspend fun waitUntil(timeoutMs: Long = 4000, condition: () -> Boolean) {
         val start = System.currentTimeMillis()
         while (!condition() && (System.currentTimeMillis() - start) < timeoutMs) {
-            ShadowLooper.idleMainLooper(50, java.util.concurrent.TimeUnit.MILLISECONDS)
+            ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
             delay(50)
         }
         ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -204,11 +204,14 @@ class OperationModeAnd403SemanticsTest {
         )
         comandaSnapshotDao.upsert(snapshot)
 
-        val errorResponse403: Response<ComandaDetailResponse> = Response.error(
-            403,
-            "{\"error\":\"Comanda mode is disabled for this user\"}".toResponseBody("application/json".toMediaTypeOrNull())
-        )
-        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw HttpException(errorResponse403) }
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer {
+            throw HttpException(
+                Response.error<ComandaDetailResponse>(
+                    403,
+                    "{\"error\":\"Comanda mode is disabled for this user\"}".toResponseBody("application/json".toMediaTypeOrNull())
+                )
+            )
+        }
 
         val viewModel = TableOrderViewModel(
             context = context,
@@ -267,11 +270,14 @@ class OperationModeAnd403SemanticsTest {
         )
         comandaSnapshotDao.upsert(snapshot)
 
-        val errorResponse403: Response<ComandaDetailResponse> = Response.error(
-            403,
-            "{\"error\":\"Forbidden\"}".toResponseBody("application/json".toMediaTypeOrNull())
-        )
-        whenever(apiService.getComandaDetail(any(), any())).thenAnswer { throw HttpException(errorResponse403) }
+        whenever(apiService.getComandaDetail(any(), any())).thenAnswer {
+            throw HttpException(
+                Response.error<ComandaDetailResponse>(
+                    403,
+                    "{\"error\":\"Forbidden\"}".toResponseBody("application/json".toMediaTypeOrNull())
+                )
+            )
+        }
 
         val viewModel = TableOrderViewModel(
             context = context,
@@ -303,11 +309,14 @@ class OperationModeAnd403SemanticsTest {
         )
         tableDao.insert(tableEntity)
 
-        val errorResponse403: Response<RestaurantResponse> = Response.error(
-            403,
-            "{\"error\":\"Mesa mode is disabled for this user\"}".toResponseBody("application/json".toMediaTypeOrNull())
-        )
-        whenever(apiService.getMesas(any())).thenAnswer { throw HttpException(errorResponse403) }
+        whenever(apiService.getMesas(any())).thenAnswer {
+            throw HttpException(
+                Response.error<RestaurantResponse>(
+                    403,
+                    "{\"error\":\"Mesa mode is disabled for this user\"}".toResponseBody("application/json".toMediaTypeOrNull())
+                )
+            )
+        }
 
         val viewModel = MesaViewModel(apiService, catalogDao, tableReadRepository, context)
         viewModel.tables.observeForever { }
