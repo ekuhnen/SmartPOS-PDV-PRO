@@ -111,13 +111,13 @@ class ComandaFragment : Fragment() {
         etNickname.setText(code)
 
         AlertDialog.Builder(requireContext())
-            .setTitle("Comanda não encontrada")
+                .setTitle(R.string.comanda_not_found)
             .setView(dialogView)
-            .setPositiveButton("Abrir Comanda") { _, _ ->
+                .setPositiveButton(R.string.open_comanda) { _, _ ->
                 val nickname = etNickname.text.toString().trim()
                 token?.let { viewModel.openComanda(it, code, nickname) }
             }
-            .setNegativeButton("Cancelar", null)
+                .setNegativeButton(R.string.cancel, null)
             .show()
     }
 

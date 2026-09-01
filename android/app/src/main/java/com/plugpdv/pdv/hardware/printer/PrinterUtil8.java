@@ -101,13 +101,13 @@ public class PrinterUtil8 {
 
                     @Override
                     public void onError(int code, String msg) {
-                        showToast(context, "Erro na impressão (Kozen POI): " + msg + " code: " + code);
+                        showToast(context, context.getString(R.string.printer_error_with_code, context.getString(R.string.printer_kozen_label) + ": " + msg, code));
                         try { pm.close(); } catch (Exception e) {}
                     }
                 });
 
             } catch (Exception e) {
-                showToast(context, "Erro ao imprimir: " + e.getMessage());
+                showToast(context, context.getString(R.string.printer_execution_error, e.getMessage()));
                 Log.e(TAG, "Printer Exception", e);
             }
         }).start();

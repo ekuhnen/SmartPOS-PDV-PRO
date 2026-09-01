@@ -1,5 +1,6 @@
 package com.plugpdv.pdv.ui.reconciliation
 
+import com.plugpdv.pdv.R
 import android.text.format.DateFormat
 import android.view.LayoutInflater
 import android.view.ViewGroup
@@ -24,9 +25,9 @@ class ReconciliationAdapter(
         val item = items[position]
 
         // Human readable target identifier
-        holder.binding.tvTargetIdentifier.text = "Mesa ${item.tableId.removePrefix("tbl_")}"
-        holder.binding.tvOperationType.text = ReconciliationReasonMapper.toHumanOperationType(item.operationType)
-        holder.binding.tvReasonHuman.text = ReconciliationReasonMapper.toHumanMessage(item.reconciliationReason ?: item.lastErrorCode)
+        holder.binding.tvTargetIdentifier.text = holder.itemView.context.getString(R.string.table_label_value, item.tableId.removePrefix("tbl_"))
+        holder.binding.tvOperationType.setText(ReconciliationReasonMapper.operationTypeRes(item.operationType))
+        holder.binding.tvReasonHuman.setText(ReconciliationReasonMapper.messageRes(item.reconciliationReason ?: item.lastErrorCode))
 
         val dateFormatted = DateFormat.format("dd/MM/yyyy, HH:mm", Date(item.createdAt)).toString()
         holder.binding.tvTimestamp.text = dateFormatted

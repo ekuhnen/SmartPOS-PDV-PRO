@@ -27,8 +27,8 @@ class OccupiedTableReportAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val item = items[position]
-        holder.tvTableNumber.text = "Mesa ${item.number}"
-        holder.tvCustomerName.text = if (!item.customerName.isNullOrEmpty()) "Cliente: ${item.customerName}" else "Sem nome de cliente"
+        holder.tvTableNumber.text = holder.itemView.context.getString(R.string.table_number, item.number)
+        holder.tvCustomerName.text = if (!item.customerName.isNullOrEmpty()) holder.itemView.context.getString(R.string.customer_label, item.customerName) else holder.itemView.context.getString(R.string.customer_name_unavailable)
         holder.tvPendingAmount.text = CurrencyManager.getInstance().format(item.pendingAmountBrl)
     }
 

@@ -6,6 +6,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.plugpdv.pdv.R
 import com.google.gson.Gson
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.CatalogDao
@@ -47,6 +48,9 @@ class TableOrderViewModel @Inject constructor(
     private val tableReadRepository: TableReadRepository,
     private val comandaSnapshotRepository: ComandaSnapshotRepository
 ) : ViewModel() {
+
+    private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
+        runCatching { context.getString(resource, *args) }.getOrDefault(fallbackCode)
 
     private val gson = Gson()
 
@@ -287,24 +291,24 @@ class TableOrderViewModel @Inject constructor(
             when (e.code()) {
                 401 -> {
                     _sessionExpired.value = true
-                    _error.value = "Sessão expirada. Faça login novamente."
+                    _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                 }
                 403 -> {
                     val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
                     _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                 }
                 426 -> {
-                    _error.value = "Atualização obrigatória do aplicativo necessária."
+                    _error.value = localized(R.string.mandatory_app_update, "MANDATORY_APP_UPDATE")
                 }
                 in 500..599 -> {
                     if (_readProvenance.value == ReadProvenance.LOCAL_CACHED) {
                         _refreshWarning.value = "Sem conexão — exibindo dados salvos"
                     } else {
-                        _error.value = "Erro no servidor (Código: ${e.code()})"
+                        _error.value = localized(R.string.server_error_code, "SERVER_ERROR", e.code())
                     }
                 }
                 else -> {
-                    _error.value = "Erro no servidor (Código: ${e.code()})"
+                    _error.value = localized(R.string.server_error_code, "SERVER_ERROR", e.code())
                 }
             }
         } catch (e: java.io.IOException) {
@@ -312,11 +316,11 @@ class TableOrderViewModel @Inject constructor(
             if (_readProvenance.value == ReadProvenance.LOCAL_CACHED) {
                 _refreshWarning.value = "Sem conexão — exibindo dados salvos"
             } else {
-                _error.value = "Erro de conexão ao carregar mesa"
+                _error.value = localized(R.string.load_table_connection_error, "LOAD_TABLE_CONNECTION_ERROR")
             }
         } catch (e: Exception) {
             Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
-            _error.value = "Erro ao carregar mesa: ${e.message}"
+            _error.value = localized(R.string.load_table_error, "LOAD_TABLE_ERROR", e.message.orEmpty())
         } finally {
             _isLoading.value = false
         }
@@ -328,12 +332,12 @@ class TableOrderViewModel @Inject constructor(
         val cId = currentTable.comandaId
 
         if (cId.isNullOrEmpty()) {
-            _error.value = "ID da comanda não encontrado"
+            _error.value = localized(R.string.comanda_id_not_found, "COMANDA_ID_NOT_FOUND")
             return
         }
 
         if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
-            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+            _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             return
         }
 
@@ -354,9 +358,9 @@ class TableOrderViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+                _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             } catch (e: Exception) {
-                _error.value = "Erro ao adicionar item: ${e.localizedMessage}"
+                _error.value = localized(R.string.add_item_error, "ADD_ITEM_ERROR", e.localizedMessage.orEmpty())
             } finally {
                 _isLoading.value = false
             }
@@ -368,7 +372,7 @@ class TableOrderViewModel @Inject constructor(
         val currentToken = token ?: return
 
         if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
-            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+            _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             return
         }
 
@@ -390,9 +394,9 @@ class TableOrderViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+                _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             } catch (e: Exception) {
-                _error.value = "Erro ao remover item: ${e.localizedMessage}"
+                _error.value = localized(R.string.remove_item_error, "REMOVE_ITEM_ERROR", e.localizedMessage.orEmpty())
             } finally {
                 _isLoading.value = false
             }
@@ -405,12 +409,12 @@ class TableOrderViewModel @Inject constructor(
         val cId = currentTable.comandaId
 
         if (cId.isNullOrEmpty()) {
-            _error.value = "ID da comanda não encontrado"
+            _error.value = localized(R.string.comanda_id_not_found, "COMANDA_ID_NOT_FOUND")
             return
         }
 
         if (_readProvenance.value == ReadProvenance.LOCAL_CACHED && _refreshWarning.value != null) {
-            _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+            _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             return
         }
 
@@ -433,9 +437,9 @@ class TableOrderViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+                _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             } catch (e: Exception) {
-                _error.value = "Erro ao enviar pedido para a cozinha: ${e.localizedMessage}"
+                _error.value = localized(R.string.send_kitchen_error, "SEND_KITCHEN_ERROR", e.localizedMessage.orEmpty())
             } finally {
                 _isLoading.value = false
             }

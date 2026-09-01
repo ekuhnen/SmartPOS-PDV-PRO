@@ -70,7 +70,7 @@ class TableOrderActivity : BaseActivity() {
             table?.calculateTotal()
             tableOrderViewModel.enviarCozinha {
                 hasUnsavedChanges = false
-                Toast.makeText(this, "Mesa atualizada", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.table_updated, Toast.LENGTH_SHORT).show()
                 finish()
             }
         }
@@ -247,7 +247,7 @@ class TableOrderActivity : BaseActivity() {
     private fun showItemOptions(item: TableItem) {
         val options = arrayOf(
             getString(R.string.add_observation),
-            "Remover Item",
+            getString(R.string.remove_item),
             getString(R.string.cancel)
         )
 
@@ -286,7 +286,7 @@ class TableOrderActivity : BaseActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Remover ${item.product.name}")
+            .setTitle(getString(R.string.remove_product, item.product.name))
             .setView(etReason)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val reason = etReason.text.toString().trim()
@@ -304,12 +304,12 @@ class TableOrderActivity : BaseActivity() {
     private fun attemptToExit() {
         if (hasUnsavedChanges) {
             AlertDialog.Builder(this)
-                .setTitle("Atenção")
-                .setMessage("Deseja voltar sem ter enviado o pedido da mesa realmente?")
-                .setPositiveButton("Sim") { _, _ ->
+                .setTitle(R.string.attention)
+                .setMessage(R.string.leave_without_sending_order)
+                .setPositiveButton(R.string.yes) { _, _ ->
                     finish()
                 }
-                .setNegativeButton("Não", null)
+                .setNegativeButton(R.string.no, null)
                 .show()
         } else {
             finish()

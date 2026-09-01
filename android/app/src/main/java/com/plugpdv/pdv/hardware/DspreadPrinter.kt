@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.plugpdv.pdv.R
 import com.dspread.print.device.PrinterDevice
 import com.dspread.print.device.PrinterManager
 import com.dspread.print.device.PrintListener
@@ -76,7 +77,7 @@ class DspreadPrinter(private val context: Context) : Printer {
             printerDevice = PrinterManager.getInstance().getPrinter()
             printerDevice?.setPrintListener(printListener)
             
-            showToast("Printer class: ${printerDevice?.javaClass?.simpleName}")
+            Log.d(TAG, "Printer class: ${printerDevice?.javaClass?.simpleName}")
 
             // Inicialização síncrona/assíncrona dependendo do modelo retornado
             printerDevice?.initPrinter(context)
@@ -93,10 +94,10 @@ class DspreadPrinter(private val context: Context) : Printer {
             }
             
             isInitialized = true
-            showToast("Dspread SDK Init Síncrono Concluído!")
+            Log.d(TAG, "Dspread SDK synchronous initialization completed")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Dspread Printer", e)
-            showToast("Init Exception: ${e.message}")
+            showToast(context.getString(R.string.printer_init_error, e.message.orEmpty()))
         }
     }
 
@@ -134,7 +135,7 @@ class DspreadPrinter(private val context: Context) : Printer {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error adding text", e)
-                showToast("addText Error: ${e.message}")
+                showToast(context.getString(R.string.printer_add_text_error, e.message.orEmpty()))
             }
         }
     }
@@ -233,11 +234,11 @@ class DspreadPrinter(private val context: Context) : Printer {
         queueOrExecute {
             val printer = printerDevice ?: return@queueOrExecute
             try {
-                showToast("Calling printer.print(context)...")
+                Log.d(TAG, "Calling printer.print(context)")
                 printer.print(context)
             } catch (e: Exception) {
                 Log.e(TAG, "Error triggering print", e)
-                showToast("print() Exception: ${e.message}")
+                showToast(context.getString(R.string.printer_execution_error, e.message.orEmpty()))
             }
         }
         
@@ -245,7 +246,7 @@ class DspreadPrinter(private val context: Context) : Printer {
         if (!isPrinterConnected) {
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isPrinterConnected) {
-                    showToast("ERRO: O serviço de impressão não respondeu (connected() não foi chamado).")
+                    showToast(context.getString(R.string.printer_service_unavailable))
                 }
             }, 3000)
         }

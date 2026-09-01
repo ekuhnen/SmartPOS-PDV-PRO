@@ -51,11 +51,11 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 val method = PaymentMethod.fromString(methodStr)
                 viewModel.finalizeApprovedCheckout(requestId, paymentId, method)
             } else {
-                Toast.makeText(context, "Pagamento não aprovado: $status", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, getString(R.string.payment_not_approved, status), Toast.LENGTH_LONG).show()
             }
         } else if (result.resultCode == Activity.RESULT_CANCELED) {
             val message = result.data?.getStringExtra("message") ?: "Cancelado"
-            Toast.makeText(context, "Pagamento Cancelado/Erro: $message", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, getString(R.string.payment_cancelled_or_error, message), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -199,21 +199,21 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
         if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
             b.btnPayLink.isEnabled = true
-            b.btnPayLink.text = "Tentar novamente"
+            b.btnPayLink.setText(R.string.retry)
             b.btnPayLink.setOnClickListener { viewModel.fetchComandaPayments() }
         } else {
             b.btnPayLink.setOnClickListener { finalizePayment() }
             b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation && state.baseMinorUnitDigits != null
             if (state.baseMinorUnitDigits == null && state.moneyAuthorityState != MoneyAuthorityState.LOAD_ERROR) {
-                b.btnPayLink.text = "Dados financeiros indisponíveis"
+                b.btnPayLink.setText(R.string.financial_data_unavailable)
             } else if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
-                b.btnPayLink.text = "Carregando comanda..."
+                b.btnPayLink.setText(R.string.loading_comanda)
             } else if (state.requiresReconciliation) {
-                b.btnPayLink.text = "Pagamento aprovado requer conciliação"
+                b.btnPayLink.setText(R.string.payment_requires_reconciliation_short)
             } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
                 b.btnPayLink.text = state.blockReason
             } else {
-                b.btnPayLink.text = "Cobrar"
+                b.btnPayLink.setText(R.string.charge)
             }
         }
 
@@ -263,7 +263,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.layoutItems.visibility = if (state.splitMode == 2) View.VISIBLE else View.GONE
         
         if (state.splitMode == 1) {
-            b.tvPerPersonValue.text = "Valor por pessoa: ${cm.format(state.currentToPay)}"
+            b.tvPerPersonValue.text = getString(R.string.value_per_person, cm.format(state.currentToPay))
         }
 
         if (state.splitMode == 2) {
@@ -333,10 +333,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
         if (canOverride || sfAmount > 0) {
-            val sfRowBinding = addBreakdownRow("Taxa de Serviço", cm.format(sfAmount))
+            val sfRowBinding = addBreakdownRow(getString(R.string.service_fee_label_ui), cm.format(sfAmount))
             if (canOverride) {
                 sfRowBinding.root.setOnClickListener { showServiceFeeOverrideDialog() }
-                sfRowBinding.tvLabel.text = "Taxa de Serviço (Alterar)"
+                sfRowBinding.tvLabel.setText(R.string.service_fee_change)
                 sfRowBinding.tvLabel.setTextColor(requireContext().getColor(com.google.android.material.R.color.design_default_color_primary))
             }
         }
@@ -360,11 +360,11 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun finalizePayment() {
         val state = viewModel.uiState.value
         if (state.moneyAuthorityState != MoneyAuthorityState.READY_REMOTE || !viewModel.moneyAuthorityLoaded || viewModel.comandaBaseCurrency.isNullOrBlank() || state.isPayButtonBlocked || state.requiresReconciliation) {
-            Toast.makeText(context, state.blockReason ?: "Dados financeiros da comanda não carregados", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, state.blockReason ?: getString(R.string.comanda_financial_data_not_loaded), Toast.LENGTH_SHORT).show()
             return
         }
         if (state.currentToPay <= 0) {
-            Toast.makeText(context, "Valor inválido", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, R.string.invalid_value, Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -406,7 +406,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                             paymentLauncher.launch(intent)
                         } catch (e: Exception) {
                             Log.e("TableCheckoutBottomSheet", "Erro ao preparar checkout: ${e.message}")
-                            Toast.makeText(context, "Erro ao iniciar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, getString(R.string.start_payment_error, e.message.orEmpty()), Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -503,7 +503,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val tip = items[position]
             holder.binding.cbItemSelected.isChecked = tip.selected
-            holder.binding.tvItemName.text = "${tip.item.product.name ?: "Sem Nome"} (x${tip.selectedQuantity})"
+            holder.binding.tvItemName.text = holder.itemView.context.getString(R.string.product_with_quantity, tip.item.product.name ?: holder.itemView.context.getString(R.string.unnamed_product), tip.selectedQuantity)
             val price = tip.item.product.selling_price
             holder.binding.tvItemValue.text = if (price != null) CurrencyManager.getInstance().format(price) else "UNKNOWN"
             holder.binding.tvItemSubtotal.text = if (price != null) CurrencyManager.getInstance().format(price * tip.selectedQuantity) else "UNKNOWN"

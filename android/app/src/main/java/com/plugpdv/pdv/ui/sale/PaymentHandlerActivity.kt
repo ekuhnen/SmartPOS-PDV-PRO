@@ -1,5 +1,6 @@
 package com.plugpdv.pdv.ui.sale
 
+import com.plugpdv.pdv.R
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -106,7 +107,7 @@ class PaymentHandlerActivity : BaseActivity() {
                         }
                         PaymentAttemptEntity.STATUS_PENDING -> {
                             Log.d(TAG, "Tentativa K=$requestId em PENDING pós recriação. Bloqueando reabertura automática.")
-                            Toast.makeText(this@PaymentHandlerActivity, "Pagamento aguardando confirmação...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@PaymentHandlerActivity, R.string.payment_pending_confirmation, Toast.LENGTH_SHORT).show()
                         }
                         PaymentAttemptEntity.STATUS_UNKNOWN -> {
                             Log.d(TAG, "Tentativa K=$requestId em UNKNOWN pós recriação. Exibindo conciliação.")
@@ -524,11 +525,11 @@ class PaymentHandlerActivity : BaseActivity() {
             attempt = attempt,
             onRetryCheck = {
                 // Re-dispara verificação / consulta de status
-                Toast.makeText(this, "Consultando status no servidor...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.checking_server_status, Toast.LENGTH_SHORT).show()
                 // Mantém a tela/mesa aberta
             },
             onMarkPending = {
-                Toast.makeText(this, "Pagamento registrado como pendente. A mesa permanece aberta.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, R.string.payment_registered_pending, Toast.LENGTH_LONG).show()
                 deliverFailedResult("PENDING_VERIFICATION", "Pagamento pendente de confirmação", tableNum)
             }
         )

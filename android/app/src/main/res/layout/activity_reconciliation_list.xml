@@ -19,7 +19,7 @@
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
             android:background="@color/primary"
-            app:title="Operações que precisam de atenção"
+            app:title="@string/reconciliation_attention_title"
             app:titleTextColor="@color/white"
             app:navigationIcon="?attr/homeAsUpIndicator" />
     </com.google.android.material.appbar.AppBarLayout>
@@ -60,7 +60,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:gravity="center"
-            android:text="Não há operações que precisam de atenção."
+            android:text="@string/reconciliation_empty"
             android:textColor="#424242"
             android:textSize="16sp"
             android:textStyle="bold" />

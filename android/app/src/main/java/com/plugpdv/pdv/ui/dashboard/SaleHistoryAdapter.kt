@@ -27,7 +27,7 @@ class SaleHistoryAdapter(private var items: MutableList<SaleHistoryItem>) : Recy
         val time = if (item.createdAt != null && item.createdAt.length >= 16) item.createdAt.substring(11, 16) else "--:--"
         val method = item.paymentMethod ?: "???"
         
-        holder.tvId.text = "Venda #${items.size - position}"
+        holder.tvId.text = holder.itemView.context.getString(R.string.sale_number, items.size - position)
         holder.tvTime.text = time
         
         val displayTotal = if (item.currency != null && item.convertedTotal != null) {

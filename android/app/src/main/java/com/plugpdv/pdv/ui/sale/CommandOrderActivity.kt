@@ -57,7 +57,7 @@ class CommandOrderActivity : BaseActivity() {
             commandViewModel.fetchComanda(it, commandCode!!)
         }
 
-        binding.btnAction.text = "ATUALIZAR COMANDA"
+        binding.btnAction.setText(R.string.update_comanda)
         binding.btnAction.setOnClickListener {
             finish()
         }
@@ -109,7 +109,7 @@ class CommandOrderActivity : BaseActivity() {
                     com.plugpdv.pdv.utils.TableManager.updateTable(fakeTable)
                     com.plugpdv.pdv.ui.sale.TableCheckoutBottomSheet.newInstance(fakeTable.id, fakeTableId, token!!).show(supportFragmentManager, "checkout")
                 } else {
-                    Toast.makeText(this, "Aguarde o carregamento", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, R.string.wait_for_loading, Toast.LENGTH_SHORT).show()
                 }
                 true
             }
@@ -183,7 +183,7 @@ class CommandOrderActivity : BaseActivity() {
     private fun showItemOptions(item: TableItem) {
         val options = arrayOf(
             getString(R.string.add_observation),
-            "Remover Item",
+            getString(R.string.remove_item),
             getString(R.string.cancel)
         )
 
@@ -222,12 +222,12 @@ class CommandOrderActivity : BaseActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Remover ${item.product.name}")
+            .setTitle(getString(R.string.remove_product, item.product.name))
             .setView(etReason)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val reason = etReason.text.toString().trim()
                 if (reason.isEmpty()) {
-                    Toast.makeText(this, "O motivo é obrigatório para remover.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, R.string.removal_reason_required, Toast.LENGTH_SHORT).show()
                 } else {
                     token?.let {
                         commandViewModel.removeItemFromComanda(it, commandCode!!, item, reason)

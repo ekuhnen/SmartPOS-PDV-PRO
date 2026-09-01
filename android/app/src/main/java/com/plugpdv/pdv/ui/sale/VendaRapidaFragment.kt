@@ -78,7 +78,7 @@ class VendaRapidaFragment : Fragment() {
             if (!viewModel.cart.value.isNullOrEmpty()) {
                 CartBottomSheet().show(requireActivity().supportFragmentManager, "CartBottomSheet")
             } else {
-                Toast.makeText(requireContext(), "Carrinho está vazio.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.empty_cart_message, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -99,14 +99,14 @@ class VendaRapidaFragment : Fragment() {
                         viewModel.addToCart(product)
                         Toast.makeText(requireContext(), getString(R.string.product_added, product.name), Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(requireContext(), "Produto não encontrado: $result", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.product_not_found, result), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
 
             override fun onScanFailed(error: String) {
                 activity?.runOnUiThread {
-                    Toast.makeText(requireContext(), "Erro no scanner: $error", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.scanner_error, error), Toast.LENGTH_SHORT).show()
                 }
             }
         })
@@ -190,7 +190,7 @@ class VendaRapidaFragment : Fragment() {
         viewModel.cart.observe(viewLifecycleOwner) { cartItems ->
             cartAdapter.setItems(cartItems ?: emptyList())
             val qtdItems = cartItems?.sumOf { it.quantity } ?: 0
-            binding.tvCartCount.text = "$qtdItems ${if (qtdItems == 1) "item" else "itens"}"
+            binding.tvCartCount.text = resources.getQuantityString(R.plurals.item_count, qtdItems, qtdItems)
         }
 
         viewModel.products.observe(viewLifecycleOwner) { products ->

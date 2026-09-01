@@ -48,7 +48,7 @@ class CashierActivity : BaseActivity() {
                 val state = viewModel.cashierState.value
                 val isOffline = viewModel.isOffline.value == true
                 if (state is com.plugpdv.pdv.utils.CashierAuthorityState.CLOSED && !isOffline) {
-                    Toast.makeText(this@CashierActivity, "Você precisa abrir o caixa para continuar.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@CashierActivity, R.string.cashier_must_be_open, Toast.LENGTH_SHORT).show()
                 } else {
                     // Safe exit when OPEN, UNKNOWN, or offline
                     finish()
@@ -73,12 +73,12 @@ class CashierActivity : BaseActivity() {
 
         binding.btnLogoff.setOnClickListener {
             AlertDialog.Builder(this)
-                .setTitle("Logoff")
-                .setMessage("Deseja mesmo sair da sua conta?")
-                .setPositiveButton("Confirmar") { _, _ ->
+                .setTitle(R.string.logout)
+                .setMessage(R.string.logout_confirmation)
+                .setPositiveButton(R.string.confirm) { _, _ ->
                     performLogoff()
                 }
-                .setNegativeButton("Cancelar", null)
+                .setNegativeButton(R.string.cancel, null)
                 .show()
         }
 
@@ -144,7 +144,7 @@ class CashierActivity : BaseActivity() {
 
         viewModel.isOffline.observe(this) { isOffline ->
             if (isOffline) {
-                Toast.makeText(this, "Sem conexão — exibindo estado salvo do caixa", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.cashier_offline_cached, Toast.LENGTH_SHORT).show()
             }
             updateCashierUI()
         }

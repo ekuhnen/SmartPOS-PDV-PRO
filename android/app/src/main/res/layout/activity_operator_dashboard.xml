@@ -60,7 +60,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="MODO OFFLINE: Exibindo vendas locais e saldos a cobrar armazenados no dispositivo."
+                        android:text="@string/offline_dashboard_banner"
                         android:textColor="#E65100"
                         android:textSize="12sp"
                         android:textStyle="bold" />
@@ -81,21 +81,21 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
-                    android:text="Hoje" />
+                    android:text="@string/today" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipYesterday"
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Ontem" />
+                    android:text="@string/yesterday" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipAllTime"
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Todo o Período" />
+                    android:text="@string/all_time" />
             </com.google.android.material.chip.ChipGroup>
 
             <!-- Premium Header -->
@@ -163,7 +163,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="12dp"
-                android:text="Resumo por Pagamento"
+                    android:text="@string/payment_summary"
                 android:textColor="@color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -181,7 +181,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="12dp"
-                android:text="Resumo por Moeda"
+                    android:text="@string/currency_summary"
                 android:textColor="@color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -201,7 +201,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="12dp"
-                android:text="Mesas em Aberto (Saldos a Cobrar)"
+                    android:text="@string/open_tables_balances"
                 android:textColor="@color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />

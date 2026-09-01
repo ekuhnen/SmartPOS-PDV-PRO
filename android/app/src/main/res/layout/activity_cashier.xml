@@ -38,7 +38,7 @@
         app:tint="#EF4444"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:contentDescription="Logoff" />
+        android:contentDescription="@string/logout" />
 
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardAmount"

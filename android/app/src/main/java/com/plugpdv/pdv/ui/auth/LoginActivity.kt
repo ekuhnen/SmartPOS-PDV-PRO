@@ -77,7 +77,6 @@ class LoginActivity : BaseActivity() {
         }
 
         binding.btnLangPt.setOnClickListener { changeLanguage("pt") }
-        binding.btnLangEn.setOnClickListener { changeLanguage("en") }
         binding.btnLangEs.setOnClickListener { changeLanguage("es") }
 
         observeViewModel()

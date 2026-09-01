@@ -38,7 +38,7 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="match_parent"
-                    android:text="Total"
+                    android:text="@string/total"
                     android:textColor="@color/text_secondary"
                     app:cornerRadius="8dp" />
                 <Button
@@ -47,7 +47,7 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="match_parent"
-                    android:text="Dividir"
+                    android:text="@string/split"
                     android:textColor="@color/text_secondary"
                     app:cornerRadius="8dp" />
                 <Button
@@ -56,7 +56,7 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="match_parent"
-                    android:text="Itens"
+                    android:text="@string/items"
                     android:textColor="@color/text_secondary"
                     app:cornerRadius="8dp" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
@@ -72,7 +72,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Número de Pessoas"
+                    android:text="@string/number_of_people"
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     android:layout_marginBottom="8dp" />
@@ -108,7 +108,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Selecione os Itens"
+                    android:text="@string/select_items"
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     android:layout_marginBottom="8dp" />
@@ -123,7 +123,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Resumo do Pedido"
+                android:text="@string/order_summary"
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="24dp"
@@ -281,7 +281,7 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="64dp"
-                    android:text="Finalizar Pagamento"
+                    android:text="@string/finish_payment"
                     android:textSize="18sp"
                     android:backgroundTint="@color/primary"
                     android:textColor="@color/white" />

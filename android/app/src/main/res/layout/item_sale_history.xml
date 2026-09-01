@@ -30,7 +30,7 @@
                 android:id="@+id/tvSaleId"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Venda #123"
+        android:text="@string/sale_number"
                 android:textColor="@color/black"
                 android:textSize="14sp"
                 android:textStyle="bold" />

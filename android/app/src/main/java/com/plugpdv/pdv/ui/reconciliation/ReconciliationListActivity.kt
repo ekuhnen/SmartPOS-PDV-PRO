@@ -9,6 +9,7 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.plugpdv.pdv.R
 import com.plugpdv.pdv.database.ComandaMutationEntity
 import com.plugpdv.pdv.databinding.ActivityReconciliationListBinding
 import com.plugpdv.pdv.databinding.DialogReconciliationDetailBinding
@@ -89,11 +90,11 @@ class ReconciliationListActivity : BaseActivity() {
         dialog.setContentView(dialogBinding.root)
         detailDialog = dialog
 
-        dialogBinding.tvDetailTarget.text = "Mesa ${mutation.tableId.removePrefix("tbl_")}"
-        dialogBinding.tvDetailOperation.text = "Operação: ${ReconciliationReasonMapper.toHumanOperationType(mutation.operationType)}"
+        dialogBinding.tvDetailTarget.text = getString(R.string.table_label_value, mutation.tableId.removePrefix("tbl_"))
+        dialogBinding.tvDetailOperation.text = getString(R.string.operation_label, getString(ReconciliationReasonMapper.operationTypeRes(mutation.operationType)))
         val dateFormatted = DateFormat.format("dd/MM/yyyy, HH:mm", Date(mutation.createdAt)).toString()
-        dialogBinding.tvDetailTimestamp.text = "Tentativa: $dateFormatted"
-        dialogBinding.tvDetailExplanation.text = ReconciliationReasonMapper.toHumanMessage(mutation.reconciliationReason ?: mutation.lastErrorCode)
+        dialogBinding.tvDetailTimestamp.text = getString(R.string.attempt_label, dateFormatted)
+        dialogBinding.tvDetailExplanation.text = getString(ReconciliationReasonMapper.messageRes(mutation.reconciliationReason ?: mutation.lastErrorCode))
 
         val reason = (mutation.reconciliationReason ?: mutation.lastErrorCode).orEmpty().uppercase()
 
@@ -141,15 +142,15 @@ class ReconciliationListActivity : BaseActivity() {
         dialogBinding: DialogReconciliationDetailBinding
     ) {
         AlertDialog.Builder(this)
-            .setTitle("Confirmar Conclusão")
-            .setMessage("Esta operação será considerada concluída e não será enviada novamente ao servidor.")
-            .setPositiveButton("Confirmar") { _, _ ->
+            .setTitle(R.string.reconciliation_confirm_title)
+            .setMessage(R.string.reconciliation_confirm_consequence)
+            .setPositiveButton(R.string.confirm) { _, _ ->
                 dialogBinding.btnConfirmSuccess.isEnabled = false
                 dialogBinding.btnRetry.isEnabled = false
                 dialogBinding.btnCancelOperation.isEnabled = false
                 viewModel.resolveAsCompleted(mutation.id)
             }
-            .setNegativeButton("Voltar", null)
+            .setNegativeButton(R.string.back, null)
             .show()
     }
 
@@ -158,15 +159,15 @@ class ReconciliationListActivity : BaseActivity() {
         dialogBinding: DialogReconciliationDetailBinding
     ) {
         AlertDialog.Builder(this)
-            .setTitle("Cancelar Operação")
-            .setMessage("Esta operação será cancelada e não será mais enviada ao servidor.")
-            .setPositiveButton("Confirmar Cancelamento") { _, _ ->
+            .setTitle(R.string.reconciliation_cancel_title)
+            .setMessage(R.string.reconciliation_cancel_consequence)
+            .setPositiveButton(R.string.confirm_cancellation) { _, _ ->
                 dialogBinding.btnConfirmSuccess.isEnabled = false
                 dialogBinding.btnRetry.isEnabled = false
                 dialogBinding.btnCancelOperation.isEnabled = false
                 viewModel.resolveAsCancelled(mutation.id)
             }
-            .setNegativeButton("Voltar", null)
+            .setNegativeButton(R.string.back, null)
             .show()
     }
 }

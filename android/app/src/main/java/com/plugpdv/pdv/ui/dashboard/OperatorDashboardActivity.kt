@@ -92,7 +92,7 @@ class OperatorDashboardActivity : BaseActivity() {
 
                 val cm = CurrencyManager.getInstance()
                 binding.tvTotalVendas.text = cm.format(summary.totalSalesAmountBrl)
-                binding.tvTotalSangria.text = "Sangria: ${cm.format(summary.totalSangriaAmountBrl)}"
+                binding.tvTotalSangria.text = getString(R.string.withdrawal_amount, cm.format(summary.totalSangriaAmountBrl))
 
                 // Mesas em aberto
                 occupiedTableAdapter.updateData(summary.occupiedTables)
@@ -130,7 +130,7 @@ class OperatorDashboardActivity : BaseActivity() {
     private fun printAuditReport() {
         val summary = viewModel.reportSummary.value
         if (summary == null || (summary.sales.isEmpty() && summary.occupiedTables.isEmpty())) {
-            Toast.makeText(this, "Nenhum dado para imprimir no relatório", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.no_report_data, Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -138,6 +138,6 @@ class OperatorDashboardActivity : BaseActivity() {
         val operatorEmail = prefs.getString(Constants.EMAIL, null)
 
         PrinterHelper.printAuditReport(this, summary, operatorEmail)
-        Toast.makeText(this, "Imprimindo relatório de auditoria...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.printing_audit_report, Toast.LENGTH_SHORT).show()
     }
 }

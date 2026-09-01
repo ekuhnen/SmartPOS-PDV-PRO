@@ -25,7 +25,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Produto"
+        android:text="@string/product"
                 android:textStyle="bold"
                 android:textSize="13sp"
                 android:textColor="@color/text_primary" />
@@ -44,7 +44,7 @@
                 android:id="@+id/tvQuantity"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="x1"
+        android:text="@string/quantity_short"
                 android:textColor="@color/text_secondary"
                 android:textStyle="bold"
                 android:textSize="13sp" />
@@ -64,7 +64,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="Obs: ..."
+        android:text="@string/observation_label"
             android:textSize="12sp"
             android:textColor="@color/amber_600"
             android:visibility="gone" />
@@ -74,7 +74,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Status"
+        android:text="@string/status_label"
             android:textSize="11sp"
             android:textColor="@color/red_600"
             android:textStyle="bold|italic"

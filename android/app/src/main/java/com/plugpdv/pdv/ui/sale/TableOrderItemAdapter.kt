@@ -41,7 +41,7 @@ class TableOrderItemAdapter(
         private val ivPaidIndicator: android.widget.ImageView = itemView.findViewById(R.id.ivPaidIndicator)
 
         fun bind(item: TableItem, listener: (TableItem) -> Unit) {
-            tvName.text = item.product.name ?: "Sem Nome"
+            tvName.text = item.product.name ?: itemView.context.getString(R.string.unnamed_product)
             val price = item.product.selling_price
             tvPrice.text = if (price != null) CurrencyManager.getInstance().format(price * item.quantity.toDouble()) else "UNKNOWN"
             
@@ -54,7 +54,7 @@ class TableOrderItemAdapter(
 
             if (item.removed) {
                 tvStatus.visibility = View.VISIBLE
-                tvStatus.text = "REMOVIDO: ${item.removalReason}"
+                tvStatus.text = itemView.context.getString(R.string.removed_with_reason, item.removalReason)
                 tvName.alpha = 0.5f
                 tvQuantity.alpha = 0.5f
                 tvPrice.alpha = 0.5f

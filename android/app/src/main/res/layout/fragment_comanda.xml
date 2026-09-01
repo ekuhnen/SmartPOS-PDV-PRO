@@ -32,7 +32,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="20dp"
-                android:text="Módulo de Comanda"
+        android:text="@string/comanda_module"
                 android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary" />
@@ -41,7 +41,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="Escaneie o QR Code ou digite o código"
+        android:text="@string/scan_or_enter_comanda_code"
                 android:textColor="@color/text_secondary" />
 
             <com.google.android.material.textfield.TextInputLayout
@@ -50,7 +50,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="32dp"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:hint="Código da Comanda"
+        android:hint="@string/comanda_code"
                 app:boxStrokeColor="@color/primary"
                 app:hintTextColor="@color/primary">
                 <com.google.android.material.textfield.TextInputEditText
@@ -69,7 +69,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:layout_marginTop="16dp"
-                android:text="BUSCAR COMANDA"
+        android:text="@string/search_comanda"
                 android:backgroundTint="@color/secondary" />
 
             <LinearLayout
@@ -104,7 +104,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="60dp"
                 android:layout_marginTop="24dp"
-                android:text="ESCANEAR QR CODE"
+        android:text="@string/scan_qr_code"
                 app:icon="@android:drawable/ic_menu_camera"
                 app:iconGravity="textStart" />
 

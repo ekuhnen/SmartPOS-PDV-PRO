@@ -5,6 +5,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.plugpdv.pdv.R
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.models.*
 import com.plugpdv.pdv.utils.retryIO
@@ -22,6 +23,9 @@ class CommandViewModel @Inject constructor(
     private val catalogDao: com.plugpdv.pdv.database.CatalogDao,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
+        runCatching { context.getString(resource, *args) }.getOrDefault(fallbackCode)
 
     private val _comanda = MutableLiveData<ComandaDetailResponse?>(null)
     val comanda: LiveData<ComandaDetailResponse?> = _comanda
@@ -130,9 +134,9 @@ class CommandViewModel @Inject constructor(
                     val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
                     _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "comanda")
                 } else if (e is retrofit2.HttpException && e.code() == 401) {
-                    _error.value = "Sessão expirada. Faça login novamente."
+                    _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                 } else {
-                    _error.value = "Erro ao carregar comanda"
+                    _error.value = localized(R.string.load_comanda_error, "LOAD_COMANDA_ERROR")
                 }
             } finally {
                 _isLoading.value = false
@@ -173,13 +177,14 @@ class CommandViewModel @Inject constructor(
                     if (response.code() == 403) {
                         _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "comanda")
                     } else if (response.code() == 401) {
-                        _error.value = "Sessão expirada. Faça login novamente."
+                    _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                     } else {
-                        _error.value = "API recusou (Status ${response.code()}): $errorBody"
+                    Log.w("CommandViewModel", "API rejected status ${response.code()}: $errorBody")
+                    _error.value = localized(R.string.api_rejected_status, "API_REJECTED", response.code())
                     }
                 }
             } catch (e: Exception) {
-                _error.value = "Erro de conexão: ${e.message}"
+                _error.value = localized(R.string.connection_error_detail, "CONNECTION_ERROR", e.message.orEmpty())
             } finally {
                 _isLoading.value = false
             }
@@ -219,11 +224,11 @@ class CommandViewModel @Inject constructor(
                 if (response.isSuccessful) {
                     fetchComanda(token, code)
                 } else {
-                    _error.value = "Erro ao sincronizar item (Status: ${response.code()})"
+                    _error.value = localized(R.string.sync_item_error_status, "SYNC_ITEM_ERROR", response.code())
                     fetchComanda(token, code) // Revert/Refresh
                 }
             } catch (e: Exception) {
-                _error.value = "Erro de rede ao adicionar item"
+                _error.value = localized(R.string.add_item_network_error, "ADD_ITEM_NETWORK_ERROR")
                 // No need to revert immediate UI if we want to be "offline-capable", 
                 // but for now let's just refresh to match server State
                 fetchComanda(token, code)
@@ -253,11 +258,11 @@ class CommandViewModel @Inject constructor(
                 if (response.isSuccessful) {
                     fetchComanda(token, code)
                 } else {
-                    _error.value = "Erro ao remover item (Status: ${response.code()})"
+                    _error.value = localized(R.string.remove_item_error_status, "REMOVE_ITEM_ERROR", response.code())
                     fetchComanda(token, code)
                 }
             } catch (e: Exception) {
-                _error.value = "Erro de rede ao remover item"
+                _error.value = localized(R.string.remove_item_network_error, "REMOVE_ITEM_NETWORK_ERROR")
                 fetchComanda(token, code)
             }
         }

@@ -40,7 +40,7 @@
                 app:tint="@color/white"
                 android:padding="5dp"
                 android:scaleType="centerInside"
-                android:contentDescription="Info" />
+                android:contentDescription="@string/product_info" />
         </FrameLayout>
 
         <LinearLayout
@@ -53,7 +53,7 @@
                 android:id="@+id/tvProductName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Picanha na Brasa 400g"
+                android:text="@string/product_name_placeholder"
                 android:textSize="12sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary"
@@ -88,7 +88,7 @@
                 android:background="@drawable/bg_stock_chip"
                 android:paddingHorizontal="8dp"
                 android:paddingVertical="2dp"
-                android:text="39 unidades"
+                android:text="@string/stock_label"
                 android:textSize="10sp"
                 android:textColor="@color/primary"
                 android:textStyle="bold" />

@@ -44,7 +44,7 @@ class ProductAdapter(private val listener: (Product) -> Unit) : ListAdapter<Prod
         private val btnInfo: android.widget.ImageButton = itemView.findViewById(R.id.btnProductInfo)
 
         fun bind(product: Product, listener: (Product) -> Unit) {
-            tvName.text = product.name ?: "Sem Nome"
+            tvName.text = product.name ?: itemView.context.getString(R.string.unnamed_product)
             tvPrice.text = CurrencyManager.getInstance().format(product.selling_price ?: 0.0)
             tvStock.text = itemView.context.getString(R.string.stock_label, product.stock ?: 0)
             
@@ -124,9 +124,9 @@ class ProductAdapter(private val listener: (Product) -> Unit) : ListAdapter<Prod
             }
 
             androidx.appcompat.app.AlertDialog.Builder(context)
-                .setTitle(product.name ?: "Produto")
+                .setTitle(product.name ?: context.getString(R.string.product))
                 .setView(container)
-                .setPositiveButton("Fechar", null)
+                .setPositiveButton(R.string.close, null)
                 .show()
         }
     }

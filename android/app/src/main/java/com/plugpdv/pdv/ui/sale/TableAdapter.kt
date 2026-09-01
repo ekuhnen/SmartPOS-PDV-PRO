@@ -57,7 +57,7 @@ class TableAdapter(
             cardView.setCardBackgroundColor(ContextCompat.getColor(itemView.context, R.color.surface))
             
             // Use people_count from model
-            tvCapacity.text = "${table.people_count}xp"
+            tvCapacity.text = itemView.context.getString(R.string.people_count_short, table.people_count)
             
             // Set Sector Name
             tvSectorName.text = table.sectorName

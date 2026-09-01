@@ -30,7 +30,7 @@ class CheckoutProductAdapter(
 
         holder.tvName.text = cartItem.product.name
         holder.tvQuantity.text = cartItem.quantity.toString()
-        holder.tvUnitPrice.text = "Unit: ${cm.format(cartItem.product.selling_price ?: 0.0)}"
+        holder.tvUnitPrice.text = holder.itemView.context.getString(R.string.unit_price_label, cm.format(cartItem.product.selling_price ?: 0.0))
 
         val baseItemTotal = (cartItem.product.selling_price ?: 0.0) * cartItem.quantity
         

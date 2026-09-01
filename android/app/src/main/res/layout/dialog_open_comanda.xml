@@ -10,7 +10,7 @@
         android:id="@+id/tvMessage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Deseja abrir uma nova comanda para este código? Defina um apelido/nome opcional:"
+        android:text="@string/open_comanda_question"
         android:textColor="@color/text_secondary"
         android:textSize="14sp"
         android:layout_marginBottom="16dp" />
@@ -20,7 +20,7 @@
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Apelido / Nome do Cliente"
+        android:hint="@string/customer_alias_hint"
         app:boxStrokeColor="@color/primary"
         app:hintTextColor="@color/primary">
 

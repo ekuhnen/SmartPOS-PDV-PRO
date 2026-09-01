@@ -28,7 +28,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Mesa 12"
+                android:text="@string/table_label_value"
                 android:textColor="@color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -40,7 +40,7 @@
                 android:background="#FFF3E0"
                 android:paddingHorizontal="8dp"
                 android:paddingVertical="4dp"
-                android:text="Abrir mesa"
+                android:text="@string/open_table"
                 android:textColor="#E65100"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -51,7 +51,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Esta mesa já está ocupada por outra operação."
+            android:text="@string/reconciliation_table_occupied"
             android:textColor="#424242"
             android:textSize="14sp" />
 
@@ -67,7 +67,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Hoje, 13:42"
+                android:text="@string/today"
                 android:textColor="#757575"
                 android:textSize="12sp" />
 
@@ -75,7 +75,7 @@
                 android:id="@+id/tvStatusBadge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Atenção necessária"
+                android:text="@string/attention_required"
                 android:textColor="#D32F2F"
                 android:textSize="12sp"
                 android:textStyle="bold" />

@@ -7,6 +7,7 @@ import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.plugpdv.pdv.R
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.CatalogDao
 import com.plugpdv.pdv.models.CommandActionRequest
@@ -35,6 +36,9 @@ class MesaViewModel @Inject constructor(
     private val comandaMutationRepository: ComandaMutationRepository? = null,
     private val comandaOutboxDispatcher: ComandaOutboxDispatcher? = null
 ) : ViewModel() {
+
+    private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
+        runCatching { context.getString(resource, *args) }.getOrDefault(fallbackCode)
 
     private val queueManager = TransferQueueManager(context)
 
@@ -163,7 +167,7 @@ class MesaViewModel @Inject constructor(
             when (error.code()) {
                 401 -> {
                     _sessionExpired.value = true
-                    _error.value = "Sessão expirada. Faça login novamente."
+                    _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                     return
                 }
                 403 -> {
@@ -172,14 +176,14 @@ class MesaViewModel @Inject constructor(
                     return
                 }
                 426 -> {
-                    _error.value = "Atualização obrigatória do aplicativo necessária."
+                    _error.value = localized(R.string.mandatory_app_update, "MANDATORY_APP_UPDATE")
                     return
                 }
             }
         }
 
         if (hasCachedData) {
-            _refreshWarning.value = "Sem conexão — exibindo dados salvos"
+            _refreshWarning.value = localized(R.string.offline_cached_data, "OFFLINE_CACHED_DATA")
         } else {
             _error.value = when (error) {
                 is java.io.IOException -> "Erro de conexão ao carregar mesas"
@@ -207,13 +211,13 @@ class MesaViewModel @Inject constructor(
                         ?: prefs.getString(com.plugpdv.pdv.utils.Constants.OPERATOR_ID, null)
 
                     if (actorUserId.isNullOrBlank() || actorUserId.equals("UNKNOWN", ignoreCase = true)) {
-                        _error.value = "Sessão inválida. Faça login novamente para autorização."
+                        _error.value = localized(R.string.invalid_session_authorization, "INVALID_SESSION_AUTHORIZATION")
                         return@launch
                     }
                     val deviceId = com.plugpdv.pdv.utils.DeviceIdProvider.get(context)
 
                     if (tenantId.isNullOrBlank()) {
-                        _error.value = "Terminal não vinculado a uma empresa"
+                        _error.value = localized(R.string.terminal_not_bound, "TERMINAL_NOT_BOUND")
                         return@launch
                     }
 
@@ -280,7 +284,7 @@ class MesaViewModel @Inject constructor(
                             _openSuccess.value = true
                         } else {
                             Log.e("MesaViewModel", "API retornou sucesso mas o ID da comanda veio vazio: $body")
-                            _error.value = "Erro: ID da comanda não retornado pela API"
+                            _error.value = localized(R.string.api_missing_comanda_id, "API_MISSING_COMANDA_ID")
                         }
                     } else {
                         val errorCode = response.code()
@@ -288,21 +292,21 @@ class MesaViewModel @Inject constructor(
                         Log.e("MesaViewModel", "Falha ao abrir mesa: $errorCode - $errorBody")
                         if (errorCode == 401) {
                             _sessionExpired.value = true
-                            _error.value = "Sessão expirada. Faça login novamente."
+                            _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                         } else if (errorCode == 403) {
                             _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                         } else {
-                            _error.value = "Erro ao abrir mesa (Código: $errorCode)"
+                            _error.value = localized(R.string.open_table_error_code, "OPEN_TABLE_ERROR", errorCode)
                         }
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _error.value = "Sem conexão. Os dados salvos podem ser consultados, mas esta ação requer conexão."
+                _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
             } catch (e: Exception) {
                 Log.e("MesaViewModel", "Failed to open table due to exception", e)
-                _error.value = "Erro ao abrir mesa: ${e.message}"
+                _error.value = localized(R.string.open_table_error_detail, "OPEN_TABLE_ERROR", e.message.orEmpty())
             } finally {
                 _isLoading.value = false
             }
@@ -343,20 +347,20 @@ class MesaViewModel @Inject constructor(
                     val errorBody = response.errorBody()?.string() ?: ""
                     if (errorCode == 401) {
                         _sessionExpired.value = true
-                        _error.value = "Sessão expirada. Faça login novamente."
+                        _error.value = localized(R.string.session_expired, "SESSION_EXPIRED")
                     } else if (errorCode == 403) {
                         _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
                     } else {
-                        _error.value = "Erro ao transferir mesa (Código: $errorCode)"
+                        _error.value = localized(R.string.transfer_table_error_code, "TRANSFER_TABLE_ERROR", errorCode)
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _error.value = "Sem conexão. Transferência de mesa requer conexão."
+                _error.value = localized(R.string.transfer_requires_connection, "TRANSFER_REQUIRES_CONNECTION")
             } catch (e: Exception) {
                 Log.e("MesaViewModel", "Error transferring table", e)
-                _error.value = "Erro ao transferir mesa: ${e.message}"
+                _error.value = localized(R.string.transfer_table_error_detail, "TRANSFER_TABLE_ERROR", e.message.orEmpty())
             } finally {
                 _isLoading.value = false
             }

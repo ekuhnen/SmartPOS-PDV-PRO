@@ -16,7 +16,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Resumo do Pedido"
+        android:text="@string/order_summary"
         android:textSize="18sp"
         android:textStyle="bold"
         android:textColor="@color/black"
@@ -34,6 +34,6 @@
         android:layout_width="match_parent"
         android:layout_height="64dp"
         android:layout_marginTop="24dp"
-        android:text="Confirmar" />
+        android:text="@string/confirm" />
 
 </LinearLayout>

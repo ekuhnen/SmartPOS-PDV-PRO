@@ -23,7 +23,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Product Name"
+                android:text="@string/product_name_placeholder"
                 android:textSize="17sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary" />
@@ -115,7 +115,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Total Item"
+                android:text="@string/item_total"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_secondary" />

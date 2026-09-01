@@ -49,7 +49,7 @@ class DirectSaleActivity : BaseActivity() {
         reconciliationViewModel.count.observe(this) { count ->
             if (count > 0) {
                 binding.cardReconciliationBanner.visibility = android.view.View.VISIBLE
-                binding.tvReconciliationBannerText.text = "Operações que precisam de atenção ($count)"
+                binding.tvReconciliationBannerText.text = getString(R.string.attention_operations_count, count)
             } else {
                 binding.cardReconciliationBanner.visibility = android.view.View.GONE
             }

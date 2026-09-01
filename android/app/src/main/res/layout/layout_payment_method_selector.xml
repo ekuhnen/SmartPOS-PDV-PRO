@@ -19,7 +19,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:layout_marginBottom="8dp"
-        android:text="Forma de Pagamento"
+        android:text="@string/payment_method_title"
         android:textColor="#333333"
         android:textSize="20sp"
         android:textStyle="bold" />
@@ -30,7 +30,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="24dp"
-        android:hint="Valor a Receber"
+        android:hint="@string/amount_to_receive"
         app:prefixText="R$ ">
 
         <com.google.android.material.textfield.TextInputEditText
@@ -77,7 +77,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Dinheiro"
+                    android:text="@string/cash"
                     android:textColor="#333333"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -113,7 +113,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Plug Pay"
+                    android:text="@string/plug_pay"
                     android:textColor="#333333"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -128,7 +128,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Cancelar"
+        android:text="@string/cancel"
         android:textColor="#999999" />
 
 </LinearLayout>

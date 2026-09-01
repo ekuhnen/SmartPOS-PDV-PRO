@@ -88,7 +88,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
-                android:text="Operações que precisam de atenção (1)"
+        android:text="@string/reconciliation_attention_title"
                 android:textColor="#E65100"
                 android:textSize="14sp"
                 android:textStyle="bold" />

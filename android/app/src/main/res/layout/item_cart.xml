@@ -28,7 +28,7 @@
                 android:id="@+id/tvCartProductName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Bolinho de Carne Seca (6un)"
+        android:text="@string/product_name_placeholder"
                 android:textStyle="bold"
                 android:textColor="@color/black"
                 android:textSize="12sp" />

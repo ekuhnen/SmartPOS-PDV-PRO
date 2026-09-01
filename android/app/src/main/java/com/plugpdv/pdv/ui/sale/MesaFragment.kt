@@ -121,8 +121,8 @@ class MesaFragment : Fragment() {
         if (!isAdded || isStateSaved) return
         val ctx = context ?: return
         AlertDialog.Builder(ctx)
-            .setTitle("Sessão Encerrada")
-            .setMessage("Sua sessão expirou ou outro terminal realizou login com este mesmo usuário. Por favor, faça login novamente.")
+                .setTitle(R.string.session_ended_title)
+                .setMessage(R.string.session_ended_message)
             .setCancelable(false)
             .setPositiveButton("OK") { dialog, _ ->
                 dialog.dismiss()
@@ -174,7 +174,7 @@ class MesaFragment : Fragment() {
         } ?: emptyList()
 
         if (availableTables.isEmpty()) {
-            Toast.makeText(requireContext(), "Nenhuma mesa livre disponível", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.no_available_table, Toast.LENGTH_SHORT).show()
             return
         }
 

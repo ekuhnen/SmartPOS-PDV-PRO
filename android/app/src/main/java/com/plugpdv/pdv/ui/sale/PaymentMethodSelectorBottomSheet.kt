@@ -1,5 +1,6 @@
 package com.plugpdv.pdv.ui.sale
 
+import com.plugpdv.pdv.R
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -98,7 +99,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
             binding.cardCash.alpha = 0.5f
             binding.cardPlugPay.isEnabled = false
             binding.cardPlugPay.alpha = 0.5f
-            Toast.makeText(requireContext(), "Cotação ausente para $selectedTxCurrency: $errorMsg", Toast.LENGTH_LONG).show()
+            Toast.makeText(requireContext(), getString(R.string.missing_exchange_rate, selectedTxCurrency, errorMsg), Toast.LENGTH_LONG).show()
         }
 
         fun resolveFinalQuote(): SelectedPaymentQuote? {
@@ -122,7 +123,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
                     snapshot = q.snapshot
                 )
             } else {
-                Toast.makeText(requireContext(), "Falha na cotação: ${recalculated.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), getString(R.string.exchange_rate_failure, recalculated.exceptionOrNull()?.message.orEmpty()), Toast.LENGTH_SHORT).show()
                 null
             }
         }

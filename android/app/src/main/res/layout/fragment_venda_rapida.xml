@@ -44,7 +44,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:background="@null"
-                    android:hint="Buscar"
+                android:hint="@string/search"
                     android:paddingHorizontal="8dp"
                     android:textSize="12sp"
                     android:textColor="@color/text_primary"
@@ -131,7 +131,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Itens do Carrinho"
+            android:text="@string/cart_items"
                 android:textStyle="bold"
                 android:textSize="12sp"
                 android:textColor="@color/brand_orange" />
@@ -195,7 +195,7 @@
                         android:id="@+id/tvCartCount"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0 itens"
+            android:text="@string/zero_items"
                         android:layout_marginStart="8dp"
                         android:textColor="@color/text_primary"
                         android:textStyle="bold" />

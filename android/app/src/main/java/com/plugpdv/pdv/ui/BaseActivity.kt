@@ -1,5 +1,6 @@
 package com.plugpdv.pdv.ui
 
+import com.plugpdv.pdv.R
 import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
@@ -117,7 +118,7 @@ open class BaseActivity : AppCompatActivity() {
                     if (rootView != null) {
                         if (outboxAlertSnackbar == null || outboxAlertSnackbar?.isShownOrQueued == false) {
                             outboxAlertSnackbar = Snackbar.make(rootView, status.alertMessage, Snackbar.LENGTH_INDEFINITE)
-                                .setAction("Sincronizar") {
+                                .setAction(R.string.sync_action) {
                                     outboxSyncManager.triggerSync()
                                 }
                             outboxAlertSnackbar?.show()
@@ -137,7 +138,7 @@ open class BaseActivity : AppCompatActivity() {
         val items = currencies.map { it.codigo }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Selecionar Moeda / Select Currency")
+            .setTitle(R.string.currency_selector_title)
             .setItems(items) { _, which ->
                 CurrencyManager.getInstance().selectedCurrency = items[which]
                 onCurrencyChanged?.run()

@@ -21,7 +21,7 @@
     <string name="cashier_ops">Operaciones de Caja</string>
     <string name="amount_label">Valor</string>
     <string name="open_cashier">ABRIR CAJA</string>
-    <string name="sangria">RETIRO (SANGRIA)</string>
+    <string name="sangria">RETIRO (SANGRÍA)</string>
     <string name="close_cashier">CERRAR CAJA</string>
     <string name="cashier_already_open">CAJA YA ABIERTA</string>
     <string name="session_not_found">Error: Sesión no encontrada. Reintentando...</string>
@@ -55,7 +55,7 @@
     <string name="total_sold">TOTAL VENDIDO</string>
     <string name="cash_label">Efectivo:</string>
     <string name="digital_label">Tarjeta/Pix:</string>
-    <string name="withdrawal_label">Retiros (Sangrias):</string>
+    <string name="withdrawal_label">Retiros (Sangrías):</string>
     <string name="item_history">Historial de Ítems</string>
     <string name="no_open_cashier">No se encontró caja abierta</string>
     <string name="dashboard_btn">PANEL DE OPERACIONES</string>
@@ -118,4 +118,80 @@
     <string name="print_doc_label">DOC:</string>
     <string name="print_sn_label">S/N:</string>
     <string name="no_sale_mode_enabled">Ningún modo de venta está habilitado para este usuario.</string>
+    <string name="tab_mesa">Mesa</string>
+    <string name="tab_venda_rapida">Venta rápida</string>
+    <string name="tab_comanda">Comanda</string>
+    <string name="open_table">Abrir mesa</string>
+    <string name="table_number">Mesa %d</string>
+    <string name="customer_name">Nombre del cliente</string>
+    <string name="table_occupied">Ocupada</string>
+    <string name="table_reserved">Reservada</string>
+    <string name="table_available">Libre</string>
+    <string name="add_to_table">Agregar ítems</string>
+    <string name="close_table">Cerrar cuenta</string>
+    <string name="table_error">Error al operar la mesa</string>
+    <string name="add_observation">Agregar observación</string>
+    <string name="observation_label">Observación</string>
+    <string name="removal_reason">Motivo de la eliminación</string>
+    <string name="reason_required">El motivo es obligatorio</string>
+    <string name="current_order">Ítems de la mesa</string>
+    <string name="update_table">ACTUALIZAR MESA</string>
+    <string name="item_removed">Ítem eliminado</string>
+    <string name="transfer_table">Transferir mesa</string>
+    <string name="select_destination">Seleccionar mesa de destino</string>
+    <string name="transfer_success">Mesa transferida correctamente</string>
+    <string name="sync_action">Sincronizar</string><string name="currency_selector_title">Seleccionar moneda</string>
+    <string name="logout">Cerrar sesión</string><string name="logout_confirmation">¿Desea cerrar la sesión?</string>
+    <string name="cashier_must_be_open">Debe abrir la caja para continuar.</string><string name="cashier_offline_cached">Sin conexión — mostrando el estado guardado de la caja</string>
+    <string name="reconciliation_attention_title">Operaciones que requieren atención</string><string name="reconciliation_empty">No hay operaciones que requieran atención.</string>
+    <string name="reconciliation_detail_title">La operación requiere atención</string><string name="operation_label">Operación: %1$s</string><string name="attempt_label">Intento: %1$s</string>
+    <string name="what_happened">Qué ocurrió</string><string name="reconciliation_uncertain_explanation">La comunicación se interrumpió y no fue posible determinar con seguridad si la operación se completó.</string><string name="what_do_you_want_to_do">¿Qué desea hacer?</string><string name="already_completed">Ya se completó</string><string name="retry">Intentar nuevamente</string><string name="cancel_operation">Cancelar operación</string>
+    <string name="reconciliation_confirm_title">Confirmar finalización</string><string name="reconciliation_confirm_consequence">Esta operación se considerará completada y no se enviará nuevamente al servidor.</string><string name="back">Volver</string><string name="reconciliation_cancel_title">Cancelar operación</string><string name="reconciliation_cancel_consequence">Esta operación se cancelará y ya no se enviará al servidor.</string><string name="confirm_cancellation">Confirmar cancelación</string>
+    <string name="payment_requires_reconciliation">El pago aprobado requiere conciliación. Comuníquese con soporte.</string><string name="resume_payment">Reanudar pago</string><string name="charge">Cobrar</string><string name="service_fee_change">Cargo por servicio (cambiar)</string><string name="operation_not_found_resume">No se encontró la operación para reanudarla</string><string name="resume_payment_error">Error al reanudar el pago: %1$s</string><string name="start_payment_error">Error al iniciar el pago: %1$s</string>
+    <string name="comanda_not_found">Comanda no encontrada</string><string name="open_comanda">Abrir comanda</string><string name="wait_for_loading">Espere a que termine la carga</string><string name="remove_product">Eliminar %1$s</string><string name="removal_reason_required">El motivo es obligatorio para eliminar el ítem.</string>
+    <string name="session_ended_title">Sesión finalizada</string><string name="session_ended_message">Su sesión expiró u otro terminal inició sesión con el mismo usuario. Inicie sesión nuevamente.</string><string name="no_available_table">No hay mesas libres disponibles</string>
+    <string name="payment_pending_confirmation">Pago pendiente de confirmación...</string><string name="checking_server_status">Consultando el estado en el servidor...</string><string name="payment_registered_pending">Pago registrado como pendiente. La mesa permanece abierta.</string>
+    <string name="missing_exchange_rate">Falta la cotización para %1$s: %2$s</string><string name="exchange_rate_failure">Error de cotización: %1$s</string><string name="unnamed_product">Sin nombre</string><string name="product">Producto</string><string name="close">Cerrar</string>
+    <string name="payment_not_approved">Pago no aprobado: %1$s</string><string name="payment_cancelled_or_error">Pago cancelado/error: %1$s</string><string name="financial_data_unavailable">Datos financieros no disponibles</string><string name="loading_comanda">Cargando comanda...</string><string name="payment_requires_reconciliation_short">El pago aprobado requiere conciliación</string><string name="comanda_financial_data_not_loaded">Los datos financieros de la comanda no se cargaron</string><string name="invalid_value">Importe inválido</string>
+    <string name="table_updated">Mesa actualizada</string><string name="attention">Atención</string><string name="leave_without_sending_order">¿Desea volver sin haber enviado el pedido de la mesa?</string><string name="yes">Sí</string><string name="removed_with_reason">ELIMINADO: %1$s</string>
+    <string name="empty_cart_message">El carrito está vacío.</string><string name="product_not_found">Producto no encontrado: %1$s</string><string name="scanner_error">Error del escáner: %1$s</string>
+    <string name="printer_init_error">Error al iniciar la impresora: %1$s</string><string name="printer_add_text_error">Error al preparar la impresión: %1$s</string><string name="printer_execution_error">Error al imprimir: %1$s</string><string name="printer_service_unavailable">El servicio de impresión no respondió.</string><string name="printer_error_with_code">Error de impresión (%1$s), código %2$d</string>
+    <string name="session_expired">La sesión expiró. Inicie sesión nuevamente.</string><string name="mandatory_app_update">Se requiere una actualización obligatoria de la aplicación.</string><string name="offline_cached_data">Sin conexión — mostrando los datos guardados</string><string name="offline_action_requires_connection">Sin conexión. Puede consultar los datos guardados, pero esta acción requiere conexión.</string>
+    <string name="reconciliation_table_occupied">Esta mesa ya está ocupada por otra operación.</string>
+    <string name="reconciliation_operation_disabled">Este tipo de operación no está disponible en este momento.</string>
+    <string name="reconciliation_remote_state_changed">El estado de la comanda cambió en el servidor y esta operación debe revisarse.</string>
+    <string name="reconciliation_entity_not_found">La comanda o mesa asociada a esta operación no se encontró en el servidor.</string>
+    <string name="reconciliation_comanda_closed">La comanda ya está cerrada.</string>
+    <string name="reconciliation_remote_result_unknown">No fue posible confirmar si esta operación se completó en el servidor.</string>
+    <string name="reconciliation_state_divergence">Los datos de este terminal difieren del estado actual del servidor.</string>
+    <string name="reconciliation_add_item">Agregar ítem</string><string name="reconciliation_send_kitchen">Enviar a cocina</string><string name="reconciliation_operation">Operación</string>
+    <string name="table_label_value">Mesa %1$s</string>
+    <string name="today">Hoy</string><string name="attention_required">Atención necesaria</string>
+    <string name="login_subtitle">Acceda a su cuenta</string><string name="view_items">VER ÍTEMS</string><string name="processing_and_printing">Procesando e imprimiendo...</string><string name="order_items">Ítems del pedido</string>
+    <string name="comanda_module">Módulo de comanda</string><string name="scan_or_enter_comanda_code">Escanee el código QR o ingrese el código</string><string name="comanda_code">Código de la comanda</string><string name="search_comanda">BUSCAR COMANDA</string><string name="scan_qr_code">ESCANEAR CÓDIGO QR</string>
+    <string name="search">Buscar</string><string name="cart_items">Ítems del carrito</string><string name="loading">Cargando...</string>
+    <string name="payment_method_title">Forma de pago</string><string name="amount_to_receive">Importe a cobrar</string>
+    <string name="service_fee_change_title">Cambiar cargo por servicio</string><string name="service_fee_default">Cargo predeterminado</string><string name="percentage">Porcentaje (%%)</string><string name="fixed_value">Importe fijo</string><string name="service_fee_exempt">Exonerar (0%%)</string><string name="value_or_percentage">Importe/porcentaje</string><string name="apply">Aplicar</string>
+    <string name="split">Dividir</string><string name="items">Ítems</string><string name="number_of_people">Número de personas</string><string name="select_items">Seleccione los ítems</string><string name="finish_payment">Finalizar pago</string><string name="table_history">Historial de la mesa</string>
+    <string name="payment_undetermined_title">No pudimos confirmar este pago</string><string name="payment_may_have_been_charged">Es posible que se haya cobrado la tarjeta. Verifique antes de intentar nuevamente.</string><string name="check_again">Consultar nuevamente</string><string name="register_pending">Registrar como pendiente y resolver después</string><string name="view_payment_receipt">Ver comprobante de la app de pago</string>
+    <string name="history">Historial</string><string name="print_action">Imprimir</string><string name="update_comanda">ACTUALIZAR COMANDA</string>
+    <string name="offline_dashboard_banner">MODO SIN CONEXIÓN: Mostrando ventas locales y saldos por cobrar guardados en el dispositivo.</string>
+    <string name="yesterday">Ayer</string><string name="all_time">Todo el período</string><string name="payment_summary">Resumen por forma de pago</string><string name="currency_summary">Resumen por moneda</string><string name="open_tables_balances">Mesas abiertas (saldos por cobrar)</string>
+    <string name="no_report_data">No hay datos para imprimir en el informe</string><string name="printing_audit_report">Imprimiendo informe de auditoría...</string><string name="withdrawal_amount">Retiro: %1$s</string>
+    <string name="electronic_invoice_title">Factura electrónica</string><string name="electronic_invoice_question">¿Desea emitir la factura electrónica de esta venta?</string><string name="no">No</string><string name="yes_issue">Sí, emitir</string>
+    <string name="open_comanda_question">¿Desea abrir una nueva comanda para este código? Defina un alias o nombre opcional:</string><string name="customer_alias_hint">Alias / nombre del cliente</string>
+    <plurals name="item_count"><item quantity="one">%d ítem</item><item quantity="other">%d ítems</item></plurals>
+    <string name="category">Categoría</string><string name="product_name_placeholder">Nombre del producto</string><string name="unit_price_label">Unitario: %1$s</string><string name="item_total">Total del ítem</string>
+    <string name="customer_label">Cliente: %1$s</string><string name="customer_name_unavailable">Sin nombre de cliente</string><string name="money">Efectivo</string><string name="product_info">Información</string>
+    <string name="sale_number">Venta n.º %1$d</string><string name="people_count_short">%1$dxp</string><string name="dining_room">Salón</string><string name="quantity_short">x%1$d</string><string name="observation_short">Obs.: %1$s</string><string name="status_label">Estado</string>
+    <string name="cart">Carrito</string><string name="value_per_person">Importe por persona: %1$s</string>
+    <string name="attention_operations_count">Operaciones que requieren atención (%1$d)</string>
+    <string name="server_error_code">Error del servidor (Código: %1$d)</string><string name="load_table_connection_error">Error de conexión al cargar la mesa</string><string name="load_table_error">Error al cargar la mesa: %1$s</string><string name="comanda_id_not_found">No se encontró el ID de la comanda</string>
+    <string name="add_item_error">Error al agregar el ítem: %1$s</string><string name="remove_item_error">Error al eliminar el ítem: %1$s</string><string name="send_kitchen_error">Error al enviar el pedido a cocina: %1$s</string>
+    <string name="invalid_session_authorization">Sesión inválida. Inicie sesión nuevamente para autorizar.</string><string name="terminal_not_bound">El terminal no está vinculado a una empresa</string><string name="api_missing_comanda_id">Error: la API no devolvió el ID de la comanda</string><string name="open_table_error_code">Error al abrir la mesa (Código: %1$d)</string><string name="open_table_error_detail">Error al abrir la mesa: %1$s</string><string name="transfer_table_error_code">Error al transferir la mesa (Código: %1$d)</string><string name="transfer_requires_connection">Sin conexión. La transferencia de mesa requiere conexión.</string><string name="transfer_table_error_detail">Error al transferir la mesa: %1$s</string>
+    <string name="load_comanda_error">Error al cargar la comanda</string><string name="api_rejected_status">La API rechazó la operación (Estado %1$d).</string><string name="connection_error_detail">Error de conexión: %1$s</string><string name="sync_item_error_status">Error al sincronizar el ítem (Estado: %1$d)</string><string name="add_item_network_error">Error de red al agregar el ítem</string><string name="remove_item_error_status">Error al eliminar el ítem (Estado: %1$d)</string><string name="remove_item_network_error">Error de red al eliminar el ítem</string>
+    <string name="remove_item">Eliminar ítem</string>
+    <string name="service_fee_label_ui">Cargo por servicio</string>
+    <string name="product_with_quantity">%1$s (x%2$d)</string>
+    <string name="zero_items">0 ítems</string>
 </resources>

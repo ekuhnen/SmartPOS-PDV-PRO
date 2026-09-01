@@ -101,7 +101,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Itens da Mesa"
+            android:text="@string/current_order"
                 android:textStyle="bold"
                 android:textSize="12sp"
                 android:textColor="@color/brand_orange" />
@@ -163,7 +163,7 @@
                 android:id="@+id/btnUpdateTable"
                 android:layout_width="wrap_content"
                 android:layout_height="52dp"
-                android:text="ATUALIZAR MESA"
+            android:text="@string/update_table"
                 app:cornerRadius="8dp"
                 app:backgroundTint="@color/brand_orange"
                 android:textSize="11sp"

@@ -98,7 +98,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Itens do Pedido"
+            android:text="@string/order_items"
                 android:textStyle="bold"
                 android:textSize="12sp"
                 android:textColor="@color/brand_orange" />

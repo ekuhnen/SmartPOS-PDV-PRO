@@ -117,7 +117,7 @@ class CheckoutActivity : BaseActivity() {
                     method = result.method
                 )
                 updatePayButtonState()
-                Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, R.string.payment_requires_reconciliation, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -127,7 +127,7 @@ class CheckoutActivity : BaseActivity() {
         val isBlocked = hasDurableMarker || viewModel.isPaymentBlocked.value
         val canResume = !hasDurableMarker && viewModel.canResumeSameOperation.value
         val reason = if (hasDurableMarker) {
-            "Pagamento aprovado requer conciliação"
+            getString(R.string.payment_requires_reconciliation_short)
         } else {
             viewModel.blockReason.value
         }
@@ -135,7 +135,7 @@ class CheckoutActivity : BaseActivity() {
         if (isBlocked) {
             if (canResume) {
                 binding.btnPayLink.isEnabled = !(viewModel.isLoading.value ?: false)
-                binding.btnPayLink.text = "Retomar pagamento"
+                binding.btnPayLink.setText(R.string.resume_payment)
             } else {
                 binding.btnPayLink.isEnabled = false
                 if (!reason.isNullOrBlank()) {
@@ -144,7 +144,7 @@ class CheckoutActivity : BaseActivity() {
             }
         } else {
             binding.btnPayLink.isEnabled = !(viewModel.isLoading.value ?: false)
-            binding.btnPayLink.text = "Cobrar"
+            binding.btnPayLink.setText(R.string.charge)
         }
     }
 
@@ -280,7 +280,7 @@ class CheckoutActivity : BaseActivity() {
             if (canOverride) {
                 sfRow.setOnClickListener { showServiceFeeOverrideDialog() }
                 val tvLabel = sfRow.findViewById<TextView>(R.id.tvLabel)
-                tvLabel.text = "Taxa de Serviço (Alterar)"
+                tvLabel.setText(R.string.service_fee_change)
                 tvLabel.setTextColor(resources.getColor(com.google.android.material.R.color.design_default_color_primary, theme))
             }
         }
@@ -306,7 +306,7 @@ class CheckoutActivity : BaseActivity() {
             try {
                 val prepared = viewModel.getPreparedOperationForResume()
                 if (prepared == null) {
-                    Toast.makeText(this@CheckoutActivity, "Operação não encontrada para retomada", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@CheckoutActivity, R.string.operation_not_found_resume, Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
@@ -327,7 +327,7 @@ class CheckoutActivity : BaseActivity() {
                 startActivity(intent)
             } catch (e: Exception) {
                 Log.e("CheckoutActivity", "Erro ao retomar pagamento preparado: ${e.message}", e)
-                Toast.makeText(this@CheckoutActivity, "Erro ao retomar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@CheckoutActivity, getString(R.string.resume_payment_error, e.message.orEmpty()), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -335,7 +335,7 @@ class CheckoutActivity : BaseActivity() {
     private fun startPaymentFlow() {
         val hasDurableMarker = com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.isReconciliationRequired(this)
         if (hasDurableMarker) {
-            Toast.makeText(this, "Pagamento aprovado requer conciliação. Contate o suporte.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.payment_requires_reconciliation, Toast.LENGTH_LONG).show()
             return
         }
 
@@ -394,7 +394,7 @@ class CheckoutActivity : BaseActivity() {
                             startActivity(intent)
                         } catch (e: Exception) {
                             Log.e("CheckoutActivity", "Erro ao iniciar pagamento direto: ${e.message}", e)
-                            Toast.makeText(this@CheckoutActivity, "Erro ao iniciar pagamento: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@CheckoutActivity, getString(R.string.start_payment_error, e.message.orEmpty()), Toast.LENGTH_LONG).show()
                         }
                     }
                 }
