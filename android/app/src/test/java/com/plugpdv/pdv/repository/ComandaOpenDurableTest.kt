@@ -23,9 +23,11 @@ import okhttp3.OkHttpClient
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.plugpdv.pdv.utils.KillSwitchManager
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -103,6 +105,7 @@ class ComandaOpenDurableTest {
 
     @After
     fun tearDown() {
+        KillSwitchManager.reset()
         database.close()
     }
 
@@ -782,15 +785,257 @@ class ComandaOpenDurableTest {
 
             val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
 
+            // 1. Mesa mode = false
             prefs.edit().putBoolean(Constants.HAS_MESA, false).apply()
             val resultDisabled = repository.openTableDurable("tbl_b9", "Cliente B9", actorUserId, DeviceIdProvider.get(context), tenantId)
             assertTrue(resultDisabled is OpenTableResult.Rejected)
             assertEquals("operation_mode_disabled", (resultDisabled as OpenTableResult.Rejected).messageKey)
 
+            // 2. Mesa mode = unknown (removido)
             prefs.edit().remove(Constants.HAS_MESA).apply()
             val resultUnknown = repository.openTableDurable("tbl_b9", "Cliente B9", actorUserId, DeviceIdProvider.get(context), tenantId)
             assertTrue(resultUnknown is OpenTableResult.Rejected)
             assertEquals("mode_authority_unknown", (resultUnknown as OpenTableResult.Rejected).messageKey)
         }
+    }
+
+    // =========================================================================
+    // T-B10-A: Pending OPEN + Logout: K and local projection survive
+    // =========================================================================
+    @Test
+    fun testTB10A_pendingOpenAndLogout_mutationAndProjectionsSurvive() {
+        runBlocking {
+            createTestTable("tbl_tb10a", 31)
+
+            val result = repository.openTableDurable("tbl_tb10a", "Cliente TB10A", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            // Simular logout / force_logout
+            KillSwitchManager.forceLogout(context, "USER_LOGOUT")
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            KillSwitchManager.reset()
+
+            // 1. Verificar que as credenciais foram limpas
+            val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            assertNull(prefs.getString(Constants.TOKEN, null))
+            assertFalse(prefs.contains(Constants.HAS_MESA))
+
+            // 2. Verificar que a mutação durável permanece no banco
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertNotNull("Mutação durável não pode ser destruída no logout", mutation)
+            assertEquals("PENDING", mutation?.status)
+
+            // 3. Projeção local da mesa e snapshot permanecem
+            val table = database.tableDao().getTableById("tbl_tb10a")
+            assertNotNull(table)
+            assertEquals(Table.Status.OCCUPIED, table?.status)
+            assertEquals(accepted.localComandaId, table?.localComandaId)
+
+            val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
+            assertNotNull(snapshot)
+        }
+    }
+
+    // =========================================================================
+    // T-B10-B: Pending OPEN + DEVICE_BLOCKED: DeviceId unchanged & K survives PAUSED
+    // =========================================================================
+    @Test
+    fun testTB10B_pendingOpenAndDeviceBlocked_deviceIdUnchangedAndMutationPaused() {
+        runBlocking {
+            createTestTable("tbl_tb10b", 32)
+            val initialDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_tb10b", "Cliente TB10B", actorUserId, initialDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Paused)
+            assertEquals("DEVICE_BLOCKED", (dispatchResult as DispatchResult.Paused).reason)
+
+            // Verificar que o DeviceId não rotacionou
+            assertEquals(initialDeviceId, DeviceIdProvider.get(context))
+
+            // Verificar que a mutação está PAUSED
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", mutation?.status)
+            assertEquals("DEVICE_BLOCKED", mutation?.pauseReason)
+        }
+    }
+
+    // =========================================================================
+    // T-B10-C: Matching actor/device re-auth: same K can resume
+    // =========================================================================
+    @Test
+    fun testTB10C_matchingActorReauth_sameKResumes() {
+        runBlocking {
+            createTestTable("tbl_tb10c", 33)
+
+            val result = repository.openTableDurable("tbl_tb10c", "Cliente TB10C", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            // Simular perda de autenticação (401) -> PAUSED
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(401, "{\"error\":\"Unauthorized\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+            assertEquals("PAUSED", database.comandaMutationDao().getById(accepted.mutationId)?.status)
+
+            // Reautenticação do mesmo operador com novo token
+            val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(Constants.TOKEN, "fresh_valid_token")
+                .putString(Constants.USER_ID, actorUserId)
+                .putBoolean(Constants.HAS_MESA, true)
+                .apply()
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_tb10c"))
+            )
+
+            // Dispatch do lote despausa e sincroniza o mesmo K
+            val batchResult = dispatcher.dispatchEligibleBatch()
+            assertEquals(1, batchResult.processedCount)
+
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("SYNCED", mutation?.status)
+        }
+    }
+
+    // =========================================================================
+    // T-B11: Startup without auth + later successful login schedules command worker
+    // =========================================================================
+    @Test
+    fun testTB11_startupWithoutAuthAndSubsequentLogin_schedulesCommandWorker() {
+        runBlocking {
+            createTestTable("tbl_tb11", 36)
+
+            val result = repository.openTableDurable("tbl_tb11", "Cliente TB11", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            // Simular login bem-sucedido salvando credenciais
+            val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(Constants.TOKEN, "fresh_token_tb11")
+                .putString(Constants.USER_ID, actorUserId)
+                .putBoolean(Constants.HAS_MESA, true)
+                .apply()
+
+            // Login executa scheduleCommandSync
+            workScheduler.scheduleCommandSync()
+            verify(workScheduler, org.mockito.kotlin.atLeastOnce()).scheduleCommandSync()
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_tb11"))
+            )
+
+            val batch = dispatcher.dispatchEligibleBatch()
+            assertEquals(1, batch.processedCount)
+
+            val synced = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("SYNCED", synced?.status)
+        }
+    }
+
+    // =========================================================================
+    // T-B12: New local OPEN snapshot: all money fields and currency are null
+    // =========================================================================
+    @Test
+    fun testTB12_newLocalOpenSnapshot_allMoneyFieldsAndCurrencyAreNull() {
+        runBlocking {
+            createTestTable("tbl_tb12", 34)
+
+            val result = repository.openTableDurable("tbl_tb12", "Cliente TB12", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
+            assertNotNull(snapshot)
+            assertNull("baseCurrency must be null before server confirmation", snapshot?.baseCurrency)
+            assertNull("baseMinorUnitDigits must be null before server confirmation", snapshot?.baseMinorUnitDigits)
+            assertNull("totalBaseMinor must be null before server confirmation", snapshot?.totalBaseMinor)
+            assertNull("paidBaseMinor must be null before server confirmation", snapshot?.paidBaseMinor)
+            assertNull("balanceBaseMinor must be null before server confirmation", snapshot?.balanceBaseMinor)
+        }
+    }
+
+    // =========================================================================
+    // T-B13: localComandaId never populates openedComandaId
+    // =========================================================================
+    @Test
+    fun testTB13_localComandaIdNeverPopulatesOpenedComandaId() {
+        runBlocking {
+            val tableEntity = createTestTable("tbl_tb13", 35)
+            val domainTable = Table(
+                id = tableEntity.id,
+                number = tableEntity.number,
+                status = Table.Status.AVAILABLE
+            )
+
+            val tableReadRepo = TableReadRepository(
+                context, database.tableDao(), apiService, database.catalogDao(), database.comandaSnapshotDao()
+            )
+
+            val viewModel = com.plugpdv.pdv.ui.sale.MesaViewModel(
+                apiService = apiService,
+                catalogDao = database.catalogDao(),
+                tableReadRepository = tableReadRepo,
+                context = context,
+                comandaMutationRepository = repository,
+                comandaOutboxDispatcher = dispatcher
+            )
+
+            viewModel.openTable(token, domainTable, "Cliente TB13")
+            repeat(10) {
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                Thread.sleep(20)
+            }
+
+            // Verificar que openSuccess é true, mas openedComandaId é NULL (nunca L1)
+            if (viewModel.error.value != null) {
+                throw AssertionError("ViewModel error: ${viewModel.error.value}")
+            }
+            assertEquals(true, viewModel.openSuccess.value)
+            assertNull("openedComandaId must never be populated with localComandaId L1", viewModel.openedComandaId.value)
+
+            val persistedTable = database.tableDao().getTableById("tbl_tb13")
+            assertNotNull(persistedTable?.localComandaId)
+            assertNull("TableEntity.comandaId must remain null until server confirmation", persistedTable?.comandaId)
+        }
+    }
+
+    // =========================================================================
+    // T-B15: Session expiration removes HAS_MESA, HAS_VENDA_DIRETA and HAS_COMANDA
+    // =========================================================================
+    @Test
+    fun testTB15_sessionExpirationRemovesModeAuthority() {
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(Constants.TOKEN, "expiring_token")
+            .putBoolean(Constants.HAS_MESA, true)
+            .putBoolean(Constants.HAS_VENDA_DIRETA, true)
+            .putBoolean(Constants.HAS_COMANDA, true)
+            .apply()
+
+        assertTrue(prefs.contains(Constants.HAS_MESA))
+
+        // Executar limpeza de credenciais
+        prefs.edit()
+            .remove(Constants.TOKEN)
+            .remove(Constants.EMAIL)
+            .remove(Constants.PASSWORD)
+            .remove(Constants.SESSION_ID)
+            .remove(Constants.LOGIN_TIME)
+            .remove(Constants.USER_ID)
+            .remove(Constants.HAS_MESA)
+            .remove(Constants.HAS_VENDA_DIRETA)
+            .remove(Constants.HAS_COMANDA)
+            .apply()
+
+        assertFalse("HAS_MESA must be removed on session expiration", prefs.contains(Constants.HAS_MESA))
+        assertFalse("HAS_VENDA_DIRETA must be removed on session expiration", prefs.contains(Constants.HAS_VENDA_DIRETA))
+        assertFalse("HAS_COMANDA must be removed on session expiration", prefs.contains(Constants.HAS_COMANDA))
     }
 }

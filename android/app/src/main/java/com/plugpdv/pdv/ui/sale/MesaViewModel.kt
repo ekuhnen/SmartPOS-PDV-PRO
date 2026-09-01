@@ -232,7 +232,8 @@ class MesaViewModel @Inject constructor(
                             _openSuccess.value = true
                         }
                         is com.plugpdv.pdv.repository.OpenTableResult.Accepted -> {
-                            _openedComandaId.value = result.localComandaId
+                            // B13: L1 nunca deve ser atribuído a variáveis que representam comandaId canônica do servidor
+                            _openedComandaId.value = null
                             _openSuccess.value = true
 
                             comandaOutboxDispatcher?.let { dispatcher ->

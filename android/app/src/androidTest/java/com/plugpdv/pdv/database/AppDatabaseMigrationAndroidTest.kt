@@ -606,7 +606,7 @@ class AppDatabaseMigrationAndroidTest {
                     localComandaId = localComandaId
                 )
             )
-            roomDb.comandaMutationDao().markSynced(mutationId, System.currentTimeMillis())
+            roomDb.comandaMutationDao().markSyncedClaimed(mutationId, claimToken, System.currentTimeMillis())
         }
 
         val reconciledTable = roomDb.tableDao().getTableById("tbl_hw_1")

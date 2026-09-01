@@ -37,6 +37,9 @@ class LoginActivity : BaseActivity() {
     @Inject
     lateinit var saleSyncScheduler: com.plugpdv.pdv.outbox.SaleSyncScheduler
 
+    @Inject
+    lateinit var comandaWorkScheduler: com.plugpdv.pdv.worker.ComandaWorkScheduler
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLoginBinding.inflate(layoutInflater)
@@ -129,6 +132,7 @@ class LoginActivity : BaseActivity() {
 
                     // Reagendar WorkManager imediatamente para processar outbox suspensa por falta de token
                     saleSyncScheduler.scheduleSync(this)
+                    comandaWorkScheduler.scheduleCommandSync()
                         
                     if (result.isOpen) {
                         val intent = Intent(this, DirectSaleActivity::class.java).apply {
@@ -188,6 +192,9 @@ class LoginActivity : BaseActivity() {
             .remove(Constants.SESSION_ID)
             .remove(Constants.LOGIN_TIME)
             .remove(Constants.USER_ID)
+            .remove(Constants.HAS_MESA)
+            .remove(Constants.HAS_VENDA_DIRETA)
+            .remove(Constants.HAS_COMANDA)
             .apply()
 
         com.plugpdv.pdv.utils.CashierAuthorityStore.clearAuthority(this)

@@ -26,13 +26,10 @@ object KillSwitchManager {
         if (!logoutInProgress.compareAndSet(false, true)) return
 
         CoroutineScope(Dispatchers.Main).launch {
-            // 1. Limpar dados locais
-            clearAllLocalData(context)
+            // 1. Limpar credenciais e autoridade de sessão
+            clearSessionData(context)
 
-            // 2. Limpar Device ID (atacante não reutiliza)
-            DeviceIdProvider.clear(context)
-
-            // 3. Redirecionar para Login com banner de bloqueio
+            // 2. Redirecionar para Login com banner de bloqueio
             val intent = Intent(context, LoginActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 putExtra(EXTRA_BLOCKED_REASON, reason)
@@ -41,8 +38,8 @@ object KillSwitchManager {
         }
     }
 
-    private fun clearAllLocalData(context: Context) {
-        // Limpar SharedPreferences de sessão
+    private fun clearSessionData(context: Context) {
+        // Limpar SharedPreferences de sessão e autoridade
         context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .remove(Constants.TOKEN)
@@ -57,12 +54,8 @@ object KillSwitchManager {
             .apply()
 
         CashierAuthorityStore.clearAuthority(context)
-
-        // Limpar banco de dados local
-        val db = AppDatabase.getDatabase(context)
-        CoroutineScope(Dispatchers.IO).launch {
-            db.clearAllTables()
-        }
+        // B10: Não rotacionar Device ID nem destruir filas duráveis com clearAllTables().
+        // Mutações pendentes permanecem preservadas mas PAUSADAS por falta de auth.
     }
 
     fun reset() {

@@ -106,7 +106,7 @@ class ComandaMutationRepository @Inject constructor(
             )
             val payloadJson = gson.toJson(payload)
 
-            // B5: Criar Snapshot local sem fabricar moeda/dígitos
+            // B5/B12: Criar Snapshot local sem fabricar moeda/dígitos nem valores financeiros
             val snapshot = ComandaSnapshotEntity(
                 localComandaId = localComandaId,
                 serverComandaId = null,
@@ -121,9 +121,9 @@ class ComandaMutationRepository @Inject constructor(
                 syncStatus = "PENDING",
                 serverRevision = null,
                 localRevision = 1L,
-                totalBaseMinor = 0L,
-                paidBaseMinor = 0L,
-                balanceBaseMinor = 0L,
+                totalBaseMinor = null,
+                paidBaseMinor = null,
+                balanceBaseMinor = null,
                 itemsJson = "[]",
                 paymentsJson = "[]",
                 requiresReconciliation = false,

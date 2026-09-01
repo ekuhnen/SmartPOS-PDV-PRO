@@ -41,18 +41,6 @@ interface ComandaMutationDao {
     @Query("UPDATE comanda_mutations SET status = 'RECONCILIATION_REQUIRED', reconciliationReason = :reconciliationReason, claimToken = NULL, claimedAt = NULL, messageKey = :messageKey, updatedAt = :now WHERE id = :id AND status = 'PROCESSING' AND claimToken = :claimToken")
     suspend fun markReconciliationRequiredClaimed(id: String, claimToken: String, reconciliationReason: String, messageKey: String?, now: Long): Int
 
-    @Query("UPDATE comanda_mutations SET status = 'SYNCED', claimToken = NULL, claimedAt = NULL, updatedAt = :now, lastErrorCode = NULL, messageKey = NULL WHERE id = :id")
-    suspend fun markSynced(id: String, now: Long): Int
-
-    @Query("UPDATE comanda_mutations SET status = 'PENDING', claimToken = NULL, claimedAt = NULL, nextRetryAt = :nextRetryAt, lastErrorCode = :lastErrorCode, messageKey = :messageKey, updatedAt = :now WHERE id = :id")
-    suspend fun updateRetry(id: String, nextRetryAt: Long, lastErrorCode: String?, messageKey: String?, now: Long): Int
-
-    @Query("UPDATE comanda_mutations SET status = 'PAUSED', pauseReason = :pauseReason, claimToken = NULL, claimedAt = NULL, messageKey = :messageKey, updatedAt = :now WHERE id = :id")
-    suspend fun markPaused(id: String, pauseReason: String, messageKey: String?, now: Long): Int
-
-    @Query("UPDATE comanda_mutations SET status = 'RECONCILIATION_REQUIRED', reconciliationReason = :reconciliationReason, claimToken = NULL, claimedAt = NULL, messageKey = :messageKey, updatedAt = :now WHERE id = :id")
-    suspend fun markReconciliationRequired(id: String, reconciliationReason: String, messageKey: String?, now: Long): Int
-
     @Query("UPDATE comanda_mutations SET status = 'PENDING', pauseReason = NULL, updatedAt = :now WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND status = 'PAUSED' AND pauseReason IN ('AUTH_REQUIRED', 'DIFFERENT_ACTOR')")
     suspend fun unpauseEligibleMutations(tenantId: String, actorUserId: String, now: Long): Int
 
