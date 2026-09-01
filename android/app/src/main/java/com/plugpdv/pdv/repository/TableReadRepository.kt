@@ -150,7 +150,18 @@ class TableReadRepository @Inject constructor(
                     val mesaId = mesaDto.id
                     if (mesaId.isNullOrBlank()) return@mapNotNull null
                     val existingTable = existingTablesMap[mesaId]
-                    val mappedStatus = mapStatus(mesaDto.status, mesaDto.comanda_id, mesaDto.itens)
+                    val rawMappedStatus = mapStatus(mesaDto.status, mesaDto.comanda_id, mesaDto.itens)
+
+                    // Preservação de pending local open (L1 com comandaId nulo e status OCCUPIED)
+                    val isPendingLocalOpen = existingTable?.status == Table.Status.OCCUPIED &&
+                            !existingTable.localComandaId.isNullOrBlank() &&
+                            existingTable.comandaId.isNullOrBlank()
+
+                    val mappedStatus = if (isPendingLocalOpen) {
+                        Table.Status.OCCUPIED
+                    } else {
+                        rawMappedStatus
+                    }
 
                     val effectiveComandaId = if (!mesaDto.comanda_id.isNullOrBlank()) {
                         mesaDto.comanda_id
@@ -194,6 +205,7 @@ class TableReadRepository @Inject constructor(
                         paidAmount = 0.0,
                         pendingBalance = 0.0,
                         itemsJson = "[]",
+                        localComandaId = existingTable?.localComandaId,
                         updatedAt = System.currentTimeMillis()
                     )
                 }

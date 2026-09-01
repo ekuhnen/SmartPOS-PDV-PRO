@@ -2,8 +2,10 @@ package com.plugpdv.pdv.database
 
 import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
+import androidx.room.withTransaction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.plugpdv.pdv.models.Table
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -475,6 +477,144 @@ class AppDatabaseMigrationAndroidTest {
         assertNotNull(itemAfterAttempt)
         assertEquals("Produto Original", itemAfterAttempt?.productNameSnapshot)
         assertEquals(2, itemAfterAttempt?.quantity)
+
+        roomDb.close()
+    }
+
+    @Test
+    fun testDurableOpenTableAcceptanceAndLeaseClaimingOnRealDevice() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val roomDb = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+
+        // 1. Inserir mesa disponível
+        val table = TableEntity(
+            id = "tbl_hw_1",
+            number = 101,
+            status = Table.Status.AVAILABLE,
+            sectorName = "Terraço",
+            sectorId = "sec_1",
+            customerName = null,
+            comandaId = null,
+            localComandaId = null,
+            peopleCount = 1,
+            totalBalance = 0.0,
+            paidAmount = 0.0,
+            pendingBalance = 0.0,
+            itemsJson = "[]",
+            updatedAt = System.currentTimeMillis()
+        )
+        roomDb.tableDao().insert(table)
+
+        val localComandaId = "loc_cmd_hw_1"
+        val mutationId = "mut_open_hw_1"
+        val now = System.currentTimeMillis()
+
+        // 2. Aceitar OPEN_TABLE duravelmente em transação Room
+        roomDb.withTransaction {
+            val snapshot = ComandaSnapshotEntity(
+                localComandaId = localComandaId,
+                serverComandaId = null,
+                tenantId = "ten_hw_1",
+                tableId = "tbl_hw_1",
+                tableNumber = 101,
+                customerIdentifier = "Cliente Hardware",
+                baseCurrency = "BRL",
+                baseMinorUnitDigits = 2,
+                serverStatus = null,
+                localStatus = "OPEN",
+                syncStatus = "PENDING",
+                serverRevision = null,
+                localRevision = 1L,
+                totalBaseMinor = 0L,
+                paidBaseMinor = 0L,
+                balanceBaseMinor = 0L,
+                itemsJson = "[]",
+                paymentsJson = "[]",
+                requiresReconciliation = false,
+                reconciliationReason = null,
+                serverUpdatedAt = null,
+                cachedAt = now
+            )
+            roomDb.comandaSnapshotDao().upsert(snapshot)
+
+            val updatedTable = table.copy(
+                status = Table.Status.OCCUPIED,
+                localComandaId = localComandaId,
+                customerName = "Cliente Hardware",
+                updatedAt = now
+            )
+            roomDb.tableDao().insert(updatedTable)
+
+            val mutation = ComandaMutationEntity(
+                id = mutationId,
+                operationType = "OPEN_TABLE",
+                tenantId = "ten_hw_1",
+                actorUserId = "user_hw_1",
+                deviceId = "pos_hw_1",
+                localComandaId = localComandaId,
+                tableId = "tbl_hw_1",
+                localItemId = null,
+                payloadJson = "{\"action\":\"abrir\",\"mesa_id\":\"tbl_hw_1\"}",
+                resolvedPayloadJson = "{\"action\":\"abrir\",\"mesa_id\":\"tbl_hw_1\"}",
+                createdAt = now,
+                updatedAt = now,
+                attemptCount = 0,
+                lastAttemptAt = null,
+                nextRetryAt = now,
+                status = "PENDING",
+                pauseReason = null,
+                reconciliationReason = null,
+                claimToken = null,
+                claimedAt = null,
+                lastErrorCode = null,
+                messageKey = null
+            )
+            roomDb.comandaMutationDao().insert(mutation)
+        }
+
+        // Verificar persistência
+        val persistedTable = roomDb.tableDao().getTableById("tbl_hw_1")
+        assertNotNull(persistedTable)
+        assertEquals(Table.Status.OCCUPIED, persistedTable?.status)
+        assertEquals(localComandaId, persistedTable?.localComandaId)
+        assertNull(persistedTable?.comandaId)
+
+        // 3. Testar Claim Lease de 45s com threshold de 120s
+        val claimToken = "claim_token_hw_1"
+        val claimedRows = roomDb.comandaMutationDao().claimMutation(mutationId, claimToken, now, now - 120_000L)
+        assertEquals(1, claimedRows)
+
+        // Segundo worker não consegue roubar
+        val secondClaim = roomDb.comandaMutationDao().claimMutation(mutationId, "thief_token", now, now - 120_000L)
+        assertEquals(0, secondClaim)
+
+        // 4. Conciliação com serverComandaId
+        roomDb.withTransaction {
+            val snapshot = roomDb.comandaSnapshotDao().getByLocalId(localComandaId)
+            assertNotNull(snapshot)
+            roomDb.comandaSnapshotDao().upsert(
+                snapshot!!.copy(
+                    serverComandaId = "srv_cmd_hw_999",
+                    syncStatus = "SYNCED"
+                )
+            )
+            val tbl = roomDb.tableDao().getTableById("tbl_hw_1")
+            assertNotNull(tbl)
+            roomDb.tableDao().insert(
+                tbl!!.copy(
+                    comandaId = "srv_cmd_hw_999",
+                    localComandaId = localComandaId
+                )
+            )
+            roomDb.comandaMutationDao().markSynced(mutationId, System.currentTimeMillis())
+        }
+
+        val reconciledTable = roomDb.tableDao().getTableById("tbl_hw_1")
+        assertEquals("srv_cmd_hw_999", reconciledTable?.comandaId)
+        assertEquals(localComandaId, reconciledTable?.localComandaId)
+
+        val reconciledMutation = roomDb.comandaMutationDao().getById(mutationId)
+        assertEquals("SYNCED", reconciledMutation?.status)
 
         roomDb.close()
     }

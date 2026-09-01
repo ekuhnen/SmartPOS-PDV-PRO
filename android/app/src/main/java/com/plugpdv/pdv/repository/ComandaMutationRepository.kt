@@ -1,0 +1,179 @@
+package com.plugpdv.pdv.repository
+
+import android.content.Context
+import androidx.room.withTransaction
+import com.google.gson.Gson
+import com.plugpdv.pdv.database.AppDatabase
+import com.plugpdv.pdv.database.ComandaMutationDao
+import com.plugpdv.pdv.database.ComandaMutationEntity
+import com.plugpdv.pdv.database.ComandaSnapshotDao
+import com.plugpdv.pdv.database.ComandaSnapshotEntity
+import com.plugpdv.pdv.database.TableDao
+import com.plugpdv.pdv.database.TableEntity
+import com.plugpdv.pdv.models.Table
+import com.plugpdv.pdv.worker.ComandaWorkScheduler
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
+
+sealed class OpenTableResult {
+    data class Accepted(
+        val localComandaId: String,
+        val mutationId: String,
+        val isAlreadyAccepted: Boolean = false
+    ) : OpenTableResult()
+
+    data class ExistingServerComanda(
+        val serverComandaId: String
+    ) : OpenTableResult()
+
+    data class Rejected(
+        val reason: String,
+        val messageKey: String? = null
+    ) : OpenTableResult()
+}
+
+@Singleton
+class ComandaMutationRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: AppDatabase,
+    private val tableDao: TableDao,
+    private val comandaMutationDao: ComandaMutationDao,
+    private val comandaSnapshotDao: ComandaSnapshotDao,
+    private val workScheduler: ComandaWorkScheduler
+) {
+    private val gson = Gson()
+
+    suspend fun openTableDurable(
+        tableId: String,
+        customerName: String,
+        actorUserId: String,
+        deviceId: String,
+        tenantId: String,
+        peopleCount: Int = 1
+    ): OpenTableResult {
+        if (tableId.isBlank() || actorUserId.isBlank() || deviceId.isBlank() || tenantId.isBlank()) {
+            return OpenTableResult.Rejected("Missing required identity or authority", "missing_authority")
+        }
+
+        val result = database.withTransaction {
+            val existingTable = tableDao.getTableById(tableId)
+                ?: return@withTransaction OpenTableResult.Rejected("Table not found locally", "table_not_found")
+
+            // 1. Caso a mesa já possua uma comanda canônica remota
+            if (!existingTable.comandaId.isNullOrBlank()) {
+                return@withTransaction OpenTableResult.ExistingServerComanda(existingTable.comandaId)
+            }
+
+            // 2. Proteção contra duplo toque: se a mesa já possui localComandaId e mutação pendente
+            if (existingTable.status == Table.Status.OCCUPIED && !existingTable.localComandaId.isNullOrBlank()) {
+                val pendingMutation = comandaMutationDao.getPendingOpenForTable(tableId)
+                if (pendingMutation != null) {
+                    return@withTransaction OpenTableResult.Accepted(
+                        localComandaId = existingTable.localComandaId,
+                        mutationId = pendingMutation.id,
+                        isAlreadyAccepted = true
+                    )
+                }
+            }
+
+            // 3. Mesa ocupada sem vínculo identificado (conflito)
+            if (existingTable.status == Table.Status.OCCUPIED && existingTable.localComandaId.isNullOrBlank()) {
+                return@withTransaction OpenTableResult.Rejected("Table is already occupied with ambiguous state", "table_occupied_conflict")
+            }
+
+            val localComandaId = "loc_cmd_" + UUID.randomUUID().toString()
+            val mutationId = "mut_open_" + UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+
+            val payload = mapOf(
+                "action" to "abrir",
+                "mesa_id" to tableId,
+                "nome_cliente" to customerName,
+                "pessoas_qtd" to peopleCount
+            )
+            val payloadJson = gson.toJson(payload)
+
+            // Criar Snapshot local
+            val snapshot = ComandaSnapshotEntity(
+                localComandaId = localComandaId,
+                serverComandaId = null,
+                tenantId = tenantId,
+                tableId = tableId,
+                tableNumber = existingTable.number,
+                customerIdentifier = customerName,
+                baseCurrency = "BRL",
+                baseMinorUnitDigits = 2,
+                serverStatus = null,
+                localStatus = "OPEN",
+                syncStatus = "PENDING",
+                serverRevision = null,
+                localRevision = 1L,
+                totalBaseMinor = 0L,
+                paidBaseMinor = 0L,
+                balanceBaseMinor = 0L,
+                itemsJson = "[]",
+                paymentsJson = "[]",
+                requiresReconciliation = false,
+                reconciliationReason = null,
+                serverUpdatedAt = null,
+                cachedAt = now
+            )
+            comandaSnapshotDao.upsert(snapshot)
+
+            // Atualizar projeção da TableEntity
+            val updatedTable = existingTable.copy(
+                status = Table.Status.OCCUPIED,
+                localComandaId = localComandaId,
+                customerName = customerName.ifBlank { existingTable.customerName },
+                peopleCount = peopleCount,
+                updatedAt = now
+            )
+            tableDao.insert(updatedTable)
+
+            // Inserir mutação durável de abertura
+            val mutation = ComandaMutationEntity(
+                id = mutationId,
+                operationType = "OPEN_TABLE",
+                tenantId = tenantId,
+                actorUserId = actorUserId,
+                deviceId = deviceId,
+                localComandaId = localComandaId,
+                tableId = tableId,
+                localItemId = null,
+                payloadJson = payloadJson,
+                resolvedPayloadJson = payloadJson,
+                createdAt = now,
+                updatedAt = now,
+                attemptCount = 0,
+                lastAttemptAt = null,
+                nextRetryAt = now,
+                status = "PENDING",
+                pauseReason = null,
+                reconciliationReason = null,
+                claimToken = null,
+                claimedAt = null,
+                lastErrorCode = null,
+                messageKey = null
+            )
+            comandaMutationDao.insert(mutation)
+
+            OpenTableResult.Accepted(
+                localComandaId = localComandaId,
+                mutationId = mutationId,
+                isAlreadyAccepted = false
+            )
+        }
+
+        if (result is OpenTableResult.Accepted && !result.isAlreadyAccepted) {
+            try {
+                workScheduler.scheduleCommandSync()
+            } catch (e: Exception) {
+                // Background scheduling is best effort; acceptance is already durably committed
+            }
+        }
+
+        return result
+    }
+}

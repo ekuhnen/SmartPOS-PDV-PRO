@@ -55,4 +55,14 @@ object DatabaseModule {
     fun provideComandaSnapshotDao(database: AppDatabase): ComandaSnapshotDao {
         return database.comandaSnapshotDao()
     }
+
+    @Provides
+    fun provideComandaMutationDao(database: AppDatabase): ComandaMutationDao {
+        return database.comandaMutationDao()
+    }
+
+    @Provides
+    fun provideComandaLocalItemDao(database: AppDatabase): ComandaLocalItemDao {
+        return database.comandaLocalItemDao()
+    }
 }

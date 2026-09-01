@@ -12,6 +12,8 @@ import com.plugpdv.pdv.database.CatalogDao
 import com.plugpdv.pdv.models.CommandActionRequest
 import com.plugpdv.pdv.models.Sector
 import com.plugpdv.pdv.models.Table
+import com.plugpdv.pdv.dispatcher.ComandaOutboxDispatcher
+import com.plugpdv.pdv.repository.ComandaMutationRepository
 import com.plugpdv.pdv.repository.TableReadRepository
 import com.plugpdv.pdv.utils.TableManager
 import com.plugpdv.pdv.utils.TransferQueueManager
@@ -29,7 +31,9 @@ class MesaViewModel @Inject constructor(
     private val apiService: PosApiService,
     private val catalogDao: CatalogDao,
     private val tableReadRepository: TableReadRepository,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val comandaMutationRepository: ComandaMutationRepository? = null,
+    private val comandaOutboxDispatcher: ComandaOutboxDispatcher? = null
 ) : ViewModel() {
 
     private val queueManager = TransferQueueManager(context)
@@ -193,48 +197,98 @@ class MesaViewModel @Inject constructor(
             return
         }
 
-        val request = CommandActionRequest().apply {
-            action = "abrir"
-            mesaId = table.id
-            people_count = 1
-            nome_cliente = customerName
-        }
-
         viewModelScope.launch {
+            _isLoading.value = true
             try {
-                _isLoading.value = true
-                val response = retryIO { apiService.manageComanda("Bearer $token", request) }
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    val comandaId = (body?.get("id") ?: body?.get("comanda_id") ?: body?.get("comandaId")) as? String
-                    Log.d("MesaViewModel", "Mesa aberta com sucesso. ComandaId: $comandaId")
-                    if (!comandaId.isNullOrEmpty()) {
-                        tableReadRepository.applyServerConfirmedOpen(
-                            tableId = table.id.orEmpty(),
-                            comandaId = comandaId,
-                            customerName = customerName,
-                            peopleCount = 1,
-                            knownNumber = table.number,
-                            knownSectorId = table.sectorId,
-                            knownSectorName = table.sectorName
-                        )
-                        _openedComandaId.value = comandaId
-                        _openSuccess.value = true
-                    } else {
-                        Log.e("MesaViewModel", "API retornou sucesso mas o ID da comanda veio vazio: $body")
-                        _error.value = "Erro: ID da comanda não retornado pela API"
+                if (comandaMutationRepository != null) {
+                    val tenantId = com.plugpdv.pdv.utils.TenantBindingStore.getActiveTenantId(context)
+                    val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                    val actorUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
+                        ?: prefs.getString(com.plugpdv.pdv.utils.Constants.OPERATOR_ID, null)
+                        ?: "UNKNOWN"
+                    val deviceId = com.plugpdv.pdv.utils.DeviceIdProvider.get(context)
+
+                    if (tenantId.isNullOrBlank()) {
+                        _error.value = "Terminal não vinculado a uma empresa"
+                        return@launch
+                    }
+
+                    val result = comandaMutationRepository.openTableDurable(
+                        tableId = table.id.orEmpty(),
+                        customerName = customerName,
+                        actorUserId = actorUserId,
+                        deviceId = deviceId,
+                        tenantId = tenantId,
+                        peopleCount = 1
+                    )
+
+                    when (result) {
+                        is com.plugpdv.pdv.repository.OpenTableResult.ExistingServerComanda -> {
+                            _openedComandaId.value = result.serverComandaId
+                            _openSuccess.value = true
+                        }
+                        is com.plugpdv.pdv.repository.OpenTableResult.Accepted -> {
+                            _openedComandaId.value = result.localComandaId
+                            _openSuccess.value = true
+
+                            comandaOutboxDispatcher?.let { dispatcher ->
+                                launch {
+                                    try {
+                                        dispatcher.dispatchMutationById(result.mutationId)
+                                    } catch (e: Exception) {
+                                        Log.w("MesaViewModel", "Immediate dispatch failed: ${e.message}")
+                                    }
+                                }
+                            }
+                        }
+                        is com.plugpdv.pdv.repository.OpenTableResult.Rejected -> {
+                            _error.value = when (result.messageKey) {
+                                "table_occupied_conflict" -> "Esta mesa já se encontra ocupada em outro terminal."
+                                "table_not_found" -> "Mesa não encontrada localmente."
+                                else -> "Não foi possível abrir a mesa: ${result.reason}"
+                            }
+                        }
                     }
                 } else {
-                    val errorCode = response.code()
-                    val errorBody = response.errorBody()?.string() ?: ""
-                    Log.e("MesaViewModel", "Falha ao abrir mesa: $errorCode - $errorBody")
-                    if (errorCode == 401) {
-                        _sessionExpired.value = true
-                        _error.value = "Sessão expirada. Faça login novamente."
-                    } else if (errorCode == 403) {
-                        _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
+                    val request = CommandActionRequest().apply {
+                        action = "abrir"
+                        mesaId = table.id
+                        people_count = 1
+                        nome_cliente = customerName
+                    }
+                    val response = retryIO { apiService.manageComanda("Bearer $token", request) }
+                    if (response.isSuccessful) {
+                        val body = response.body()
+                        val comandaId = (body?.get("id") ?: body?.get("comanda_id") ?: body?.get("comandaId")) as? String
+                        Log.d("MesaViewModel", "Mesa aberta com sucesso. ComandaId: $comandaId")
+                        if (!comandaId.isNullOrEmpty()) {
+                            tableReadRepository.applyServerConfirmedOpen(
+                                tableId = table.id.orEmpty(),
+                                comandaId = comandaId,
+                                customerName = customerName,
+                                peopleCount = 1,
+                                knownNumber = table.number,
+                                knownSectorId = table.sectorId,
+                                knownSectorName = table.sectorName
+                            )
+                            _openedComandaId.value = comandaId
+                            _openSuccess.value = true
+                        } else {
+                            Log.e("MesaViewModel", "API retornou sucesso mas o ID da comanda veio vazio: $body")
+                            _error.value = "Erro: ID da comanda não retornado pela API"
+                        }
                     } else {
-                        _error.value = "Erro ao abrir mesa (Código: $errorCode)"
+                        val errorCode = response.code()
+                        val errorBody = response.errorBody()?.string() ?: ""
+                        Log.e("MesaViewModel", "Falha ao abrir mesa: $errorCode - $errorBody")
+                        if (errorCode == 401) {
+                            _sessionExpired.value = true
+                            _error.value = "Sessão expirada. Faça login novamente."
+                        } else if (errorCode == 403) {
+                            _error.value = com.plugpdv.pdv.utils.HttpErrorParser.parse403Message(errorBody, defaultMode = "mesa")
+                        } else {
+                            _error.value = "Erro ao abrir mesa (Código: $errorCode)"
+                        }
                     }
                 }
             } catch (e: CancellationException) {
