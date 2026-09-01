@@ -32,5 +32,8 @@ data class Product(
     
     var price_currency: String? = null,
     @Embedded(prefix = "group_")
-    var group: GroupInfo? = null
+    var group: GroupInfo? = null,
+
+    @SerializedName(value = "commercial_revision", alternate = ["commercialRevision"])
+    var commercialRevision: String? = null
 ) : Serializable

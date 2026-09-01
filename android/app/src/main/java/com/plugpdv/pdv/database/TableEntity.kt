@@ -25,5 +25,6 @@ data class TableEntity(
     val paidAmount: Double = 0.0,       // Valor já pago (parcial) em BRL base
     val pendingBalance: Double = 0.0,    // Saldo a pagar (totalBalance - paidAmount) em BRL base
     val itemsJson: String = "[]",       // Lista de itens serializada como JSON
+    val localComandaId: String? = null, // Identidade local estável da comanda
     val updatedAt: Long = System.currentTimeMillis()
 )

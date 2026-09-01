@@ -16,9 +16,11 @@ import com.plugpdv.pdv.models.Product
         OutboxOperationEntity::class,
         PaymentAttemptEntity::class,
         TableEntity::class,
-        ComandaSnapshotEntity::class
+        ComandaSnapshotEntity::class,
+        ComandaMutationEntity::class,
+        ComandaLocalItemEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,6 +31,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun paymentAttemptDao(): PaymentAttemptDao
     abstract fun tableDao(): TableDao
     abstract fun comandaSnapshotDao(): ComandaSnapshotDao
+    abstract fun comandaMutationDao(): ComandaMutationDao
+    abstract fun comandaLocalItemDao(): ComandaLocalItemDao
 
     suspend fun clearRebuildableCaches() {
         taxDao().deleteAll()
@@ -40,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
         if (localSaleDao().getUnresolvedCount() > 0) return true
         if (paymentAttemptDao().getUnresolvedCount() > 0) return true
         if (outboxDao().getUnresolvedCount() > 0) return true
+        if (comandaMutationDao().getUnresolvedCount() > 0) return true
         if (com.plugpdv.pdv.utils.DirectPaymentReconciliationStore.isReconciliationRequired(context)) return true
         return false
     }
@@ -379,6 +384,69 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `products` ADD COLUMN `commercialRevision` TEXT")
+                db.execSQL("ALTER TABLE `tables` ADD COLUMN `localComandaId` TEXT")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `comanda_mutations` (
+                        `id` TEXT NOT NULL,
+                        `operationType` TEXT NOT NULL,
+                        `tenantId` TEXT NOT NULL,
+                        `actorUserId` TEXT NOT NULL,
+                        `deviceId` TEXT NOT NULL,
+                        `localComandaId` TEXT NOT NULL,
+                        `tableId` TEXT NOT NULL,
+                        `localItemId` TEXT,
+                        `payloadJson` TEXT NOT NULL,
+                        `resolvedPayloadJson` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `attemptCount` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER,
+                        `nextRetryAt` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `pauseReason` TEXT,
+                        `reconciliationReason` TEXT,
+                        `claimToken` TEXT,
+                        `claimedAt` INTEGER,
+                        `lastErrorCode` TEXT,
+                        `messageKey` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_mutations_tenantId_status_nextRetryAt` ON `comanda_mutations` (`tenantId`, `status`, `nextRetryAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_mutations_localComandaId_createdAt` ON `comanda_mutations` (`localComandaId`, `createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_mutations_localItemId` ON `comanda_mutations` (`localItemId`)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `comanda_local_items` (
+                        `localItemId` TEXT NOT NULL,
+                        `localComandaId` TEXT NOT NULL,
+                        `tenantId` TEXT NOT NULL,
+                        `serverItemId` TEXT,
+                        `productId` TEXT NOT NULL,
+                        `productNameSnapshot` TEXT NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `observation` TEXT,
+                        `commercialRevision` TEXT NOT NULL,
+                        `displayAmountScaled` INTEGER NOT NULL,
+                        `displayCurrency` TEXT NOT NULL,
+                        `displayDecimals` INTEGER NOT NULL,
+                        `localStatus` TEXT NOT NULL,
+                        `serverStatus` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `reconciliationReason` TEXT,
+                        PRIMARY KEY(`localItemId`)
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_comanda_local_items_localComandaId_localStatus` ON `comanda_local_items` (`localComandaId`, `localStatus`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_comanda_local_items_tenantId_serverItemId` ON `comanda_local_items` (`tenantId`, `serverItemId`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -386,7 +454,16 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "smartpos_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                    .addMigrations(
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                        MIGRATION_8_9,
+                        MIGRATION_9_10,
+                        MIGRATION_10_11
+                    )
                     .build()
                 INSTANCE = instance
                 instance

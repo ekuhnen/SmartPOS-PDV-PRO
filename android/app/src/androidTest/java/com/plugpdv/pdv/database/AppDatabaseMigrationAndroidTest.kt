@@ -60,10 +60,10 @@ class AppDatabaseMigrationAndroidTest {
 
         db.close()
 
-        // 2. Executar a cadeia de migrações e validar que o schema resultante bate exatamente com a versão 10
+        // 2. Executar a cadeia de migrações e validar que o schema resultante bate exatamente com a versão 11
         db = helper.runMigrationsAndValidate(
             TEST_DB,
-            10,
+            11,
             true,
             AppDatabase.MIGRATION_3_4,
             AppDatabase.MIGRATION_4_5,
@@ -71,18 +71,19 @@ class AppDatabaseMigrationAndroidTest {
             AppDatabase.MIGRATION_6_7,
             AppDatabase.MIGRATION_7_8,
             AppDatabase.MIGRATION_8_9,
-            AppDatabase.MIGRATION_9_10
+            AppDatabase.MIGRATION_9_10,
+            AppDatabase.MIGRATION_10_11
         )
 
         val countCursorAfter = db.query("SELECT COUNT(*) FROM local_sales")
         assertTrue(countCursorAfter.moveToFirst())
         val countAfter = countCursorAfter.getInt(0)
         countCursorAfter.close()
-        assertEquals("Quantidade de vendas na v10 deve continuar sendo exatamente 2", 2, countAfter)
+        assertEquals("Quantidade de vendas na v11 deve continuar sendo exatamente 2", 2, countAfter)
 
         db.close()
 
-        // 3. Abrir com o Room oficial da versão 10 e consultar o DAO
+        // 3. Abrir com o Room oficial da versão 11 e consultar os DAOs
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDb = Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
             .addMigrations(
@@ -92,7 +93,8 @@ class AppDatabaseMigrationAndroidTest {
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10
+                AppDatabase.MIGRATION_9_10,
+                AppDatabase.MIGRATION_10_11
             )
             .build()
 
@@ -127,7 +129,7 @@ class AppDatabaseMigrationAndroidTest {
         assertEquals("{}", saleB.payloadJson)
         assertFalse(saleB.idempotencyKeyUsed) // Legado -> false
 
-        // 4. Testar persistência em comanda_snapshots via DAO na v10
+        // 4. Testar persistência em comanda_snapshots via DAO na v11
         val snapshot = ComandaSnapshotEntity(
             localComandaId = "loc-inst-1",
             serverComandaId = "srv-inst-1",
@@ -158,6 +160,62 @@ class AppDatabaseMigrationAndroidTest {
         assertEquals("srv-inst-1", readBack?.serverComandaId)
         assertEquals(15000L, readBack?.totalBaseMinor)
         assertEquals(10000L, readBack?.balanceBaseMinor)
+
+        // 5. Testar persistência em comanda_mutations e comanda_local_items via DAO na v11
+        val mutation = ComandaMutationEntity(
+            id = "mut-inst-1",
+            operationType = "OPEN_TABLE",
+            tenantId = "ten-test",
+            actorUserId = "user-1",
+            deviceId = "dev-1",
+            localComandaId = "loc-inst-1",
+            tableId = "tbl-1",
+            localItemId = null,
+            payloadJson = "{\"action\":\"abrir\"}",
+            resolvedPayloadJson = null,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            attemptCount = 0,
+            lastAttemptAt = null,
+            nextRetryAt = System.currentTimeMillis(),
+            status = "PENDING",
+            pauseReason = null,
+            reconciliationReason = null,
+            claimToken = null,
+            claimedAt = null,
+            lastErrorCode = null,
+            messageKey = null
+        )
+        roomDb.comandaMutationDao().insert(mutation)
+        val readMutation = roomDb.comandaMutationDao().getById("mut-inst-1")
+        assertNotNull(readMutation)
+        assertEquals("OPEN_TABLE", readMutation?.operationType)
+        assertEquals("PENDING", readMutation?.status)
+
+        val localItem = ComandaLocalItemEntity(
+            localItemId = "item-inst-1",
+            localComandaId = "loc-inst-1",
+            tenantId = "ten-test",
+            serverItemId = null,
+            productId = "p-1",
+            productNameSnapshot = "Produto Teste",
+            quantity = 1,
+            observation = "Sem observacao",
+            commercialRevision = "rev-test",
+            displayAmountScaled = 2500L,
+            displayCurrency = "BRL",
+            displayDecimals = 2,
+            localStatus = "DRAFT",
+            serverStatus = null,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            reconciliationReason = null
+        )
+        roomDb.comandaLocalItemDao().insert(localItem)
+        val readItem = roomDb.comandaLocalItemDao().getByLocalItemId("item-inst-1")
+        assertNotNull(readItem)
+        assertEquals("Produto Teste", readItem?.productNameSnapshot)
+        assertEquals("DRAFT", readItem?.localStatus)
 
         roomDb.close()
     }

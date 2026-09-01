@@ -371,4 +371,268 @@ class AppDatabaseMigrationTest {
         stmtCheck.close()
         connection.close()
     }
+
+    @Test
+    fun testRealSqliteMigrationFromVersion10To11PreservesAllData() {
+        val connection = DriverManager.getConnection("jdbc:sqlite::memory:")
+        val db = mock<SupportSQLiteDatabase>()
+
+        whenever(db.execSQL(any())).thenAnswer { invocation ->
+            val sql = invocation.getArgument<String>(0)
+            connection.createStatement().use { stmt ->
+                stmt.execute(sql)
+            }
+            Unit
+        }
+
+        // 1. Criar o schema completo na versão 10
+        db.execSQL("""
+            CREATE TABLE `products` (
+                `id` TEXT NOT NULL,
+                `name` TEXT,
+                `sku` TEXT,
+                `barcode` TEXT,
+                `category` TEXT,
+                `selling_price` REAL,
+                `stock` INTEGER,
+                `image_url` TEXT,
+                `price_currency` TEXT,
+                `group_id` TEXT,
+                `group_name` TEXT,
+                PRIMARY KEY(`id`)
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE `tables` (
+                `id` TEXT NOT NULL,
+                `number` INTEGER NOT NULL,
+                `status` TEXT NOT NULL,
+                `sectorName` TEXT NOT NULL,
+                `sectorId` TEXT NOT NULL,
+                `customerName` TEXT,
+                `comandaId` TEXT,
+                `peopleCount` INTEGER NOT NULL,
+                `totalBalance` REAL NOT NULL,
+                `paidAmount` REAL NOT NULL,
+                `pendingBalance` REAL NOT NULL,
+                `itemsJson` TEXT NOT NULL,
+                `updatedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE `local_sales` (
+                `localId` TEXT NOT NULL,
+                `apiId` TEXT,
+                `timestamp` INTEGER NOT NULL,
+                `createdAt` INTEGER NOT NULL,
+                `updatedAt` INTEGER NOT NULL,
+                `total` REAL NOT NULL,
+                `currency` TEXT NOT NULL,
+                `paymentMethod` TEXT NOT NULL,
+                `operatorId` TEXT,
+                `operatorName` TEXT,
+                `sessionId` TEXT,
+                `itemsJson` TEXT NOT NULL,
+                `customerName` TEXT,
+                `taxAmount` REAL NOT NULL,
+                `serviceFeeAmount` REAL NOT NULL,
+                `serviceFeeKind` TEXT,
+                `convertedTotal` REAL NOT NULL,
+                `payloadJson` TEXT NOT NULL,
+                `attemptCount` INTEGER NOT NULL,
+                `lastError` TEXT,
+                `lastAttemptAt` INTEGER,
+                `syncStatus` TEXT NOT NULL,
+                `syncedToApi` INTEGER NOT NULL,
+                `idempotencyKeyUsed` INTEGER NOT NULL,
+                PRIMARY KEY(`localId`)
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE `outbox_operations` (
+                `id` TEXT NOT NULL,
+                `operationType` TEXT NOT NULL,
+                `targetGroupKey` TEXT NOT NULL,
+                `payloadJson` TEXT NOT NULL,
+                `createdAt` INTEGER NOT NULL,
+                `idempotencyKey` TEXT NOT NULL,
+                `serverSeq` INTEGER,
+                `attemptCount` INTEGER NOT NULL,
+                `lastAttemptAt` INTEGER,
+                `nextRetryAt` INTEGER NOT NULL,
+                `status` TEXT NOT NULL,
+                `lastError` TEXT,
+                `messageKey` TEXT,
+                `isRetriable` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE `payment_attempts` (
+                `reference` TEXT NOT NULL,
+                `idempotencyKey` TEXT NOT NULL,
+                `nonce` TEXT NOT NULL,
+                `amount` INTEGER NOT NULL,
+                `currency` TEXT NOT NULL,
+                `status` TEXT NOT NULL,
+                `startedAt` INTEGER NOT NULL,
+                `completedAt` INTEGER,
+                `paymentMethod` TEXT,
+                `tableNumber` INTEGER,
+                `orderId` TEXT,
+                `description` TEXT,
+                `rawCallbackUri` TEXT,
+                `paymentAppPaymentId` TEXT,
+                `statusMessage` TEXT,
+                PRIMARY KEY(`reference`)
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE `comanda_snapshots` (
+                `localComandaId` TEXT NOT NULL,
+                `serverComandaId` TEXT,
+                `tenantId` TEXT NOT NULL,
+                `tableId` TEXT,
+                `tableNumber` INTEGER,
+                `customerIdentifier` TEXT,
+                `baseCurrency` TEXT,
+                `baseMinorUnitDigits` INTEGER,
+                `serverStatus` TEXT,
+                `localStatus` TEXT NOT NULL,
+                `syncStatus` TEXT NOT NULL,
+                `serverRevision` INTEGER,
+                `localRevision` INTEGER NOT NULL,
+                `totalBaseMinor` INTEGER,
+                `paidBaseMinor` INTEGER,
+                `balanceBaseMinor` INTEGER,
+                `itemsJson` TEXT NOT NULL,
+                `paymentsJson` TEXT NOT NULL,
+                `requiresReconciliation` INTEGER NOT NULL,
+                `reconciliationReason` TEXT,
+                `serverUpdatedAt` INTEGER,
+                `cachedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`localComandaId`)
+            )
+        """.trimIndent())
+
+        // 2. Inserir dados representativos na versão 10
+        db.execSQL("INSERT INTO products (id, name, selling_price) VALUES ('p1', 'X-Burger', 25.0)")
+        db.execSQL("INSERT INTO tables (id, number, status, sectorName, sectorId, peopleCount, totalBalance, paidAmount, pendingBalance, itemsJson, updatedAt) VALUES ('t1', 5, 'OCCUPIED', 'Salão', 'sec1', 2, 50.0, 0.0, 50.0, '[]', 1700000000000)")
+        db.execSQL("INSERT INTO local_sales (localId, timestamp, createdAt, updatedAt, total, currency, paymentMethod, itemsJson, taxAmount, serviceFeeAmount, convertedTotal, payloadJson, attemptCount, syncStatus, syncedToApi, idempotencyKeyUsed) VALUES ('s1', 1700000000000, 1700000000000, 1700000000000, 25.0, 'BRL', 'MONEY', '[]', 0.0, 0.0, 0.0, '{}', 0, 'SYNCED', 1, 1)")
+        db.execSQL("INSERT INTO outbox_operations (id, operationType, targetGroupKey, payloadJson, createdAt, idempotencyKey, nextRetryAt, status, attemptCount, isRetriable) VALUES ('op1', 'COMANDA_CHECKOUT_COMMIT', 'cmd1', '{}', 1700000000000, 'op1', 1700000000000, 'PENDING', 0, 1)")
+        db.execSQL("INSERT INTO payment_attempts (reference, idempotencyKey, nonce, amount, currency, status, startedAt) VALUES ('pay1', 'pay1', 'nonce1', 2500, 'BRL', 'APPROVED', 1700000000000)")
+        db.execSQL("INSERT INTO comanda_snapshots (localComandaId, serverComandaId, tenantId, tableId, localStatus, syncStatus, localRevision, itemsJson, paymentsJson, requiresReconciliation, cachedAt) VALUES ('loc1', 'srv1', 'ten1', 't1', 'OPEN', 'SYNCED', 1, '[]', '[]', 0, 1700000000000)")
+
+        // 3. Executar MIGRATION_10_11
+        AppDatabase.MIGRATION_10_11.migrate(db)
+
+        // 4. Validar preservação de todos os dados existentes
+        val stmtCheck = connection.createStatement()
+
+        val rsProd = stmtCheck.executeQuery("SELECT * FROM products WHERE id = 'p1'")
+        assertTrue(rsProd.next())
+        assertEquals("X-Burger", rsProd.getString("name"))
+        assertEquals(25.0, rsProd.getDouble("selling_price"), 0.001)
+        assertNull("commercialRevision deve ser NULL para produtos migrados", rsProd.getString("commercialRevision"))
+        rsProd.close()
+
+        val rsTable = stmtCheck.executeQuery("SELECT * FROM tables WHERE id = 't1'")
+        assertTrue(rsTable.next())
+        assertEquals(5, rsTable.getInt("number"))
+        assertEquals("OCCUPIED", rsTable.getString("status"))
+        assertNull("localComandaId deve ser NULL para mesas migradas", rsTable.getString("localComandaId"))
+        rsTable.close()
+
+        val rsSales = stmtCheck.executeQuery("SELECT COUNT(*) FROM local_sales")
+        assertTrue(rsSales.next())
+        assertEquals(1, rsSales.getInt(1))
+        rsSales.close()
+
+        val rsOutbox = stmtCheck.executeQuery("SELECT COUNT(*) FROM outbox_operations")
+        assertTrue(rsOutbox.next())
+        assertEquals(1, rsOutbox.getInt(1))
+        rsOutbox.close()
+
+        val rsPayment = stmtCheck.executeQuery("SELECT COUNT(*) FROM payment_attempts")
+        assertTrue(rsPayment.next())
+        assertEquals(1, rsPayment.getInt(1))
+        rsPayment.close()
+
+        val rsSnapshot = stmtCheck.executeQuery("SELECT COUNT(*) FROM comanda_snapshots")
+        assertTrue(rsSnapshot.next())
+        assertEquals(1, rsSnapshot.getInt(1))
+        rsSnapshot.close()
+
+        // 5. Validar que as novas tabelas existem e iniciam vazias
+        val rsMutationsCount = stmtCheck.executeQuery("SELECT COUNT(*) FROM comanda_mutations")
+        assertTrue(rsMutationsCount.next())
+        assertEquals(0, rsMutationsCount.getInt(1))
+        rsMutationsCount.close()
+
+        val rsItemsCount = stmtCheck.executeQuery("SELECT COUNT(*) FROM comanda_local_items")
+        assertTrue(rsItemsCount.next())
+        assertEquals(0, rsItemsCount.getInt(1))
+        rsItemsCount.close()
+
+        // 6. Testar inserção e consulta em comanda_mutations
+        db.execSQL("""
+            INSERT INTO comanda_mutations (
+                id, operationType, tenantId, actorUserId, deviceId, localComandaId,
+                tableId, localItemId, payloadJson, resolvedPayloadJson, createdAt,
+                updatedAt, attemptCount, lastAttemptAt, nextRetryAt, status,
+                pauseReason, reconciliationReason, claimToken, claimedAt,
+                lastErrorCode, messageKey
+            ) VALUES (
+                'mut-1', 'OPEN_TABLE', 'ten-1', 'user-1', 'dev-1', 'loc-cmd-1',
+                't1', NULL, '{"action":"abrir"}', NULL, 1700000000000,
+                1700000000000, 0, NULL, 1700000000000, 'PENDING',
+                NULL, NULL, NULL, NULL,
+                NULL, NULL
+            )
+        """.trimIndent())
+
+        val rsMutRead = stmtCheck.executeQuery("SELECT * FROM comanda_mutations WHERE id = 'mut-1'")
+        assertTrue(rsMutRead.next())
+        assertEquals("OPEN_TABLE", rsMutRead.getString("operationType"))
+        assertEquals("ten-1", rsMutRead.getString("tenantId"))
+        assertEquals("loc-cmd-1", rsMutRead.getString("localComandaId"))
+        assertEquals("PENDING", rsMutRead.getString("status"))
+        rsMutRead.close()
+
+        // 7. Testar inserção e consulta em comanda_local_items
+        db.execSQL("""
+            INSERT INTO comanda_local_items (
+                localItemId, localComandaId, tenantId, serverItemId, productId,
+                productNameSnapshot, quantity, observation, commercialRevision,
+                displayAmountScaled, displayCurrency, displayDecimals, localStatus,
+                serverStatus, createdAt, updatedAt, reconciliationReason
+            ) VALUES (
+                'item-1', 'loc-cmd-1', 'ten-1', NULL, 'p1',
+                'X-Burger', 2, 'Sem cebola', 'rev_123',
+                2500, 'BRL', 2, 'DRAFT',
+                NULL, 1700000000000, 1700000000000, NULL
+            )
+        """.trimIndent())
+
+        val rsItemRead = stmtCheck.executeQuery("SELECT * FROM comanda_local_items WHERE localItemId = 'item-1'")
+        assertTrue(rsItemRead.next())
+        assertEquals("X-Burger", rsItemRead.getString("productNameSnapshot"))
+        assertEquals(2, rsItemRead.getInt("quantity"))
+        assertEquals("rev_123", rsItemRead.getString("commercialRevision"))
+        assertEquals(2500L, rsItemRead.getLong("displayAmountScaled"))
+        assertEquals("BRL", rsItemRead.getString("displayCurrency"))
+        assertEquals(2, rsItemRead.getInt("displayDecimals"))
+        assertEquals("DRAFT", rsItemRead.getString("localStatus"))
+        assertNull(rsItemRead.getString("serverItemId"))
+        rsItemRead.close()
+
+        stmtCheck.close()
+        connection.close()
+    }
 }
