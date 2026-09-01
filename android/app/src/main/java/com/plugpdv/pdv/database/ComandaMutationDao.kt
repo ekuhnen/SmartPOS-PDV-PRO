@@ -29,6 +29,18 @@ interface ComandaMutationDao {
     @Query("UPDATE comanda_mutations SET status = 'PENDING', claimToken = NULL, claimedAt = NULL, updatedAt = :now WHERE status = 'PROCESSING' AND claimedAt < :staleThreshold")
     suspend fun recoverStaleProcessing(staleThreshold: Long, now: Long): Int
 
+    @Query("UPDATE comanda_mutations SET status = 'SYNCED', claimToken = NULL, claimedAt = NULL, updatedAt = :now, lastErrorCode = NULL, messageKey = NULL WHERE id = :id AND status = 'PROCESSING' AND claimToken = :claimToken")
+    suspend fun markSyncedClaimed(id: String, claimToken: String, now: Long): Int
+
+    @Query("UPDATE comanda_mutations SET status = 'PENDING', claimToken = NULL, claimedAt = NULL, nextRetryAt = :nextRetryAt, lastErrorCode = :lastErrorCode, messageKey = :messageKey, updatedAt = :now WHERE id = :id AND status = 'PROCESSING' AND claimToken = :claimToken")
+    suspend fun updateRetryClaimed(id: String, claimToken: String, nextRetryAt: Long, lastErrorCode: String?, messageKey: String?, now: Long): Int
+
+    @Query("UPDATE comanda_mutations SET status = 'PAUSED', pauseReason = :pauseReason, claimToken = NULL, claimedAt = NULL, messageKey = :messageKey, updatedAt = :now WHERE id = :id AND status = 'PROCESSING' AND claimToken = :claimToken")
+    suspend fun markPausedClaimed(id: String, claimToken: String, pauseReason: String, messageKey: String?, now: Long): Int
+
+    @Query("UPDATE comanda_mutations SET status = 'RECONCILIATION_REQUIRED', reconciliationReason = :reconciliationReason, claimToken = NULL, claimedAt = NULL, messageKey = :messageKey, updatedAt = :now WHERE id = :id AND status = 'PROCESSING' AND claimToken = :claimToken")
+    suspend fun markReconciliationRequiredClaimed(id: String, claimToken: String, reconciliationReason: String, messageKey: String?, now: Long): Int
+
     @Query("UPDATE comanda_mutations SET status = 'SYNCED', claimToken = NULL, claimedAt = NULL, updatedAt = :now, lastErrorCode = NULL, messageKey = NULL WHERE id = :id")
     suspend fun markSynced(id: String, now: Long): Int
 

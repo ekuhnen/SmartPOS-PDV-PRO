@@ -42,4 +42,34 @@ object NetworkModule {
     fun provideApiService(retrofit: Retrofit): PosApiService {
         return retrofit.create(PosApiService::class.java)
     }
+
+    @Provides
+    @Singleton
+    @ComandaDispatcherClient
+    fun provideComandaDispatcherOkHttpClient(baseClient: okhttp3.OkHttpClient): okhttp3.OkHttpClient {
+        return baseClient.newBuilder()
+            .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    @ComandaDispatcherService
+    fun provideComandaDispatcherApiService(
+        @ComandaDispatcherClient client: okhttp3.OkHttpClient,
+        retrofit: Retrofit
+    ): PosApiService {
+        return retrofit.newBuilder()
+            .client(client)
+            .build()
+            .create(PosApiService::class.java)
+    }
 }
+
+@javax.inject.Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ComandaDispatcherClient
+
+@javax.inject.Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ComandaDispatcherService

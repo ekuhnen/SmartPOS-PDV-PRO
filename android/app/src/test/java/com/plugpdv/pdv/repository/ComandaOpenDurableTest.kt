@@ -7,11 +7,14 @@ import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.database.ComandaMutationEntity
 import com.plugpdv.pdv.database.TableEntity
+import com.plugpdv.pdv.di.NetworkModule
 import com.plugpdv.pdv.dispatcher.ComandaOutboxDispatcher
 import com.plugpdv.pdv.dispatcher.DispatchResult
 import com.plugpdv.pdv.models.CommandActionRequest
 import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.utils.Constants
+import com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider
+import com.plugpdv.pdv.utils.DeviceIdProvider
 import com.plugpdv.pdv.utils.TenantBindingStore
 import com.plugpdv.pdv.worker.ComandaWorkScheduler
 import kotlinx.coroutines.runBlocking
@@ -49,6 +52,7 @@ class ComandaOpenDurableTest {
     private lateinit var workScheduler: ComandaWorkScheduler
     private lateinit var repository: ComandaMutationRepository
     private lateinit var dispatcher: ComandaOutboxDispatcher
+    private val currencyRulesProvider = DefaultCurrencyRulesProvider()
     private val okHttpClient = OkHttpClient()
 
     private val tenantId = "tenant_test_1"
@@ -64,6 +68,7 @@ class ComandaOpenDurableTest {
             .putString(Constants.TOKEN, token)
             .putString(Constants.USER_ID, actorUserId)
             .putString(Constants.OPERATOR_ID, actorUserId)
+            .putBoolean(Constants.HAS_MESA, true)
             .apply()
 
         TenantBindingStore.setActiveTenantId(context, tenantId)
@@ -91,6 +96,7 @@ class ComandaOpenDurableTest {
             comandaSnapshotDao = database.comandaSnapshotDao(),
             tableDao = database.tableDao(),
             apiService = apiService,
+            currencyRulesProvider = currencyRulesProvider,
             workScheduler = workScheduler
         )
     }
@@ -127,9 +133,6 @@ class ComandaOpenDurableTest {
         return table
     }
 
-    // =========================================================================
-    // O1: Online OPEN — Durable row exists before dispatch
-    // =========================================================================
     @Test
     fun testO1_onlineOpen_durableRowExistsBeforeDispatch() {
         runBlocking {
@@ -139,14 +142,13 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_1",
                 customerName = "Cliente 1",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
 
             assertTrue(result is OpenTableResult.Accepted)
             val accepted = result as OpenTableResult.Accepted
 
-            // Assert durable mutation row was committed
             val mutation = database.comandaMutationDao().getById(accepted.mutationId)
             assertNotNull(mutation)
             assertEquals("OPEN_TABLE", mutation?.operationType)
@@ -154,7 +156,6 @@ class ComandaOpenDurableTest {
             assertEquals(accepted.localComandaId, mutation?.localComandaId)
             assertEquals(tenantId, mutation?.tenantId)
 
-            // Assert snapshot was committed
             val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
             assertNotNull(snapshot)
             assertEquals("OPEN", snapshot?.localStatus)
@@ -162,9 +163,6 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O2: Offline OPEN — Table locally OCCUPIED, comandaId null, K1 PENDING
-    // =========================================================================
     @Test
     fun testO2_offlineOpen_tableOccupiedLocallyWithNullServerComanda() {
         runBlocking {
@@ -174,7 +172,7 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_2",
                 customerName = "Cliente Offline",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
 
@@ -187,12 +185,14 @@ class ComandaOpenDurableTest {
             assertEquals(accepted.localComandaId, table?.localComandaId)
             assertNull("comandaId must remain null until server confirmation", table?.comandaId)
             assertEquals("Cliente Offline", table?.customerName)
+
+            val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
+            assertNotNull(snapshot)
+            assertNull(snapshot?.baseCurrency)
+            assertNull(snapshot?.baseMinorUnitDigits)
         }
     }
 
-    // =========================================================================
-    // O3: Process Death after local acceptance — sees same L1 and K1
-    // =========================================================================
     @Test
     fun testO3_processDeathAfterLocalAcceptance_restartSeesSameL1AndK1() {
         runBlocking {
@@ -202,7 +202,7 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_3",
                 customerName = "Cliente Crash",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
             val accepted = result as OpenTableResult.Accepted
@@ -217,9 +217,6 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O4: Server success — serverComandaId bound and K1 SYNCED
-    // =========================================================================
     @Test
     fun testO4_serverSuccess_reconcilesServerComandaIdAndMarksSynced() {
         runBlocking {
@@ -229,13 +226,13 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_4",
                 customerName = "Cliente Sucesso",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
             val accepted = result as OpenTableResult.Accepted
 
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
-                Response.success(mapOf("id" to "srv_cmd_444"))
+                Response.success(mapOf("id" to "srv_cmd_444", "currency" to "BRL"))
             )
 
             val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
@@ -252,12 +249,11 @@ class ComandaOpenDurableTest {
             val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
             assertEquals("srv_cmd_444", snapshot?.serverComandaId)
             assertEquals("SYNCED", snapshot?.syncStatus)
+            assertEquals("BRL", snapshot?.baseCurrency)
+            assertEquals(2, snapshot?.baseMinorUnitDigits)
         }
     }
 
-    // =========================================================================
-    // O5: Server success + detail refresh failure — K1 stays SYNCED
-    // =========================================================================
     @Test
     fun testO5_serverSuccess_detailRefreshFailure_k1StaysSynced() {
         runBlocking {
@@ -267,7 +263,7 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_5",
                 customerName = "Cliente 5",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
             val accepted = result as OpenTableResult.Accepted
@@ -278,7 +274,6 @@ class ComandaOpenDurableTest {
 
             dispatcher.dispatchMutationById(accepted.mutationId)
 
-            // Se uma chamada subsequente de getComandaDetail falhar com IOException
             whenever(apiService.getComandaDetail(any(), any())).thenAnswer {
                 throw IOException("Timeout")
             }
@@ -288,9 +283,6 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O6: Response lost — retry with same K1 reconciles without duplicate
-    // =========================================================================
     @Test
     fun testO6_responseLost_retrySameK1ReplayReconciles() {
         runBlocking {
@@ -300,12 +292,11 @@ class ComandaOpenDurableTest {
                 tableId = "tbl_6",
                 customerName = "Cliente 6",
                 actorUserId = actorUserId,
-                deviceId = deviceId,
+                deviceId = DeviceIdProvider.get(context),
                 tenantId = tenantId
             )
             val accepted = result as OpenTableResult.Accepted
 
-            // Primeira tentativa falha com IOException (resposta perdida)
             var callCount = 0
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenAnswer {
                 callCount++
@@ -319,7 +310,6 @@ class ComandaOpenDurableTest {
             val firstAttempt = dispatcher.dispatchMutationById(accepted.mutationId)
             assertTrue(firstAttempt is DispatchResult.Retrying)
 
-            // Segunda tentativa com o MESMO K1 (replay da idempotência)
             val secondAttempt = dispatcher.dispatchMutationById(accepted.mutationId)
             assertTrue(secondAttempt is DispatchResult.Success)
             assertEquals("srv_cmd_666", (secondAttempt as DispatchResult.Success).serverComandaId)
@@ -329,16 +319,13 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O7: Duplicate tap — single L1 and single K1
-    // =========================================================================
     @Test
     fun testO7_duplicateTap_yieldsSingleL1AndSingleK1() {
         runBlocking {
             createTestTable("tbl_7", 7)
 
-            val tap1 = repository.openTableDurable("tbl_7", "Cliente Duplo", actorUserId, deviceId, tenantId)
-            val tap2 = repository.openTableDurable("tbl_7", "Cliente Duplo", actorUserId, deviceId, tenantId)
+            val tap1 = repository.openTableDurable("tbl_7", "Cliente Duplo", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val tap2 = repository.openTableDurable("tbl_7", "Cliente Duplo", actorUserId, DeviceIdProvider.get(context), tenantId)
 
             assertTrue(tap1 is OpenTableResult.Accepted)
             assertTrue(tap2 is OpenTableResult.Accepted)
@@ -346,28 +333,25 @@ class ComandaOpenDurableTest {
             val acc1 = tap1 as OpenTableResult.Accepted
             val acc2 = tap2 as OpenTableResult.Accepted
 
-            assertEquals(acc1.localComandaId, acc2.localComandaId)
-            assertEquals(acc1.mutationId, acc2.mutationId)
+            assertEquals("Local comanda ID must be identical on double tap", acc1.localComandaId, acc2.localComandaId)
+            assertEquals("Mutation ID must be identical on double tap", acc1.mutationId, acc2.mutationId)
             assertTrue(acc2.isAlreadyAccepted)
 
-            val allMutations = database.comandaMutationDao().getByLocalComandaId(acc1.localComandaId)
-            assertEquals(1, allMutations.size)
+            val mutations = database.comandaMutationDao().getByLocalComandaId(acc1.localComandaId)
+            assertEquals("Must have exactly 1 mutation row in DB", 1, mutations.size)
         }
     }
 
-    // =========================================================================
-    // O8: 401 Unauthorized — PAUSED AUTH_REQUIRED
-    // =========================================================================
     @Test
     fun testO8_401_pausedAuthRequired() {
         runBlocking {
             createTestTable("tbl_8", 8)
 
-            val result = repository.openTableDurable("tbl_8", "Cliente 8", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_8", "Cliente 8", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
-                Response.error(401, "{\"error\":\"token_expired\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+                Response.error(401, "{\"error\":\"Unauthorized\"}".toResponseBody("application/json".toMediaTypeOrNull()))
             )
 
             val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
@@ -380,18 +364,14 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O9: Different actor logged in — prevents dispatch
-    // =========================================================================
     @Test
     fun testO9_differentActor_noDispatchPaused() {
         runBlocking {
             createTestTable("tbl_9", 9)
 
-            val result = repository.openTableDurable("tbl_9", "Cliente 9", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_9", "Cliente 9", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
-            // Trocar usuário logado nas SharedPreferences para outro operador
             val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().putString(Constants.USER_ID, "different_operator_99").apply()
 
@@ -402,23 +382,21 @@ class ComandaOpenDurableTest {
             val mutation = database.comandaMutationDao().getById(accepted.mutationId)
             assertEquals("PAUSED", mutation?.status)
             assertEquals("DIFFERENT_ACTOR", mutation?.pauseReason)
+
             verify(apiService, never()).manageComanda(any(), any(), anyOrNull())
         }
     }
 
-    // =========================================================================
-    // O10: Table conflict — RECONCILIATION_REQUIRED
-    // =========================================================================
     @Test
     fun testO10_tableConflict409_reconciliationRequired() {
         runBlocking {
             createTestTable("tbl_10", 10)
 
-            val result = repository.openTableDurable("tbl_10", "Cliente 10", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_10", "Cliente 10", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
-                Response.error(409, "{\"error\":\"TABLE_ALREADY_OCCUPIED\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+                Response.error(409, "{\"error\":\"TABLE_ALREADY_OCCUPIED\",\"code\":\"TABLE_ALREADY_OCCUPIED\"}".toResponseBody("application/json".toMediaTypeOrNull()))
             )
 
             val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
@@ -431,116 +409,78 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O11: Stale PROCESSING claim — recovered only after > 120s
-    // =========================================================================
     @Test
     fun testO11_staleProcessingClaim_recoveredAfter120s() {
         runBlocking {
             createTestTable("tbl_11", 11)
 
-            val result = repository.openTableDurable("tbl_11", "Cliente 11", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_11", "Cliente 11", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
-            // Simular mutação presa em PROCESSING com claim há 150 segundos (> 120s)
             val now = System.currentTimeMillis()
-            val staleClaimTime = now - 150_000L
+            database.comandaMutationDao().claimMutation(accepted.mutationId, "old_token", now - 150_000L, now)
 
-            database.comandaMutationDao().claimMutation(
-                id = accepted.mutationId,
-                claimToken = "stale_token",
-                now = staleClaimTime,
-                staleThreshold = now
-            )
+            val mutationClaimed = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PROCESSING", mutationClaimed?.status)
 
-            val beforeRecover = database.comandaMutationDao().getById(accepted.mutationId)
-            assertEquals("PROCESSING", beforeRecover?.status)
-
-            // Executar sweep de recuperação
             val recoveredCount = database.comandaMutationDao().recoverStaleProcessing(now - 120_000L, now)
             assertEquals(1, recoveredCount)
 
-            val afterRecover = database.comandaMutationDao().getById(accepted.mutationId)
-            assertEquals("PENDING", afterRecover?.status)
-            assertNull(afterRecover?.claimToken)
+            val mutationRecovered = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PENDING", mutationRecovered?.status)
+            assertNull(mutationRecovered?.claimToken)
         }
     }
 
-    // =========================================================================
-    // O12: Claim younger than 120s — NOT stolen
-    // =========================================================================
     @Test
     fun testO12_activeClaimYoungerThan120s_notStolen() {
         runBlocking {
             createTestTable("tbl_12", 12)
 
-            val result = repository.openTableDurable("tbl_12", "Cliente 12", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_12", "Cliente 12", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
             val now = System.currentTimeMillis()
-            val recentClaimTime = now - 30_000L // 30s atrás (< 120s)
+            database.comandaMutationDao().claimMutation(accepted.mutationId, "active_worker_token", now - 30_000L, now - 120_000L)
 
-            database.comandaMutationDao().claimMutation(
-                id = accepted.mutationId,
-                claimToken = "active_worker_token",
-                now = recentClaimTime,
-                staleThreshold = now - 120_000L
-            )
+            val secondClaim = database.comandaMutationDao().claimMutation(accepted.mutationId, "thief_token", now, now - 120_000L)
+            assertEquals("Younger claim must not be stolen", 0, secondClaim)
 
-            // Tentar roubar claim com staleThreshold de 120s
-            val secondClaim = database.comandaMutationDao().claimMutation(
-                id = accepted.mutationId,
-                claimToken = "thief_worker_token",
-                now = now,
-                staleThreshold = now - 120_000L
-            )
-            assertEquals(0, secondClaim)
-
-            val current = database.comandaMutationDao().getById(accepted.mutationId)
-            assertEquals("active_worker_token", current?.claimToken)
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("active_worker_token", mutation?.claimToken)
         }
     }
 
-    // =========================================================================
-    // O13: Wrong tenant — no dispatch
-    // =========================================================================
     @Test
     fun testO13_wrongTenant_noDispatch() {
         runBlocking {
             createTestTable("tbl_13", 13)
 
-            val result = repository.openTableDurable("tbl_13", "Cliente 13", actorUserId, deviceId, "other_tenant")
+            val result = repository.openTableDurable("tbl_13", "Cliente 13", actorUserId, DeviceIdProvider.get(context), "tenant_alpha")
             val accepted = result as OpenTableResult.Accepted
 
-            // Tenant ativo no app é tenant_test_1 != other_tenant
-            val batchResult = dispatcher.dispatchEligibleBatch()
-            assertEquals(0, batchResult.processedCount)
+            TenantBindingStore.setActiveTenantId(context, "tenant_beta")
 
-            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
-            assertEquals("PENDING", mutation?.status)
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Paused)
+            assertEquals("DIFFERENT_TENANT", (dispatchResult as DispatchResult.Paused).reason)
+
             verify(apiService, never()).manageComanda(any(), any(), anyOrNull())
         }
     }
 
-    // =========================================================================
-    // O14: X-Api-Version header remains 1
-    // =========================================================================
     @Test
     fun testO14_xApiVersionRemains1() {
         val interceptor = com.plugpdv.pdv.api.AppHeadersInterceptor(context)
-        // Verified by static inspection and AppHeadersInterceptor class: X-Api-Version is "1"
         assertNotNull(interceptor)
     }
 
-    // =========================================================================
-    // O15: sync_batch is NEVER called
-    // =========================================================================
     @Test
     fun testO15_syncBatchNeverCalled() {
         runBlocking {
             createTestTable("tbl_15", 15)
 
-            val result = repository.openTableDurable("tbl_15", "Cliente 15", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_15", "Cliente 15", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
             whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
@@ -552,15 +492,12 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O16: Remote stale refresh cannot erase pending local OPEN
-    // =========================================================================
     @Test
     fun testO16_remoteStaleRefresh_cannotErasePendingLocalOpen() {
         runBlocking {
             createTestTable("tbl_16", 16)
 
-            val result = repository.openTableDurable("tbl_16", "Cliente Local", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_16", "Cliente Local", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
             val tableReadRepo = TableReadRepository(
@@ -571,7 +508,6 @@ class ComandaOpenDurableTest {
                 comandaSnapshotDao = database.comandaSnapshotDao()
             )
 
-            // Resposta da API antiga (stale) retornando mesa como LIVRE/AVAILABLE
             val mockRestaurantResponse = com.plugpdv.pdv.models.RestaurantResponse(
                 setores = listOf(
                     com.plugpdv.pdv.models.Sector(
@@ -604,15 +540,12 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O17: Existing canonical server comanda — no new OPEN mutation
-    // =========================================================================
     @Test
     fun testO17_existingCanonicalServerComanda_noNewOpenMutation() {
         runBlocking {
             createTestTable("tbl_17", 17, status = Table.Status.OCCUPIED, comandaId = "existing_srv_cmd_17")
 
-            val result = repository.openTableDurable("tbl_17", "Cliente 17", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_17", "Cliente 17", actorUserId, DeviceIdProvider.get(context), tenantId)
             assertTrue(result is OpenTableResult.ExistingServerComanda)
             assertEquals("existing_srv_cmd_17", (result as OpenTableResult.ExistingServerComanda).serverComandaId)
 
@@ -621,18 +554,14 @@ class ComandaOpenDurableTest {
         }
     }
 
-    // =========================================================================
-    // O18: Force-close / restart offline after local OPEN
-    // =========================================================================
     @Test
     fun testO18_forceCloseRestartOfflineAfterLocalOpen_tableRemainsOccupied() {
         runBlocking {
             createTestTable("tbl_18", 18)
 
-            val result = repository.openTableDurable("tbl_18", "Cliente 18", actorUserId, deviceId, tenantId)
+            val result = repository.openTableDurable("tbl_18", "Cliente 18", actorUserId, DeviceIdProvider.get(context), tenantId)
             val accepted = result as OpenTableResult.Accepted
 
-            // Simular fechamento e abertura de novo AppDatabase
             val table = database.tableDao().getTableById("tbl_18")
             assertEquals(Table.Status.OCCUPIED, table?.status)
             assertEquals(accepted.localComandaId, table?.localComandaId)
@@ -640,6 +569,228 @@ class ComandaOpenDurableTest {
 
             val mutation = database.comandaMutationDao().getById(accepted.mutationId)
             assertEquals("PENDING", mutation?.status)
+        }
+    }
+
+    @Test
+    fun testB1_dispatcherClient_callTimeoutIs45Seconds() {
+        val baseOkHttp = NetworkModule.provideOkHttpClient(context)
+        val dispatcherOkHttp = NetworkModule.provideComandaDispatcherOkHttpClient(baseOkHttp)
+        assertEquals(45_000, dispatcherOkHttp.callTimeoutMillis)
+    }
+
+    @Test
+    fun testB2A_staleClaim_lostOwnerCannotFinalize_returnsZeroRows() {
+        runBlocking {
+            createTestTable("tbl_b2a", 21)
+
+            val result = repository.openTableDurable("tbl_b2a", "Cliente B2A", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+            val now = System.currentTimeMillis()
+
+            val workerAToken = "claim_worker_a"
+            val claimedA = database.comandaMutationDao().claimMutation(accepted.mutationId, workerAToken, now - 150_000L, now)
+            assertEquals(1, claimedA)
+
+            val workerBToken = "claim_worker_b"
+            val claimedB = database.comandaMutationDao().claimMutation(accepted.mutationId, workerBToken, now, now - 120_000L)
+            assertEquals(1, claimedB)
+
+            val rowsA = database.comandaMutationDao().markSyncedClaimed(accepted.mutationId, workerAToken, now)
+            assertEquals(0, rowsA)
+
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PROCESSING", mutation?.status)
+            assertEquals(workerBToken, mutation?.claimToken)
+        }
+    }
+
+    @Test
+    fun testB2B_activeClaim_finalizesSuccessfully() {
+        runBlocking {
+            createTestTable("tbl_b2b", 22)
+
+            val result = repository.openTableDurable("tbl_b2b", "Cliente B2B", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+            val now = System.currentTimeMillis()
+
+            val workerToken = "valid_worker_token"
+            database.comandaMutationDao().claimMutation(accepted.mutationId, workerToken, now, now - 120_000L)
+
+            val rows = database.comandaMutationDao().markSyncedClaimed(accepted.mutationId, workerToken, now)
+            assertEquals(1, rows)
+
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("SYNCED", mutation?.status)
+            assertNull(mutation?.claimToken)
+        }
+    }
+
+    @Test
+    fun testB3_wrongDevice_zeroHttpCalls() {
+        runBlocking {
+            createTestTable("tbl_b3", 23)
+
+            val result = repository.openTableDurable("tbl_b3", "Cliente B3", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_diff_device",
+                    deviceId = "OTHER_DEVICE_XYZ"
+                )
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById("mut_diff_device")
+            assertTrue(dispatchResult is DispatchResult.Paused)
+            assertEquals("DEVICE_ID_MISMATCH", (dispatchResult as DispatchResult.Paused).reason)
+
+            verify(apiService, never()).manageComanda(any(), any(), anyOrNull())
+        }
+    }
+
+    @Test
+    fun testB4_startupRecovery_rediscoversUnsyncedMutation() {
+        runBlocking {
+            createTestTable("tbl_b4", 24)
+
+            val result = repository.openTableDurable("tbl_b4", "Cliente B4", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_b4"))
+            )
+
+            val batchResult = dispatcher.dispatchEligibleBatch()
+            assertEquals(1, batchResult.processedCount)
+
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("SYNCED", mutation?.status)
+        }
+    }
+
+    @Test
+    fun testB5_serverPygCurrency_reconcilesSnapshotToPygWith0Digits() {
+        runBlocking {
+            createTestTable("tbl_b5", 25)
+
+            val result = repository.openTableDurable("tbl_b5", "Cliente PYG", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_pyg_1", "currency" to "PYG"))
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Success)
+
+            val snapshot = database.comandaSnapshotDao().getByLocalId(accepted.localComandaId)
+            assertEquals("PYG", snapshot?.baseCurrency)
+            assertEquals(0, snapshot?.baseMinorUnitDigits)
+        }
+    }
+
+    @Test
+    fun testB6_operationInProgress_409_retriesSameK() {
+        runBlocking {
+            createTestTable("tbl_b6a", 26)
+
+            val result = repository.openTableDurable("tbl_b6a", "Cliente B6A", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(409, "{\"code\":\"OPERATION_IN_PROGRESS\",\"message\":\"Operation in progress\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Retrying)
+            assertEquals("OPERATION_IN_PROGRESS", (dispatchResult as DispatchResult.Retrying).reason)
+
+            val mutation = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PENDING", mutation?.status)
+            assertEquals("OPERATION_IN_PROGRESS", mutation?.lastErrorCode)
+        }
+    }
+
+    @Test
+    fun testB6_idempotencyKeyReused_409_reconciliationRequired() {
+        runBlocking {
+            createTestTable("tbl_b6b", 27)
+
+            val result = repository.openTableDurable("tbl_b6b", "Cliente B6B", actorUserId, DeviceIdProvider.get(context), tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(409, "{\"code\":\"IDEMPOTENCY_KEY_REUSED\",\"message\":\"Key reused\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.ReconciliationRequired)
+            assertEquals("IDEMPOTENCY_KEY_REUSED", (dispatchResult as DispatchResult.ReconciliationRequired).reason)
+        }
+    }
+
+    @Test
+    fun testB7_missingOrUnknownActor_failsClosed() {
+        runBlocking {
+            createTestTable("tbl_b7", 28)
+
+            val resultBlank = repository.openTableDurable("tbl_b7", "Cliente", "", DeviceIdProvider.get(context), tenantId)
+            assertTrue(resultBlank is OpenTableResult.Rejected)
+
+            val resultUnknown = repository.openTableDurable("tbl_b7", "Cliente", "UNKNOWN", DeviceIdProvider.get(context), tenantId)
+            assertTrue(resultUnknown is OpenTableResult.Rejected)
+
+            val mutations = database.comandaMutationDao().getEligibleMutations(tenantId, System.currentTimeMillis(), 0L)
+            assertEquals(0, mutations.size)
+        }
+    }
+
+    @Test
+    fun testB8_resolvedPayload_frozenAcrossRetries() {
+        runBlocking {
+            createTestTable("tbl_b8", 29)
+
+            val result = repository.openTableDurable("tbl_b8", "Nome Original", actorUserId, DeviceIdProvider.get(context), tenantId, peopleCount = 2)
+            val accepted = result as OpenTableResult.Accepted
+
+            val mutationBefore = database.comandaMutationDao().getById(accepted.mutationId)
+            assertNotNull(mutationBefore)
+            assertTrue(mutationBefore?.resolvedPayloadJson?.contains("Nome Original") == true)
+
+            val table = database.tableDao().getTableById("tbl_b8")
+            database.tableDao().insert(table!!.copy(customerName = "Nome Alterado Post Facto", peopleCount = 10))
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_b8"))
+            )
+
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            val requestCaptor = org.mockito.kotlin.argumentCaptor<CommandActionRequest>()
+            verify(apiService).manageComanda(any(), requestCaptor.capture(), eq(accepted.mutationId))
+
+            assertEquals("Nome Original", requestCaptor.firstValue.nome_cliente)
+            assertEquals(2, requestCaptor.firstValue.people_count)
+        }
+    }
+
+    @Test
+    fun testB9_mesaModeDisabledOrUnknown_cannotCreateOpenMutation() {
+        runBlocking {
+            createTestTable("tbl_b9", 30)
+
+            val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+
+            prefs.edit().putBoolean(Constants.HAS_MESA, false).apply()
+            val resultDisabled = repository.openTableDurable("tbl_b9", "Cliente B9", actorUserId, DeviceIdProvider.get(context), tenantId)
+            assertTrue(resultDisabled is OpenTableResult.Rejected)
+            assertEquals("operation_mode_disabled", (resultDisabled as OpenTableResult.Rejected).messageKey)
+
+            prefs.edit().remove(Constants.HAS_MESA).apply()
+            val resultUnknown = repository.openTableDurable("tbl_b9", "Cliente B9", actorUserId, DeviceIdProvider.get(context), tenantId)
+            assertTrue(resultUnknown is OpenTableResult.Rejected)
+            assertEquals("mode_authority_unknown", (resultUnknown as OpenTableResult.Rejected).messageKey)
         }
     }
 }

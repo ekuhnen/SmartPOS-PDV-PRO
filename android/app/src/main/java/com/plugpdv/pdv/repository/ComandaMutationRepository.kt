@@ -53,8 +53,19 @@ class ComandaMutationRepository @Inject constructor(
         tenantId: String,
         peopleCount: Int = 1
     ): OpenTableResult {
-        if (tableId.isBlank() || actorUserId.isBlank() || deviceId.isBlank() || tenantId.isBlank()) {
+        // B7: Rejeitar identificadores nulos, vazios ou sentinelas inválidos
+        if (tableId.isBlank() || actorUserId.isBlank() || actorUserId.equals("UNKNOWN", ignoreCase = true) || deviceId.isBlank() || tenantId.isBlank()) {
             return OpenTableResult.Rejected("Missing required identity or authority", "missing_authority")
+        }
+
+        // B9: Autoridade local do modo de operação Mesa (fail-closed)
+        val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        if (!prefs.contains(com.plugpdv.pdv.utils.Constants.HAS_MESA)) {
+            return OpenTableResult.Rejected("Mesa operation mode authority is unknown", "mode_authority_unknown")
+        }
+        val hasMesa = prefs.getBoolean(com.plugpdv.pdv.utils.Constants.HAS_MESA, false)
+        if (!hasMesa) {
+            return OpenTableResult.Rejected("Mesa mode is disabled for this enterprise", "operation_mode_disabled")
         }
 
         val result = database.withTransaction {
@@ -95,7 +106,7 @@ class ComandaMutationRepository @Inject constructor(
             )
             val payloadJson = gson.toJson(payload)
 
-            // Criar Snapshot local
+            // B5: Criar Snapshot local sem fabricar moeda/dígitos
             val snapshot = ComandaSnapshotEntity(
                 localComandaId = localComandaId,
                 serverComandaId = null,
@@ -103,8 +114,8 @@ class ComandaMutationRepository @Inject constructor(
                 tableId = tableId,
                 tableNumber = existingTable.number,
                 customerIdentifier = customerName,
-                baseCurrency = "BRL",
-                baseMinorUnitDigits = 2,
+                baseCurrency = null,
+                baseMinorUnitDigits = null,
                 serverStatus = null,
                 localStatus = "OPEN",
                 syncStatus = "PENDING",

@@ -25,6 +25,9 @@ class PlugPdvApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var saleSyncScheduler: SaleSyncScheduler
 
+    @Inject
+    lateinit var comandaWorkScheduler: com.plugpdv.pdv.worker.ComandaWorkScheduler
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -40,6 +43,9 @@ class PlugPdvApplication : Application(), Configuration.Provider {
 
         // Agendar sincronização da outbox de vendas pendentes ao iniciar o aplicativo
         saleSyncScheduler.scheduleSync(this)
+
+        // Agendar sincronização e recuperação de mutações duráveis de comanda
+        comandaWorkScheduler.scheduleCommandSync()
 
         // Reiniciar monitoramento se estiver logado
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)

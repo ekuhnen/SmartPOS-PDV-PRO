@@ -205,7 +205,11 @@ class MesaViewModel @Inject constructor(
                     val prefs = context.getSharedPreferences(com.plugpdv.pdv.utils.Constants.PREFS_NAME, Context.MODE_PRIVATE)
                     val actorUserId = prefs.getString(com.plugpdv.pdv.utils.Constants.USER_ID, null)
                         ?: prefs.getString(com.plugpdv.pdv.utils.Constants.OPERATOR_ID, null)
-                        ?: "UNKNOWN"
+
+                    if (actorUserId.isNullOrBlank() || actorUserId.equals("UNKNOWN", ignoreCase = true)) {
+                        _error.value = "Sessão inválida. Faça login novamente para autorização."
+                        return@launch
+                    }
                     val deviceId = com.plugpdv.pdv.utils.DeviceIdProvider.get(context)
 
                     if (tenantId.isNullOrBlank()) {
