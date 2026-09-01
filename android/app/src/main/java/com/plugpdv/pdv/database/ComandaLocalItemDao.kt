@@ -9,7 +9,7 @@ import androidx.room.Update
 @Dao
 interface ComandaLocalItemDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(item: ComandaLocalItemEntity)
 
     @Update

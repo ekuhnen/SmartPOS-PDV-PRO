@@ -635,4 +635,119 @@ class AppDatabaseMigrationTest {
         stmtCheck.close()
         connection.close()
     }
+
+    @Test
+    fun testRealSqliteConstraintPreventsDuplicateKOrLocalItemIdInsert() {
+        val connection = DriverManager.getConnection("jdbc:sqlite::memory:")
+        val db = mock<SupportSQLiteDatabase>()
+
+        whenever(db.execSQL(any())).thenAnswer { invocation ->
+            val sql = invocation.getArgument<String>(0)
+            connection.createStatement().use { stmt ->
+                stmt.execute(sql)
+            }
+            Unit
+        }
+
+        // Criar schema v10 e migrar para v11
+        db.execSQL("CREATE TABLE products (id TEXT NOT NULL, name TEXT, selling_price REAL, PRIMARY KEY(id))")
+        db.execSQL("CREATE TABLE tables (id TEXT NOT NULL, number INTEGER NOT NULL, status TEXT NOT NULL, sectorName TEXT NOT NULL, sectorId TEXT NOT NULL, peopleCount INTEGER NOT NULL, totalBalance REAL NOT NULL, paidAmount REAL NOT NULL, pendingBalance REAL NOT NULL, itemsJson TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(id))")
+        AppDatabase.MIGRATION_10_11.migrate(db)
+
+        // 1. Inserir mutação K1
+        db.execSQL("""
+            INSERT INTO comanda_mutations (
+                id, operationType, tenantId, actorUserId, deviceId, localComandaId,
+                tableId, localItemId, payloadJson, resolvedPayloadJson, createdAt,
+                updatedAt, attemptCount, lastAttemptAt, nextRetryAt, status,
+                pauseReason, reconciliationReason, claimToken, claimedAt,
+                lastErrorCode, messageKey
+            ) VALUES (
+                'K_ORIGINAL_1', 'OPEN_TABLE', 'ten_1', 'u1', 'd1', 'loc_1',
+                'tbl_1', NULL, '{"action":"open"}', NULL, 1000,
+                1000, 0, NULL, 1000, 'PENDING',
+                NULL, NULL, NULL, NULL,
+                NULL, NULL
+            )
+        """.trimIndent())
+
+        // 2. Tentar inserir duplicata com mesmo id K_ORIGINAL_1
+        var caughtMutationConflict = false
+        try {
+            connection.createStatement().use { stmt ->
+                stmt.execute("""
+                    INSERT INTO comanda_mutations (
+                        id, operationType, tenantId, actorUserId, deviceId, localComandaId,
+                        tableId, localItemId, payloadJson, resolvedPayloadJson, createdAt,
+                        updatedAt, attemptCount, lastAttemptAt, nextRetryAt, status,
+                        pauseReason, reconciliationReason, claimToken, claimedAt,
+                        lastErrorCode, messageKey
+                    ) VALUES (
+                        'K_ORIGINAL_1', 'OPEN_TABLE', 'ten_1', 'u1', 'd1', 'loc_1',
+                        'tbl_1', NULL, '{"action":"OVERWRITE"}', NULL, 2000,
+                        2000, 0, NULL, 2000, 'PENDING',
+                        NULL, NULL, NULL, NULL,
+                        NULL, NULL
+                    )
+                """.trimIndent())
+            }
+        } catch (e: Exception) {
+            caughtMutationConflict = true
+        }
+        assertTrue("Inserção de mutação com K duplicado deve falhar com restrição de chave primária", caughtMutationConflict)
+
+        // Validar que o registro original permaneceu inalterado
+        val stmt = connection.createStatement()
+        val rsMut = stmt.executeQuery("SELECT payloadJson, createdAt FROM comanda_mutations WHERE id = 'K_ORIGINAL_1'")
+        assertTrue(rsMut.next())
+        assertEquals("{\"action\":\"open\"}", rsMut.getString("payloadJson"))
+        assertEquals(1000L, rsMut.getLong("createdAt"))
+        rsMut.close()
+
+        // 3. Inserir localItem L1
+        db.execSQL("""
+            INSERT INTO comanda_local_items (
+                localItemId, localComandaId, tenantId, serverItemId, productId,
+                productNameSnapshot, quantity, observation, commercialRevision,
+                displayAmountScaled, displayCurrency, displayDecimals, localStatus,
+                serverStatus, createdAt, updatedAt, reconciliationReason
+            ) VALUES (
+                'LOC_ITEM_1', 'loc_1', 'ten_1', NULL, 'prod_1',
+                'Item Original', 1, NULL, 'rev_1',
+                1000, 'BRL', 2, 'DRAFT',
+                NULL, 1000, 1000, NULL
+            )
+        """.trimIndent())
+
+        var caughtItemConflict = false
+        try {
+            connection.createStatement().use { stmtItem ->
+                stmtItem.execute("""
+                    INSERT INTO comanda_local_items (
+                        localItemId, localComandaId, tenantId, serverItemId, productId,
+                        productNameSnapshot, quantity, observation, commercialRevision,
+                        displayAmountScaled, displayCurrency, displayDecimals, localStatus,
+                        serverStatus, createdAt, updatedAt, reconciliationReason
+                    ) VALUES (
+                        'LOC_ITEM_1', 'loc_1', 'ten_1', NULL, 'prod_1',
+                        'Item Sobrescrito', 10, NULL, 'rev_2',
+                        10000, 'BRL', 2, 'DRAFT',
+                        NULL, 2000, 2000, NULL
+                    )
+                """.trimIndent())
+            }
+        } catch (e: Exception) {
+            caughtItemConflict = true
+        }
+        assertTrue("Inserção de localItem com ID duplicado deve falhar com restrição de chave primária", caughtItemConflict)
+
+        val rsItem = stmt.executeQuery("SELECT productNameSnapshot, quantity FROM comanda_local_items WHERE localItemId = 'LOC_ITEM_1'")
+        assertTrue(rsItem.next())
+        assertEquals("Item Original", rsItem.getString("productNameSnapshot"))
+        assertEquals(1, rsItem.getInt("quantity"))
+        rsItem.close()
+
+        stmt.close()
+        connection.close()
+    }
 }

@@ -8,7 +8,7 @@ import androidx.room.Query
 @Dao
 interface ComandaMutationDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(mutation: ComandaMutationEntity)
 
     @Query("SELECT * FROM comanda_mutations WHERE id = :id")
