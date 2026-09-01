@@ -18,6 +18,7 @@ class DirectSaleActivity : BaseActivity() {
     private lateinit var binding: ActivityDirectSaleBinding
     private val saleViewModel: SaleViewModel by viewModels()
     private val authViewModel: AuthViewModel by viewModels()
+    private val reconciliationViewModel: com.plugpdv.pdv.ui.reconciliation.ReconciliationViewModel by viewModels()
     private var token: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +40,25 @@ class DirectSaleActivity : BaseActivity() {
             }
             startActivity(intent)
         }
+
+        binding.cardReconciliationBanner.setOnClickListener {
+            val intent = Intent(this, com.plugpdv.pdv.ui.reconciliation.ReconciliationListActivity::class.java)
+            startActivity(intent)
+        }
+
+        reconciliationViewModel.count.observe(this) { count ->
+            if (count > 0) {
+                binding.cardReconciliationBanner.visibility = android.view.View.VISIBLE
+                binding.tvReconciliationBannerText.text = "Operações que precisam de atenção ($count)"
+            } else {
+                binding.cardReconciliationBanner.visibility = android.view.View.GONE
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reconciliationViewModel.loadReconciliations()
     }
 
     private fun setupViewPager() {

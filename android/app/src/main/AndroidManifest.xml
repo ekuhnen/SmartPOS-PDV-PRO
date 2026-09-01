@@ -58,6 +58,11 @@
             android:screenOrientation="portrait" />
 
         <activity
+            android:name=".ui.reconciliation.ReconciliationListActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".ui.cashier.CashierActivity"
             android:exported="false"
             android:screenOrientation="portrait" />

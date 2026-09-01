@@ -68,6 +68,19 @@ interface ComandaMutationDao {
     suspend fun getReconciliationRequired(tenantId: String): List<ComandaMutationEntity>
 
     /**
+     * Lists mutations in RECONCILIATION_REQUIRED scoped strictly to the current authority triplet.
+     */
+    @Query("SELECT * FROM comanda_mutations WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId AND status = 'RECONCILIATION_REQUIRED' ORDER BY createdAt ASC")
+    suspend fun getReconciliationRequiredForAuthority(tenantId: String, actorUserId: String, deviceId: String): List<ComandaMutationEntity>
+
+    /**
+     * Counts mutations in RECONCILIATION_REQUIRED scoped strictly to the current authority triplet.
+     */
+    @Query("SELECT COUNT(*) FROM comanda_mutations WHERE tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId AND status = 'RECONCILIATION_REQUIRED'")
+    suspend fun getReconciliationCountForAuthority(tenantId: String, actorUserId: String, deviceId: String): Int
+
+
+    /**
      * R-A: Confirm Remote Success → COMPLETED.
      * CAS-UPDATE: only transitions if status = RECONCILIATION_REQUIRED AND identity triplet matches.
      * Returns number of rows affected (0 = no-op / authority mismatch / wrong state).

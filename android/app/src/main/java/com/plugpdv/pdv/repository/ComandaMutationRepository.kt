@@ -229,6 +229,38 @@ class ComandaMutationRepository @Inject constructor(
         )
     }
 
+    /**
+     * Gets all mutations in RECONCILIATION_REQUIRED for the given authority triplet.
+     */
+    suspend fun getReconciliationRequiredForAuthority(
+        tenantId: String,
+        actorUserId: String,
+        deviceId: String
+    ): List<ComandaMutationEntity> {
+        if (tenantId.isBlank() || actorUserId.isBlank() || deviceId.isBlank()) return emptyList()
+        return comandaMutationDao.getReconciliationRequiredForAuthority(
+            tenantId = tenantId,
+            actorUserId = actorUserId,
+            deviceId = deviceId
+        )
+    }
+
+    /**
+     * Gets the count of mutations in RECONCILIATION_REQUIRED for the given authority triplet.
+     */
+    suspend fun getReconciliationCountForAuthority(
+        tenantId: String,
+        actorUserId: String,
+        deviceId: String
+    ): Int {
+        if (tenantId.isBlank() || actorUserId.isBlank() || deviceId.isBlank()) return 0
+        return comandaMutationDao.getReconciliationCountForAuthority(
+            tenantId = tenantId,
+            actorUserId = actorUserId,
+            deviceId = deviceId
+        )
+    }
+
     // =========================================================================
     // RECONCILIATION RESOLUTION — R-A, R-B, R-C, R-D
     // Authority rule: tenantId + actorUserId + deviceId must ALL match the stored mutation.
