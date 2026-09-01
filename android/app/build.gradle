@@ -181,4 +181,11 @@ kapt {
     }
 }
 
+tasks.register('localizationAudit', Exec) {
+    group = 'verification'
+    description = 'Executes automated localization coverage audit'
+    workingDir project.rootDir.parentFile
+    commandLine 'python', 'scripts/localization_audit.py'
+}
+
 
