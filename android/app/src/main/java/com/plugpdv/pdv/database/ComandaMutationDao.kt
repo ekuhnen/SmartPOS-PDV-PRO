@@ -60,6 +60,47 @@ interface ComandaMutationDao {
         now: Long
     ): Int
 
-    @Query("SELECT COUNT(*) FROM comanda_mutations WHERE status != 'SYNCED'")
+    /**
+     * Lists all mutations for a tenant that need operator attention.
+     * Ordered chronologically to allow FIFO resolution.
+     */
+    @Query("SELECT * FROM comanda_mutations WHERE tenantId = :tenantId AND status = 'RECONCILIATION_REQUIRED' ORDER BY createdAt ASC")
+    suspend fun getReconciliationRequired(tenantId: String): List<ComandaMutationEntity>
+
+    /**
+     * R-A: Confirm Remote Success → COMPLETED.
+     * CAS-UPDATE: only transitions if status = RECONCILIATION_REQUIRED AND identity triplet matches.
+     * Returns number of rows affected (0 = no-op / authority mismatch / wrong state).
+     */
+    @Query("UPDATE comanda_mutations SET status = 'COMPLETED', resolvedAt = :now, updatedAt = :now WHERE id = :id AND status = 'RECONCILIATION_REQUIRED' AND tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId")
+    suspend fun resolveAsCompleted(id: String, actorUserId: String, deviceId: String, tenantId: String, now: Long): Int
+
+    /**
+     * R-C: Cancel Local Intent → CANCELLED.
+     * CAS-UPDATE: same authority guards as resolveAsCompleted.
+     */
+    @Query("UPDATE comanda_mutations SET status = 'CANCELLED', resolvedAt = :now, updatedAt = :now WHERE id = :id AND status = 'RECONCILIATION_REQUIRED' AND tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId")
+    suspend fun resolveAsCancelled(id: String, actorUserId: String, deviceId: String, tenantId: String, now: Long): Int
+
+    /**
+     * R-B: Retry Original → PENDING (same Idempotency-Key K).
+     * CAS-UPDATE: resets attempt machinery and re-enables automatic dispatch.
+     * Preserves the original mutation id (K) — idempotency guarantee intact.
+     */
+    @Query("UPDATE comanda_mutations SET status = 'PENDING', reconciliationReason = NULL, lastErrorCode = NULL, messageKey = NULL, claimToken = NULL, claimedAt = NULL, nextRetryAt = :now, resolvedAt = NULL, updatedAt = :now WHERE id = :id AND status = 'RECONCILIATION_REQUIRED' AND tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId")
+    suspend fun resolveAsRetry(id: String, actorUserId: String, deviceId: String, tenantId: String, now: Long): Int
+
+    /**
+     * Helper for R-D (Replace): mark original mutation as CANCELLED before inserting the new one.
+     * Called inside the same transaction as the new mutation insert.
+     */
+    @Query("UPDATE comanda_mutations SET status = 'CANCELLED', resolvedAt = :now, updatedAt = :now WHERE id = :id AND status = 'RECONCILIATION_REQUIRED' AND tenantId = :tenantId AND actorUserId = :actorUserId AND deviceId = :deviceId")
+    suspend fun markCancelledForReplacement(id: String, actorUserId: String, deviceId: String, tenantId: String, now: Long): Int
+
+    /**
+     * Mutations that still need attention: excludes finalized states.
+     * SYNCED, COMPLETED, and CANCELLED are all terminal — they require no further action.
+     */
+    @Query("SELECT COUNT(*) FROM comanda_mutations WHERE status NOT IN ('SYNCED', 'COMPLETED', 'CANCELLED')")
     suspend fun getUnresolvedCount(): Int
 }

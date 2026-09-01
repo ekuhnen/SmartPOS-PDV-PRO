@@ -65,4 +65,9 @@ object DatabaseModule {
     fun provideComandaLocalItemDao(database: AppDatabase): ComandaLocalItemDao {
         return database.comandaLocalItemDao()
     }
+
+    @Provides
+    fun provideComandaReconciliationLogDao(database: AppDatabase): ComandaReconciliationLogDao {
+        return database.comandaReconciliationLogDao()
+    }
 }

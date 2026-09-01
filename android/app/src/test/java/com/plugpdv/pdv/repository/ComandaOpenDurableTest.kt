@@ -88,6 +88,7 @@ class ComandaOpenDurableTest {
             tableDao = database.tableDao(),
             comandaMutationDao = database.comandaMutationDao(),
             comandaSnapshotDao = database.comandaSnapshotDao(),
+            comandaReconciliationLogDao = database.comandaReconciliationLogDao(),
             workScheduler = workScheduler
         )
 

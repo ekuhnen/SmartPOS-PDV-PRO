@@ -96,7 +96,8 @@ class AppDatabaseMigrationAndroidTest {
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
-                AppDatabase.MIGRATION_10_11
+                AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12
             )
             .build()
 
@@ -329,7 +330,8 @@ class AppDatabaseMigrationAndroidTest {
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
-                AppDatabase.MIGRATION_10_11
+                AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12
             )
             .build()
 
@@ -617,5 +619,115 @@ class AppDatabaseMigrationAndroidTest {
         assertEquals("SYNCED", reconciledMutation?.status)
 
         roomDb.close()
+    }
+
+    /**
+     * OFFLINE-FIRST-04A.2.6
+     * Validates that MIGRATION_11_12:
+     *   1. Adds `resolvedAt` column to `comanda_mutations` (nullable, epoch ms).
+     *   2. Creates `comanda_reconciliation_log` table with correct schema.
+     *   3. Pre-existing data in `comanda_mutations` and `comanda_snapshots` survives intact.
+     */
+    @Test
+    fun testRoomMigrationFromVersion11To12ValidatesSchemaWithoutMismatch() = runBlocking {
+        // 1. Create a v11 database with pre-existing mutation and snapshot data
+        var db = helper.createDatabase(TEST_DB, 11)
+
+        val now = System.currentTimeMillis()
+        val mutationId = "mut_v11_migration_test"
+        val localComandaId = "loc_cmd_v11_test"
+        val tableId = "tbl_v11_test"
+        val tenantId = "tenant_v11_test"
+
+        // Insert a pre-existing mutation in v11 (no resolvedAt column)
+        db.execSQL("""
+            INSERT INTO comanda_mutations (
+                id, operationType, tenantId, actorUserId, deviceId,
+                localComandaId, tableId, localItemId, payloadJson, resolvedPayloadJson,
+                createdAt, updatedAt, attemptCount, lastAttemptAt, nextRetryAt,
+                status, pauseReason, reconciliationReason, claimToken, claimedAt,
+                lastErrorCode, messageKey
+            ) VALUES (
+                '$mutationId', 'OPEN_TABLE', '$tenantId', 'user_v11', 'device_v11',
+                '$localComandaId', '$tableId', NULL, '{"action":"abrir"}', '{"action":"abrir"}',
+                $now, $now, 3, $now, $now,
+                'RECONCILIATION_REQUIRED', NULL, 'TABLE_ALREADY_OCCUPIED', NULL, NULL,
+                'TABLE_ALREADY_OCCUPIED', 'table_conflict'
+            )
+        """.trimIndent())
+
+        // Insert a snapshot
+        db.execSQL("""
+            INSERT INTO comanda_snapshots (
+                localComandaId, serverComandaId, tenantId, tableId, tableNumber,
+                customerIdentifier, baseCurrency, baseMinorUnitDigits, serverStatus, localStatus,
+                syncStatus, serverRevision, localRevision, totalBaseMinor, paidBaseMinor,
+                balanceBaseMinor, itemsJson, paymentsJson, requiresReconciliation, reconciliationReason,
+                serverUpdatedAt, cachedAt
+            ) VALUES (
+                '$localComandaId', NULL, '$tenantId', '$tableId', 5,
+                'Cliente V11', NULL, NULL, NULL, 'OPEN',
+                'PENDING', NULL, 1, NULL, NULL,
+                NULL, '[]', '[]', 0, NULL,
+                NULL, $now
+            )
+        """.trimIndent())
+
+        db.close()
+
+        // 2. Run MIGRATION_11_12 and validate schema matches v12 exactly
+        db = helper.runMigrationsAndValidate(
+            TEST_DB,
+            12,
+            true,
+            AppDatabase.MIGRATION_11_12
+        )
+
+        // 3. Pre-existing mutation is intact and resolvedAt defaults to NULL
+        val mutCursor = db.query(
+            "SELECT id, status, reconciliationReason, resolvedAt FROM comanda_mutations WHERE id = '$mutationId'"
+        )
+        assertTrue("Pre-existing mutation must exist after migration", mutCursor.moveToFirst())
+        assertEquals(mutationId, mutCursor.getString(mutCursor.getColumnIndexOrThrow("id")))
+        assertEquals("RECONCILIATION_REQUIRED", mutCursor.getString(mutCursor.getColumnIndexOrThrow("status")))
+        assertEquals("TABLE_ALREADY_OCCUPIED", mutCursor.getString(mutCursor.getColumnIndexOrThrow("reconciliationReason")))
+        // resolvedAt column was added as NULL — getType 5 = FIELD_TYPE_NULL
+        val resolvedAtIdx = mutCursor.getColumnIndexOrThrow("resolvedAt")
+        assertTrue("resolvedAt must be NULL for pre-existing rows", mutCursor.isNull(resolvedAtIdx))
+        mutCursor.close()
+
+        // 4. comanda_reconciliation_log table exists and is empty (no pre-existing data)
+        val logCursor = db.query("SELECT COUNT(*) FROM comanda_reconciliation_log")
+        assertTrue(logCursor.moveToFirst())
+        assertEquals("comanda_reconciliation_log must be empty after migration", 0, logCursor.getInt(0))
+        logCursor.close()
+
+        // 5. Can insert into comanda_reconciliation_log (schema correct)
+        val logId = "log_v12_migration_test"
+        db.execSQL("""
+            INSERT INTO comanda_reconciliation_log (
+                id, mutationId, tenantId, actorUserId, deviceId,
+                previousState, resolutionAction, resultState,
+                reconciliationReason, lastHttpStatus, notes, resolvedAt
+            ) VALUES (
+                '$logId', '$mutationId', '$tenantId', 'user_v11', 'device_v11',
+                'RECONCILIATION_REQUIRED', 'COMPLETED', 'COMPLETED',
+                'TABLE_ALREADY_OCCUPIED', NULL, 'Migration test', $now
+            )
+        """.trimIndent())
+
+        val logVerifyCursor = db.query("SELECT id, resolutionAction FROM comanda_reconciliation_log WHERE id = '$logId'")
+        assertTrue("Inserted log entry must be retrievable", logVerifyCursor.moveToFirst())
+        assertEquals(logId, logVerifyCursor.getString(logVerifyCursor.getColumnIndexOrThrow("id")))
+        assertEquals("COMPLETED", logVerifyCursor.getString(logVerifyCursor.getColumnIndexOrThrow("resolutionAction")))
+        logVerifyCursor.close()
+
+        // 6. Snapshot data still intact after migration
+        val snapCursor = db.query("SELECT COUNT(*) FROM comanda_snapshots WHERE localComandaId = '$localComandaId'")
+        assertTrue(snapCursor.moveToFirst())
+        assertEquals("Snapshot must survive migration", 1, snapCursor.getInt(0))
+        snapCursor.close()
+
+        db.close()
     }
 }

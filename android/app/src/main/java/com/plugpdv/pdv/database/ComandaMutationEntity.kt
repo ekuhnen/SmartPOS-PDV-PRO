@@ -35,5 +35,6 @@ data class ComandaMutationEntity(
     val claimToken: String? = null,         // Token do lease do worker
     val claimedAt: Long? = null,            // Timestamp do claim do lease
     val lastErrorCode: String? = null,      // Código de erro HTTP ou de domínio
-    val messageKey: String? = null          // Chave de tradução
+    val messageKey: String? = null,         // Chave de tradução
+    val resolvedAt: Long? = null            // Timestamp da resolução definitiva (COMPLETED, CANCELLED)
 )
