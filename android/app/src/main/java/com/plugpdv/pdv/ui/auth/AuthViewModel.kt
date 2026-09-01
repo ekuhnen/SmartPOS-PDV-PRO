@@ -57,7 +57,8 @@ class AuthViewModel @Inject constructor(
     private val taxRepository: TaxRepository,
     private val supabase: SupabaseClient,
     private val database: AppDatabase,
-    private val saleSyncScheduler: SaleSyncScheduler
+    private val saleSyncScheduler: SaleSyncScheduler,
+    private val comandaMutationRepository: com.plugpdv.pdv.repository.ComandaMutationRepository
 ) : ViewModel() {
 
     private val _loginResult = MutableLiveData<LoginResult?>(null)
@@ -163,6 +164,19 @@ class AuthViewModel @Inject constructor(
                         com.plugpdv.pdv.utils.CashierAuthorityStore.setOpen(context, ownerId, userId, sessionId)
                     } else if (!isOpen) {
                         com.plugpdv.pdv.utils.CashierAuthorityStore.setClosed(context, ownerId, userId)
+                    }
+
+                    // 04A.2.3: Re-avaliar mutações pausadas por auth/device após login autenticado
+                    if (hasMesa) {
+                        try {
+                            comandaMutationRepository.resumeAfterAuthenticatedLogin(
+                                tenantId = ownerId,
+                                actorUserId = userId,
+                                deviceId = DeviceIdProvider.get(context)
+                            )
+                        } catch (e: Exception) {
+                            Log.w("AuthViewModel", "Failed to resume paused mutations on login: ${e.message}")
+                        }
                     }
 
                     Log.d("AuthViewModel", "Login finalizado com sucesso para o usuário: $userId")

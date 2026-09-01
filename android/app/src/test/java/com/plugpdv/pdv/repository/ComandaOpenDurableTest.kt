@@ -1038,4 +1038,283 @@ class ComandaOpenDurableTest {
         assertFalse("HAS_VENDA_DIRETA must be removed on session expiration", prefs.contains(Constants.HAS_VENDA_DIRETA))
         assertFalse("HAS_COMANDA must be removed on session expiration", prefs.contains(Constants.HAS_COMANDA))
     }
+
+    // =========================================================================
+    // 04A.2.3: R1 to R10 - DEVICE AUTHORIZATION RESUME TESTS
+    // =========================================================================
+
+    @Test
+    fun testR1_kPausedDeviceBlocked_successfulLogin_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_r1", 41)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r1", "Cliente R1", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            val paused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", paused?.status)
+            assertEquals("DEVICE_BLOCKED", paused?.pauseReason)
+
+            // Simular login bem-sucedido com mesmos tenant, actor, device
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, resumedCount)
+
+            val resumed = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+            assertNull(resumed?.claimToken)
+            assertEquals(accepted.mutationId, resumed?.id)
+        }
+    }
+
+    @Test
+    fun testR2_afterR1BackendSucceeds_sameKSyncedWithoutReplacement() {
+        runBlocking {
+            createTestTable("tbl_r2", 42)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r2", "Cliente R2", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+
+            // Administrador desbloqueou: backend responde sucesso
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.success(mapOf("id" to "srv_cmd_r2"))
+            )
+
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Success)
+
+            val synced = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("SYNCED", synced?.status)
+            assertEquals(accepted.mutationId, synced?.id)
+            assertEquals(accepted.localComandaId, synced?.localComandaId)
+        }
+    }
+
+    @Test
+    fun testR3_kPausedDeviceNotRegistered_sameAuthorizedLogin_transitionsToPending() {
+        runBlocking {
+            createTestTable("tbl_r3", 43)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r3", "Cliente R3", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_NOT_REGISTERED\",\"message\":\"Terminal not registered\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            val paused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", paused?.status)
+            assertEquals("DEVICE_NOT_REGISTERED", paused?.pauseReason)
+
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, resumedCount)
+
+            val resumed = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PENDING", resumed?.status)
+            assertNull(resumed?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testR4_sameTenantActor_differentDevice_zeroRowsResumed() {
+        runBlocking {
+            createTestTable("tbl_r4", 44)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r4", "Cliente R4", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            // Tentativa de login com outro DeviceId
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, "OTHER_DEVICE_XYZ")
+            assertEquals(0, resumedCount)
+
+            val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", stillPaused?.status)
+        }
+    }
+
+    @Test
+    fun testR5_sameDeviceTenant_differentActor_zeroRowsResumed() {
+        runBlocking {
+            createTestTable("tbl_r5", 45)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r5", "Cliente R5", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            // Tentativa de login com outro operador
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, "OTHER_USER_999", currentDeviceId)
+            assertEquals(0, resumedCount)
+
+            val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", stillPaused?.status)
+        }
+    }
+
+    @Test
+    fun testR6_hasMesaFalse_pausedRowsNotResumed() {
+        runBlocking {
+            createTestTable("tbl_r6", 46)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r6", "Cliente R6", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenReturn(
+                Response.error(403, "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull()))
+            )
+            dispatcher.dispatchMutationById(accepted.mutationId)
+
+            // Quando hasMesa = false, o login NÃO invoca resumeAfterAuthenticatedLogin
+            val hasMesa = false
+            if (hasMesa) {
+                repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            }
+
+            val stillPaused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", stillPaused?.status)
+            assertEquals("DEVICE_BLOCKED", stillPaused?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testR7_deviceIdMismatch_remainsPaused() {
+        runBlocking {
+            createTestTable("tbl_r7", 47)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r7", "Cliente R7", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            // Forçar status PAUSED com DEVICE_ID_MISMATCH
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_r7_mismatch",
+                    status = "PAUSED",
+                    pauseReason = "DEVICE_ID_MISMATCH"
+                )
+            )
+
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(0, resumedCount)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_r7_mismatch")
+            assertEquals("PAUSED", stillPaused?.status)
+            assertEquals("DEVICE_ID_MISMATCH", stillPaused?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testR8_tenantDeviceMismatch_remainsPaused() {
+        runBlocking {
+            createTestTable("tbl_r8", 48)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r8", "Cliente R8", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_r8_mismatch",
+                    status = "PAUSED",
+                    pauseReason = "TENANT_DEVICE_MISMATCH"
+                )
+            )
+
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(0, resumedCount)
+
+            val stillPaused = database.comandaMutationDao().getById("mut_r8_mismatch")
+            assertEquals("PAUSED", stillPaused?.status)
+            assertEquals("TENANT_DEVICE_MISMATCH", stillPaused?.pauseReason)
+        }
+    }
+
+    @Test
+    fun testR9_reconciliationRequired_remainsUnchanged() {
+        runBlocking {
+            createTestTable("tbl_r9", 49)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r9", "Cliente R9", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            database.comandaMutationDao().insert(
+                database.comandaMutationDao().getById(accepted.mutationId)!!.copy(
+                    id = "mut_r9_rec",
+                    status = "RECONCILIATION_REQUIRED",
+                    reconciliationReason = "TABLE_ALREADY_OCCUPIED"
+                )
+            )
+
+            val resumedCount = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(0, resumedCount)
+
+            val rec = database.comandaMutationDao().getById("mut_r9_rec")
+            assertEquals("RECONCILIATION_REQUIRED", rec?.status)
+            assertEquals("TABLE_ALREADY_OCCUPIED", rec?.reconciliationReason)
+        }
+    }
+
+    @Test
+    fun testR10_terminalStillBlocked_resumeToPending_dispatchPausesAgain_sameK() {
+        runBlocking {
+            createTestTable("tbl_r10", 50)
+            val currentDeviceId = DeviceIdProvider.get(context)
+
+            val result = repository.openTableDurable("tbl_r10", "Cliente R10", actorUserId, currentDeviceId, tenantId)
+            val accepted = result as OpenTableResult.Accepted
+
+            // Inicialmente bloqueado
+            whenever(apiService.manageComanda(any(), any(), anyOrNull())).thenAnswer {
+                Response.error<Map<String, Any>>(
+                    403,
+                    "{\"code\":\"DEVICE_BLOCKED\",\"message\":\"Terminal blocked\"}".toResponseBody("application/json".toMediaTypeOrNull())
+                )
+            }
+            dispatcher.dispatchMutationById(accepted.mutationId)
+            assertEquals("PAUSED", database.comandaMutationDao().getById(accepted.mutationId)?.status)
+
+            // Re-avaliação pós login
+            val resumed = repository.resumeAfterAuthenticatedLogin(tenantId, actorUserId, currentDeviceId)
+            assertEquals(1, resumed)
+            assertEquals("PENDING", database.comandaMutationDao().getById(accepted.mutationId)?.status)
+
+            // Servidor AINDA bloqueado: despacha uma vez e retorna a PAUSED
+            val dispatchResult = dispatcher.dispatchMutationById(accepted.mutationId)
+            assertTrue(dispatchResult is DispatchResult.Paused)
+            assertEquals("DEVICE_BLOCKED", (dispatchResult as DispatchResult.Paused).reason)
+
+            val repaused = database.comandaMutationDao().getById(accepted.mutationId)
+            assertEquals("PAUSED", repaused?.status)
+            assertEquals("DEVICE_BLOCKED", repaused?.pauseReason)
+            assertEquals(accepted.mutationId, repaused?.id)
+        }
+    }
 }

@@ -187,4 +187,23 @@ class ComandaMutationRepository @Inject constructor(
 
         return result
     }
+
+    /**
+     * Resumes eligible PAUSED comanda mutations after a successful authenticated login.
+     * Only transitions rows where tenantId, actorUserId, and deviceId all match.
+     */
+    suspend fun resumeAfterAuthenticatedLogin(
+        tenantId: String,
+        actorUserId: String,
+        deviceId: String
+    ): Int {
+        if (tenantId.isBlank() || actorUserId.isBlank() || deviceId.isBlank()) return 0
+        val now = System.currentTimeMillis()
+        return comandaMutationDao.resumeAfterAuthenticatedLogin(
+            tenantId = tenantId,
+            actorUserId = actorUserId,
+            deviceId = deviceId,
+            now = now
+        )
+    }
 }
