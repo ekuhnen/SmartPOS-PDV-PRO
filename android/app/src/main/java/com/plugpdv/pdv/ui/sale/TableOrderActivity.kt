@@ -15,6 +15,7 @@ import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.CurrencyManager
 import dagger.hilt.android.AndroidEntryPoint
+import java.math.BigDecimal
 
 @AndroidEntryPoint
 class TableOrderActivity : BaseActivity() {
@@ -228,7 +229,16 @@ class TableOrderActivity : BaseActivity() {
                 summary.totalBaseMinor,
                 summary.baseMinorUnitDigits
             )
-            binding.tvTotal.text = CurrencyManager.getInstance().formatExplicit(decimal.toDouble(), summary.baseCurrency)
+            val cm = CurrencyManager.getInstance()
+            val displayCurrency = cm.selectedCurrency
+            binding.tvTotal.text = if (displayCurrency.equals(summary.baseCurrency, ignoreCase = true)) {
+                cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
+            } else {
+                cm.quoteBaseAmount(BigDecimal.valueOf(decimal.toDouble()), summary.baseCurrency, displayCurrency)
+                    .getOrNull()
+                    ?.let { quote -> cm.formatExplicit(quote.transactionAmount.toDouble(), quote.transactionCurrency) }
+                    ?: cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
+            }
         } else {
             binding.tvTotal.text = CurrencyManager.getInstance().format(currentTable?.calculateTotal() ?: 0.0)
         }
