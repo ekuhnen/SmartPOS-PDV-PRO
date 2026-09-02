@@ -45,6 +45,7 @@ class TableOrderItemAdapter(
 
         fun bind(item: TableItem, listener: (TableItem) -> Unit) {
             tvName.text = item.product.name ?: itemView.context.getString(R.string.unnamed_product)
+            tvQuantity.text = itemView.context.getString(R.string.quantity_short, item.quantity)
             val price = item.product.selling_price
             val currency = item.product.price_currency
             tvPrice.text = if (price != null && !currency.isNullOrBlank()) {
