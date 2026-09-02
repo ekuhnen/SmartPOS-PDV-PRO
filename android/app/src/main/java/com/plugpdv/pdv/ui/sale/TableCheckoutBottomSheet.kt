@@ -206,13 +206,16 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             b.btnPayLink.setOnClickListener { viewModel.fetchComandaPayments() }
         } else {
             b.btnPayLink.setOnClickListener { finalizePayment() }
-            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation && state.baseMinorUnitDigits != null
+            val itemSelectionMissing = state.splitMode == 2 && state.currentToPay <= 0.0
+            b.btnPayLink.isEnabled = (state.moneyAuthorityState == MoneyAuthorityState.READY_REMOTE) && !state.isLoading && !state.isPayButtonBlocked && !state.requiresReconciliation && state.baseMinorUnitDigits != null && !itemSelectionMissing
             if (state.baseMinorUnitDigits == null && state.moneyAuthorityState != MoneyAuthorityState.LOAD_ERROR) {
                 b.btnPayLink.setText(R.string.financial_data_unavailable)
             } else if (state.moneyAuthorityState == MoneyAuthorityState.LOADING) {
                 b.btnPayLink.setText(R.string.loading_comanda)
             } else if (state.requiresReconciliation) {
                 b.btnPayLink.setText(R.string.payment_requires_reconciliation_short)
+            } else if (itemSelectionMissing) {
+                b.btnPayLink.setText(R.string.select_item_for_payment)
             } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
                 b.btnPayLink.text = state.blockReason
             } else {
@@ -310,9 +313,11 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val b = binding ?: return
         if (b.rvSelectItems.adapter == null) {
             b.rvSelectItems.layoutManager = LinearLayoutManager(context)
-            b.rvSelectItems.adapter = ItemsAdapter(viewModel.itemsToPay) { pos, selected ->
-                viewModel.onItemSelected(pos, selected)
-            }
+            b.rvSelectItems.adapter = PayByItemsAdapter(
+                viewModel.itemsToPay,
+                onSelect = { pos, selected -> viewModel.onItemSelected(pos, selected) },
+                onQuantityChanged = { pos, delta -> viewModel.updateItemSelectedQuantity(pos, delta) }
+            )
         } else {
             b.rvSelectItems.adapter?.notifyDataSetChanged()
         }
@@ -429,7 +434,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             return
         }
         if (state.currentToPay <= 0) {
-            Toast.makeText(context, R.string.invalid_value, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, if (state.splitMode == 2) R.string.select_item_for_payment else R.string.invalid_value, Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -562,41 +567,4 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
-    private inner class ItemsAdapter(
-        private val items: List<TableItemPayment>,
-        private val onSelect: (Int, Boolean) -> Unit
-    ) : RecyclerView.Adapter<ItemsAdapter.ViewHolder>() {
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val b = ItemCheckoutSplitBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-            return ViewHolder(b)
-        }
-
-        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val tip = items[position]
-            holder.binding.cbItemSelected.isChecked = tip.selected
-            holder.binding.tvItemName.text = holder.itemView.context.getString(R.string.product_with_quantity, tip.item.product.name ?: holder.itemView.context.getString(R.string.unnamed_product), tip.selectedQuantity)
-            val price = tip.item.product.selling_price
-            val itemCurrency = tip.item.product.price_currency
-            holder.binding.tvItemValue.text = if (price != null && !itemCurrency.isNullOrBlank()) {
-                formatBaseAmount(price, itemCurrency)
-            } else "UNKNOWN"
-            holder.binding.tvItemSubtotal.text = if (price != null && !itemCurrency.isNullOrBlank()) {
-                formatBaseAmount(price * tip.selectedQuantity, itemCurrency)
-            } else "UNKNOWN"
-            
-            holder.itemView.setOnClickListener {
-                tip.selected = !tip.selected
-                notifyItemChanged(position)
-                onSelect(position, tip.selected)
-            }
-            holder.binding.cbItemSelected.setOnClickListener {
-                onSelect(position, holder.binding.cbItemSelected.isChecked)
-            }
-        }
-
-        override fun getItemCount() = items.size
-
-        inner class ViewHolder(val binding: ItemCheckoutSplitBinding) : RecyclerView.ViewHolder(binding.root)
-    }
 }

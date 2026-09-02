@@ -19,5 +19,5 @@ data class TableItem(
 data class TableItemPayment(
     val item: TableItem,
     var selected: Boolean = false,
-    var selectedQuantity: Int = item.quantity - item.paidQuantity
+    var selectedQuantity: Int = 0
 ) : Serializable

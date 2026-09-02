@@ -38,5 +38,9 @@ data class MesaItemDto(
     @SerializedName(value = "observacao", alternate = ["observacao_item", "obs"])
     val observacao: String? = null,
     @SerializedName("status") val status: String? = null,
+    @SerializedName(value = "paid_quantity", alternate = ["paidQuantity", "quantidade_paga", "qtd_paga"])
+    val paidQuantity: Int? = null,
+    @SerializedName(value = "is_paid", alternate = ["isPaid", "pago"])
+    val paid: Boolean? = null,
     @SerializedName("produto") val nestedProduct: Product? = null
 )

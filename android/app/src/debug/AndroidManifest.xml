@@ -4,5 +4,9 @@
             android:name=".debug.ReceiptValidationActivity"
             android:exported="true"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".debug.PayByItemsValidationActivity"
+            android:exported="true"
+            android:screenOrientation="portrait" />
     </application>
 </manifest>

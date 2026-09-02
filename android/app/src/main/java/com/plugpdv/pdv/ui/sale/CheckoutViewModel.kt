@@ -316,6 +316,12 @@ class CheckoutViewModel @Inject constructor(
     ) {
         if (snapshot == null) return
 
+        // Keep the checkout read model coherent with the same authoritative snapshot
+        // that supplies the monetary fields. Room's table cache may legitimately have
+        // an empty itemsJson after a table refresh.
+        table?.items = ComandaItemHydrator.fromSnapshot(snapshot.itemsJson, snapshot.baseCurrency)
+        if (_uiState.value.splitMode == 2) setupItemsSplit()
+
         val digits = snapshot.baseMinorUnitDigits
         val balDecimal = if (digits != null && snapshot.balanceBaseMinor != null) {
             ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(snapshot.balanceBaseMinor, digits)
@@ -507,6 +513,9 @@ class CheckoutViewModel @Inject constructor(
             }
 
             val decision = ComandaSnapshotAuthorityPolicy.evaluate(cachedSnapshot, cId, context)
+            // Remote snapshot wins over the potentially empty Room table projection.
+            currentTable.items = ComandaItemHydrator.fromSnapshot(cachedSnapshot.itemsJson, cachedSnapshot.baseCurrency)
+            if (_uiState.value.splitMode == 2) setupItemsSplit()
             val digits = cachedSnapshot.baseMinorUnitDigits
             val baseCurrency = cachedSnapshot.baseCurrency
             val totalBaseMinor = cachedSnapshot.totalBaseMinor
@@ -792,9 +801,23 @@ class CheckoutViewModel @Inject constructor(
 
     fun onItemSelected(position: Int, isSelected: Boolean) {
         if (position in 0 until itemsToPay.size) {
-            itemsToPay[position].selected = isSelected
+            val item = itemsToPay[position]
+            item.selected = isSelected
+            if (isSelected && item.selectedQuantity <= 0) {
+                item.selectedQuantity = item.item.quantity - item.item.paidQuantity
+            }
+            if (!isSelected) item.selectedQuantity = 0
             calculateItemsTotal()
         }
+    }
+
+    fun updateItemSelectedQuantity(position: Int, delta: Int) {
+        if (position !in 0 until itemsToPay.size) return
+        val payment = itemsToPay[position]
+        val remaining = (payment.item.quantity - payment.item.paidQuantity).coerceAtLeast(0)
+        payment.selectedQuantity = (payment.selectedQuantity + delta).coerceIn(0, remaining)
+        payment.selected = payment.selectedQuantity > 0
+        calculateItemsTotal()
     }
 
     private fun calculateItemsTotal() {
