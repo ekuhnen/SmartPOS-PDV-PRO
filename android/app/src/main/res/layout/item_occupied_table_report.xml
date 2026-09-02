@@ -46,7 +46,7 @@
             android:id="@+id/tvPendingAmount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="R$ 150,00"
+            android:text="@string/amount_placeholder"
             android:textColor="#D32F2F"
             android:textSize="16sp"
             android:textStyle="bold" />

@@ -1,8 +1,8 @@
 # PILOT-STAB-02A — Localization Coverage Audit Baseline
 
-**Generated At:** 2026-09-01T21:37:47Z  
-**Git Branch:** `pilot-stab/02b-spanish-ui`  
-**Git Commit:** `57305e139962`  
+**Generated At:** 2026-09-02T10:39:18Z  
+**Git Branch:** `pilot-stab/02c-currency-receipts`  
+**Git Commit:** `c89884305b68`  
 **Generator Version:** `1.1`
 
 ## Audit Scope and Verdict
@@ -19,10 +19,10 @@ PASS describes audit execution and internal consistency. P0/P1 findings remain r
 
 | Locale | Total base keys | Translated keys | Missing keys | Extra keys | Coverage |
 |---|---:|---:|---:|---:|---:|
-| PT | 310 | 310 | 0 | 0 | 100.00% |
-| ES | 310 | 310 | 0 | 0 | 100.00% |
-| EN | 310 | 112 | 198 | 0 | 36.13% |
-| GN | 310 | 34 | 276 | 0 | 10.97% |
+| PT | 312 | 312 | 0 | 0 | 100.00% |
+| ES | 312 | 312 | 0 | 0 | 100.00% |
+| EN | 312 | 112 | 200 | 0 | 35.90% |
+| GN | 312 | 34 | 278 | 0 | 10.90% |
 
 ## Missing Spanish Keys
 
@@ -45,13 +45,13 @@ Supported forms include `%s`, `%d`, `%f`, `%1$s`, and `%2$d`.
 
 ## Confirmed Finding Summary
 
-- Hardcoded XML: 17
+- Hardcoded XML: 0
 - Hardcoded Kotlin: 10
 - Hardcoded Java: 0
 - Hardcoded code total: 10
 - ViewModel: 6
 - Printing: 0
-- Currency: 17
+- Currency: 0
 - Locale propagation confirmed: 0
 - Review required: 5
 
@@ -59,11 +59,11 @@ Supported forms include `%s`, `%d`, `%f`, `%1$s`, and `%2$d`.
 
 | Severity | Count |
 |---|---:|
-| P0-L10N | 17 |
+| P0-L10N | 0 |
 | P1-L10N | 10 |
 | P2-L10N | 0 |
-| P3-L10N | 474 |
-| Total unique confirmed findings | 501 |
+| P3-L10N | 478 |
+| Total unique confirmed findings | 488 |
 
 Severity totals are calculated once from canonical finding IDs. Category arrays may reference the same ID without increasing the severity total.
 

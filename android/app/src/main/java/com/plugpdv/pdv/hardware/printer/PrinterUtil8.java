@@ -46,7 +46,8 @@ public class PrinterUtil8 {
 
                 pm.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER, 20, false));
 
-                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+                // Context is a print-job localization snapshot captured before this thread started.
+                final Context ctx = context;
 
                 // 4) Detalhes da Transação
                 pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_transaction_label), data.getTransactionId()));
@@ -69,9 +70,9 @@ public class PrinterUtil8 {
                 }
 
                 // 6) Forma e Total
-                pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_payment_method_label), data.getPaymentMethod()));
+                pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_payment_method_label), com.plugpdv.pdv.utils.PrinterHelper.localizedPaymentMethod(ctx, data.getPaymentMethod())));
                 
-                if (data.getServiceFeeAmount() != null && !data.getServiceFeeAmount().equals("0,00")) {
+                if (data.getServiceFeeAmount() != null && !data.getServiceFeeAmount().equals("0") && !data.getServiceFeeAmount().equals("0,00")) {
                     pm.addPrintLine(formatKozenLine(ctx.getString(R.string.print_service_fee_label), data.getCurrency() + " " + data.getServiceFeeAmount()));
                 }
                 

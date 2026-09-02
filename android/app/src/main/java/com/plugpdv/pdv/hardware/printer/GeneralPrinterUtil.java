@@ -48,7 +48,8 @@ public class GeneralPrinterUtil {
                     printerManager.addPrintLine(new BitmapPrintLine(logo, PrintLine.CENTER));
                 }
 
-                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+                // Context is a print-job localization snapshot captured before this thread started.
+                final Context ctx = context;
 
                 // 3) Corpo
                 printerManager.addPrintLine(new TextPrintLine(data.getMerchantName(), PrintLine.CENTER, 18, false));
@@ -63,7 +64,7 @@ public class GeneralPrinterUtil {
 
                 printerManager.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER));
 
-                printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_payment_method_label), data.getPaymentMethod()));
+                printerManager.addPrintLine(formatPOILine(ctx.getString(R.string.print_payment_method_label), com.plugpdv.pdv.utils.PrinterHelper.localizedPaymentMethod(ctx, data.getPaymentMethod())));
                 printerManager.addPrintLine(new TextPrintLine(ctx.getString(R.string.print_total_label) + " " + data.getCurrency() + " " + data.getAmount(), PrintLine.RIGHT, 20, true));
 
                 printerManager.addPrintLine(new TextPrintLine("--------------------------------", PrintLine.CENTER));
@@ -95,7 +96,8 @@ public class GeneralPrinterUtil {
 
         new Thread(() -> {
             try {
-                final Context ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(context, com.plugpdv.pdv.utils.LanguageManager.getLanguage(context));
+                // Context is a print-job localization snapshot captured before this thread started.
+                final Context ctx = context;
 
                 ICallback.Stub callback = new ICallback.Stub() {
                     @Override public void onRunResult(boolean isSuccess) {}

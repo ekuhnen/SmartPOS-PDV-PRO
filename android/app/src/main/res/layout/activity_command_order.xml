@@ -146,7 +146,7 @@
                     android:id="@+id/tvTotal"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="R$ 0,00"
+                    android:text="@string/amount_placeholder"
                     android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="@color/black" />

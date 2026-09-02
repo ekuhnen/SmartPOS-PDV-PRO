@@ -31,7 +31,7 @@
         android:layout_height="wrap_content"
         android:layout_marginBottom="24dp"
         android:hint="@string/amount_to_receive"
-        app:prefixText="R$ ">
+        >
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etAmount"

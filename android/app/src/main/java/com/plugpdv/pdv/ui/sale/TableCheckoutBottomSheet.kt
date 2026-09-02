@@ -224,7 +224,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             
             // Print the transaction receipt automatically
             state.lastPaymentMethod?.let { method ->
-                printPaymentReceipt(method, state.lastPaymentAmount)
+                state.lastPaymentCurrency?.let { currency ->
+                    printPaymentReceipt(method, state.lastPaymentAmount, currency)
+                }
             }
             
             val isFullyPaid = state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L
@@ -432,27 +434,34 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
         } ?: BigDecimal.ZERO
 
-        sb.append("Total: ").append(cm.formatExplicit(totalDecimal.toDouble(), baseCurrency)).append("\n")
-        sb.append("Saldo: ").append(cm.formatExplicit(balanceDecimal.toDouble(), baseCurrency)).append("\n")
+        sb.append(ctx.getString(R.string.print_total_label)).append(" ").append(cm.formatExplicit(totalDecimal.toDouble(), baseCurrency)).append("\n")
+        sb.append(ctx.getString(R.string.remaining_balance)).append(": ").append(cm.formatExplicit(balanceDecimal.toDouble(), baseCurrency)).append("\n")
         sb.append("--------------------------------\n")
 
         PrinterHelper.printReceipt(requireContext(), sb.toString())
     }
 
-    private fun printPaymentReceipt(method: String, amount: Double) {
+    private fun printPaymentReceipt(method: String, amount: Double, authoritativeCurrency: String) {
         val ctx = context ?: return
         val cm = CurrencyManager.getInstance()
-        val currentCurrency = cm.selectedCurrency
-        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+        val paymentCurrency = authoritativeCurrency
+        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(LanguageManager.getLanguage(ctx)))
         val dateStr = sdf.format(Date())
         
         val sb = StringBuilder()
         sb.append("================================\n")
         sb.append("      COMPROVANTE DE PAGAMENTO  \n")
         sb.append("================================\n")
-        sb.append("Data/Hora: $dateStr\n")
-        sb.append("Forma: $method\n")
-        sb.append("Valor Pago: ${cm.formatExplicit(amount, currentCurrency)}\n")
+        sb.append(ctx.getString(R.string.print_date_label)).append(": ").append(dateStr).append("\n")
+        val methodLabel = when (method.uppercase()) {
+            "DINHEIRO", "CASH" -> ctx.getString(R.string.cash)
+            "PIX", "PIX_TRANSFERENCIA" -> ctx.getString(R.string.pix)
+            "CREDITO", "CREDIT", "CREDIT_INSTALLMENTS" -> ctx.getString(R.string.credit)
+            "DEBITO", "DEBIT" -> ctx.getString(R.string.debit)
+            else -> method
+        }
+        sb.append(ctx.getString(R.string.print_payment_method_label)).append(" ").append(methodLabel).append("\n")
+        sb.append(ctx.getString(R.string.print_paid_amount_label)).append(" ").append(cm.formatExplicit(amount, paymentCurrency)).append("\n")
         sb.append("================================\n\n\n")
 
         PrinterHelper.printReceipt(ctx, sb.toString())

@@ -64,6 +64,7 @@ data class CheckoutUiState(
     val fullTableTotalPaid: Double = 0.0,
     val lastPaymentMethod: String? = null,
     val lastPaymentAmount: Double = 0.0,
+    val lastPaymentCurrency: String? = null,
     val serviceFeeConfig: ServiceFeeConfig? = null,
     val serviceFeeAmount: Double = 0.0,
     val serviceFeeKind: String? = null,
@@ -870,7 +871,8 @@ class CheckoutViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             paymentSuccess = false,
             lastPaymentMethod = null,
-            lastPaymentAmount = 0.0
+            lastPaymentAmount = 0.0,
+            lastPaymentCurrency = null
         )
         if (_uiState.value.splitMode == 2) {
             setupItemsSplit()
@@ -1025,8 +1027,6 @@ class CheckoutViewModel @Inject constructor(
 
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
         val gson = Gson()
-        val amountToPay = _uiState.value.finalToPay
-
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -1059,7 +1059,8 @@ class CheckoutViewModel @Inject constructor(
                             isPayButtonBlocked = true,
                             blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                             lastPaymentMethod = method.apiValue,
-                            lastPaymentAmount = amountToPay
+                            lastPaymentAmount = request.valor.toDouble(),
+                            lastPaymentCurrency = request.moeda
                         )
                     }
                 } else {
@@ -1092,8 +1093,6 @@ class CheckoutViewModel @Inject constructor(
             return
         }
         val gson = Gson()
-        val amountToPay = manualAmount ?: suppliedQuote?.transactionAmount?.toDouble() ?: _uiState.value.finalToPay
-
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -1126,7 +1125,8 @@ class CheckoutViewModel @Inject constructor(
                         isPayButtonBlocked = true,
                         blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
-                        lastPaymentAmount = amountToPay
+                        lastPaymentAmount = finalRequest.valor.toDouble(),
+                        lastPaymentCurrency = finalRequest.moeda
                     )
                 }
             } catch (e: CancellationException) {

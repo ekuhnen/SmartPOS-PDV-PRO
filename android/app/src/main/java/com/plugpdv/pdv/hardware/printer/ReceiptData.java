@@ -24,7 +24,8 @@ public class ReceiptData {
     public ReceiptData() {}
 
     // Getters e Setters
-    public String getTitle() { return title != null ? title : "COMPROVANTE"; }
+    /** Callers should provide a localized title; the neutral fallback avoids a locale assumption. */
+    public String getTitle() { return title != null ? title : "PlugPDV"; }
     public void setTitle(String title) { this.title = title; }
 
     public String getMerchantName() { return merchantName != null ? merchantName : ""; }
@@ -42,10 +43,10 @@ public class ReceiptData {
     public String getTime() { return time != null ? time : ""; }
     public void setTime(String time) { this.time = time; }
 
-    public String getAmount() { return amount != null ? amount : "0,00"; }
+    public String getAmount() { return amount != null ? amount : "0"; }
     public void setAmount(String amount) { this.amount = amount; }
 
-    public String getCurrency() { return currency != null ? currency : "BRL"; }
+    public String getCurrency() { return currency != null ? currency : ""; }
     public void setCurrency(String currency) { this.currency = currency; }
 
     public String getCustomerName() { return customerName != null ? customerName : ""; }
@@ -63,9 +64,9 @@ public class ReceiptData {
     public String getPaymentMethod() { return paymentMethod != null ? paymentMethod : ""; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
 
-    public String getStatus() { return status != null ? status : "APROVADO"; }
+    public String getStatus() { return status != null ? status : ""; }
     public void setStatus(String status) { this.status = status; }
 
-    public String getServiceFeeAmount() { return serviceFeeAmount != null ? serviceFeeAmount : "0,00"; }
+    public String getServiceFeeAmount() { return serviceFeeAmount != null ? serviceFeeAmount : "0"; }
     public void setServiceFeeAmount(String serviceFeeAmount) { this.serviceFeeAmount = serviceFeeAmount; }
 }

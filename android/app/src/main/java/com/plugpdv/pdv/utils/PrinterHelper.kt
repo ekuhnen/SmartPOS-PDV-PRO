@@ -30,6 +30,15 @@ import com.google.zxing.qrcode.QRCodeWriter
 
 object PrinterHelper {
 
+    @JvmStatic
+    fun localizedPaymentMethod(context: Context, code: String): String = when (code.uppercase()) {
+        "DINHEIRO", "CASH" -> context.getString(R.string.cash)
+        "CREDITO", "CREDIT", "CREDIT_INSTALLMENTS" -> context.getString(R.string.credit)
+        "DEBITO", "DEBIT" -> context.getString(R.string.debit)
+        "PIX", "PIX_TRANSFERENCIA" -> context.getString(R.string.pix)
+        else -> code
+    }
+
     private fun showToast(context: Context, message: String, length: Int = Toast.LENGTH_SHORT) {
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(context, message, length).show()
@@ -150,13 +159,16 @@ object PrinterHelper {
                         
                         printer.setAlignment(0)
                         val copyStr = ctx.getString(R.string.print_copy_via, i, totalItemQty)
-                        printer.printText("${ctx.getString(R.string.print_qty_label)} $ticketQty ($copyStr)  ${ctx.getString(R.string.print_unit_price_label)} ${cm.format(unitPrice)}\n")
-                        printer.printText("${ctx.getString(R.string.print_subtotal_label)} ${cm.format(ticketSubtotal)}\n")
+                        val txUnitPrice = cm.fromBrl(unitPrice, currency)
+                        val unitFormatted = cm.formatExplicit(txUnitPrice, currency)
+                        val subtotalFormatted = cm.formatExplicit(cm.convert(ticketSubtotal), currency)
+                        printer.printText("${ctx.getString(R.string.print_qty_label)} $ticketQty ($copyStr)  ${ctx.getString(R.string.print_unit_price_label)} $unitFormatted\n")
+                        printer.printText("${ctx.getString(R.string.print_subtotal_label)} $subtotalFormatted\n")
 
                         // --- QR Code Detalhado ---
                         val safeOpName = (operatorName ?: "N/A").replace("-", " ")
                         val safeProdName = productName.replace("-", " ")
-                        val qrData = "$saleId-$dateStr-$safeOpName-$productId-$safeProdName-${ticketQty}-${cm.format(unitPrice)}-${cm.format(ticketSubtotal)}-via$i"
+                        val qrData = "$saleId-$dateStr-$safeOpName-$productId-$safeProdName-${ticketQty}-${unitFormatted}-${subtotalFormatted}-via$i"
                         
                         printer.setAlignment(1)
                         val qrBitmap = generateQRCodeBitmap(qrData, 160)
@@ -169,9 +181,9 @@ object PrinterHelper {
                         // --- Rodapé do Item ---
                         printer.setAlignment(0)
                         printer.setBold(true)
-                        printer.printText("${ctx.getString(R.string.print_total_purchase_label)} ${cm.format(total)} $currency\n")
+                        printer.printText("${ctx.getString(R.string.print_total_purchase_label)} ${cm.formatExplicit(total, currency)}\n")
                         printer.setBold(false)
-                        printer.printText("${ctx.getString(R.string.print_payment_method_label)} $paymentMethod\n")
+                        printer.printText("${ctx.getString(R.string.print_payment_method_label)} ${localizedPaymentMethod(ctx, paymentMethod)}\n")
                         
                         printer.setAlignment(1)
                         printer.printText("${ctx.getString(R.string.print_present_at_counter)}\n")
@@ -203,6 +215,8 @@ object PrinterHelper {
     ) {
         val ctx = getLocalizedContext(context)
         val cm = CurrencyManager.getInstance()
+        // ReportSummary fields ending in *Brl are explicitly BRL-denominated.
+        val baseCurrency = "BRL"
         val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
         val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
         val sb = StringBuilder()
@@ -228,10 +242,10 @@ object PrinterHelper {
             reportSummary.occupiedTables.forEach { item ->
                 val clientStr = if (!item.customerName.isNullOrEmpty()) " (${item.customerName})" else ""
                 sb.append(String.format("${ctx.getString(R.string.print_table_word)} %-3d%s\n", item.number, clientStr))
-                sb.append(String.format("  ${ctx.getString(R.string.print_pending_balance_label)} %s\n", cm.format(item.pendingAmountBrl)))
+                sb.append(String.format("  ${ctx.getString(R.string.print_pending_balance_label)} %s\n", cm.formatExplicit(item.pendingAmountBrl, baseCurrency)))
             }
             sb.append("--------------------------------\n")
-            sb.append(String.format("${ctx.getString(R.string.print_total_pending_label)} %s\n", cm.format(reportSummary.totalPendingTablesAmountBrl)))
+            sb.append(String.format("${ctx.getString(R.string.print_total_pending_label)} %s\n", cm.formatExplicit(reportSummary.totalPendingTablesAmountBrl, baseCurrency)))
         }
         sb.append("--------------------------------\n\n")
 
@@ -252,7 +266,7 @@ object PrinterHelper {
         // 3. RESUMO POR FORMA DE PAGAMENTO
         sb.append(ctx.getString(R.string.print_payment_summary_title)).append("\n")
         reportSummary.paymentSummaries.forEach { pm ->
-            sb.append(String.format("%-18s %13s\n", pm.name.take(18), cm.format(pm.total)))
+            sb.append(String.format("%-18s %13s\n", localizedPaymentMethod(ctx, pm.name).take(18), cm.formatExplicit(pm.total, baseCurrency)))
         }
         sb.append("--------------------------------\n\n")
 
@@ -263,7 +277,7 @@ object PrinterHelper {
             sb.append(String.format("%-12s %19s\n", currCode, cm.formatExplicit(cs.total, currCode)))
         }
         sb.append("================================\n")
-        sb.append(String.format("${ctx.getString(R.string.print_total_sales_label)} %s\n", cm.format(reportSummary.totalSalesAmountBrl)))
+        sb.append(String.format("${ctx.getString(R.string.print_total_sales_label)} %s\n", cm.formatExplicit(reportSummary.totalSalesAmountBrl, baseCurrency)))
         sb.append("================================\n\n\n\n")
 
         printReceipt(context, sb.toString())
@@ -293,7 +307,7 @@ object PrinterHelper {
             append("${ctx.getString(R.string.print_date_label)} $dateStr\n")
             if (!operatorName.isNullOrBlank()) append("${ctx.getString(R.string.print_issuer_label)} $operatorName\n")
             append("--------------------------------\n")
-            append("${ctx.getString(R.string.print_total_label)} ${cm.format(total)} $currency\n")
+            append("${ctx.getString(R.string.print_total_label)} ${cm.formatExplicit(total, currency)}\n")
             append("--------------------------------\n")
             append("${ctx.getString(R.string.print_issuance_in_process)}\n")
             append("${ctx.getString(R.string.print_invoice_email_notice)}\n")
@@ -307,17 +321,20 @@ object PrinterHelper {
      */
     @JvmStatic
     fun printRichReceipt(context: Context, data: ReceiptData) {
+        // Capture the localized resource context before asynchronous printer work starts.
+        val localizedContext = getLocalizedContext(context)
         val printer = HardwareFactory.getPrinter(context)
 
         when (printer) {
-            is KozenPrinter -> PrinterUtil8.printReceipt(context, data)
-            is GertecPrinter -> GeneralPrinterUtil.printPOIReceipt(context, data)
+            is KozenPrinter -> PrinterUtil8.printReceipt(localizedContext, data)
+            is GertecPrinter -> GeneralPrinterUtil.printPOIReceipt(localizedContext, data)
             else -> {
+                val ctx = getLocalizedContext(context)
                 val content = buildString {
-                    append("Mesa/Comanda: ${data.getTransactionId()}\n")
-                    append("Data: ${data.getDate()} ${data.getTime()}\n")
-                    append("Total: ${data.getCurrency()} ${data.getAmount()}\n")
-                    append("Pgto: ${data.getPaymentMethod()}\n")
+                    append("${ctx.getString(R.string.print_table_label)}: ${data.getTransactionId()}\n")
+                    append("${ctx.getString(R.string.print_date_label)}: ${data.getDate()} ${data.getTime()}\n")
+                    append("${ctx.getString(R.string.print_total_label)} ${data.getCurrency()} ${data.getAmount()}\n")
+                    append("${ctx.getString(R.string.print_payment_method_label)} ${localizedPaymentMethod(ctx, data.getPaymentMethod())}\n")
                 }
                 printReceipt(context, content)
             }

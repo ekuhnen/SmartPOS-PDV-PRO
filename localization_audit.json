@@ -1,9 +1,9 @@
 {
   "generator": "scripts/localization_audit.py",
   "generator_version": "1.1",
-  "generated_at": "2026-09-01T21:37:47Z",
-  "git_commit": "57305e139962",
-  "git_branch": "pilot-stab/02b-spanish-ui",
+  "generated_at": "2026-09-02T10:39:18Z",
+  "git_commit": "c89884305b68",
+  "git_branch": "pilot-stab/02c-currency-receipts",
   "audit_semantics": "PASS means the static audit completed and is internally consistent; defect severities feed STAB-02B/02C.",
   "limitations": [
     "Best-effort static discovery; physical/runtime walkthrough remains required.",
@@ -233,32 +233,32 @@
   },
   "resource_coverage": {
     "pt": {
-      "total_base_keys": 310,
-      "translated_keys": 310,
+      "total_base_keys": 312,
+      "translated_keys": 312,
       "missing_keys": 0,
       "extra_keys": 0,
       "coverage_pct": 100.0
     },
     "es": {
-      "total_base_keys": 310,
-      "translated_keys": 310,
+      "total_base_keys": 312,
+      "translated_keys": 312,
       "missing_keys": 0,
       "extra_keys": 0,
       "coverage_pct": 100.0
     },
     "en": {
-      "total_base_keys": 310,
+      "total_base_keys": 312,
       "translated_keys": 112,
-      "missing_keys": 198,
+      "missing_keys": 200,
       "extra_keys": 0,
-      "coverage_pct": 36.13
+      "coverage_pct": 35.9
     },
     "gn": {
-      "total_base_keys": 310,
+      "total_base_keys": 312,
       "translated_keys": 34,
-      "missing_keys": 276,
+      "missing_keys": 278,
       "extra_keys": 0,
-      "coverage_pct": 10.97
+      "coverage_pct": 10.9
     }
   },
   "missing_keys": {
@@ -271,6 +271,7 @@
       "add_to_table",
       "all_time",
       "already_completed",
+      "amount_placeholder",
       "amount_to_receive",
       "api_missing_comanda_id",
       "api_rejected_status",
@@ -448,6 +449,7 @@
       "transfer_table_error_code",
       "transfer_table_error_detail",
       "unit_price_label",
+      "unit_price_placeholder",
       "unnamed_product",
       "update_comanda",
       "update_table",
@@ -472,6 +474,7 @@
       "all_time",
       "already_completed",
       "amount_label",
+      "amount_placeholder",
       "amount_to_receive",
       "api_missing_comanda_id",
       "api_rejected_status",
@@ -725,6 +728,7 @@
       "transfer_table_error_code",
       "transfer_table_error_detail",
       "unit_price_label",
+      "unit_price_placeholder",
       "unnamed_product",
       "update_comanda",
       "update_table",
@@ -756,23 +760,23 @@
     "printer_kozen_label"
   ],
   "summary": {
-    "hardcoded_xml_count": 17,
+    "hardcoded_xml_count": 0,
     "hardcoded_kotlin_count": 10,
     "hardcoded_java_count": 0,
     "hardcoded_code_total": 10,
     "viewmodel_violations_count": 6,
     "printing_violations_count": 0,
-    "currency_violations_count": 17,
+    "currency_violations_count": 0,
     "locale_propagation_confirmed_count": 0,
     "review_required_count": 5,
-    "canonical_confirmed_findings_count": 501,
+    "canonical_confirmed_findings_count": 488,
     "severity_counts": {
-      "P0-L10N": 17,
+      "P0-L10N": 0,
       "P1-L10N": 10,
       "P2-L10N": 0,
-      "P3-L10N": 474
+      "P3-L10N": 478
     },
-    "severity_classified_total": 501
+    "severity_classified_total": 488
   },
   "findings": [
     {
@@ -900,244 +904,6 @@
       ],
       "classification": "CONFIRMED",
       "sink": "ViewModel state"
-    },
-    {
-      "id": "L10N-A552CB510932",
-      "path": "android/app/src/main/res/layout/activity_checkout.xml",
-      "line": 52,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-22BC8A24F188",
-      "path": "android/app/src/main/res/layout/activity_command_order.xml",
-      "line": 149,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C6BCBE997681",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 130,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-95686ADBBDA8",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 153,
-      "value": "Sangria: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-4F093B5D88EF",
-      "path": "android/app/src/main/res/layout/activity_table_order.xml",
-      "line": 157,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-CC48C4194420",
-      "path": "android/app/src/main/res/layout/fragment_venda_rapida.xml",
-      "line": 232,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-06D9E14A8E10",
-      "path": "android/app/src/main/res/layout/item_cart.xml",
-      "line": 40,
-      "value": "R$ 32,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-448EA3FD9371",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "Unit: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C0A7821D1B50",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-2BF9F2D96005",
-      "path": "android/app/src/main/res/layout/item_occupied_table_report.xml",
-      "line": 49,
-      "value": "R$ 150,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-B11A477C64F1",
-      "path": "android/app/src/main/res/layout/item_payment_method_tile.xml",
-      "line": 38,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C97FFFBCD4B4",
-      "path": "android/app/src/main/res/layout/item_product.xml",
-      "line": 77,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A3946E96E8A7",
-      "path": "android/app/src/main/res/layout/item_sale_history.xml",
-      "line": 59,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A7866235EBB1",
-      "path": "android/app/src/main/res/layout/item_table_order_item.xml",
-      "line": 37,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-3412801B92E6",
-      "path": "android/app/src/main/res/layout/layout_cart_sheet.xml",
-      "line": 55,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-18B4F37AD93C",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-28864CFE3412",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "Valor por pessoa: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
     },
     {
       "id": "L10N-00175E0A407C",
@@ -1632,6 +1398,18 @@
       "sink": "en"
     },
     {
+      "id": "L10N-27EE51487B75",
+      "path": "android/app/src/main/res/values-en/strings.xml",
+      "line": "resource",
+      "value": "unit_price_placeholder",
+      "severity": "P3-L10N",
+      "categories": [
+        "missing_translation"
+      ],
+      "classification": "CONFIRMED",
+      "sink": "en"
+    },
+    {
       "id": "L10N-295DE6E04E0A",
       "path": "android/app/src/main/res/values-en/strings.xml",
       "line": "resource",
@@ -2104,6 +1882,18 @@
       "path": "android/app/src/main/res/values-en/strings.xml",
       "line": "resource",
       "value": "dining_room",
+      "severity": "P3-L10N",
+      "categories": [
+        "missing_translation"
+      ],
+      "classification": "CONFIRMED",
+      "sink": "en"
+    },
+    {
+      "id": "L10N-5610E02B9118",
+      "path": "android/app/src/main/res/values-en/strings.xml",
+      "line": "resource",
+      "value": "amount_placeholder",
       "severity": "P3-L10N",
       "categories": [
         "missing_translation"
@@ -5340,6 +5130,18 @@
       "sink": "gn"
     },
     {
+      "id": "L10N-807C29FD3D5D",
+      "path": "android/app/src/main/res/values-gn/strings.xml",
+      "line": "resource",
+      "value": "unit_price_placeholder",
+      "severity": "P3-L10N",
+      "categories": [
+        "missing_translation"
+      ],
+      "classification": "CONFIRMED",
+      "sink": "gn"
+    },
+    {
       "id": "L10N-81C31605F2CC",
       "path": "android/app/src/main/res/values-gn/strings.xml",
       "line": "resource",
@@ -6540,6 +6342,18 @@
       "sink": "gn"
     },
     {
+      "id": "L10N-E88A2F26633E",
+      "path": "android/app/src/main/res/values-gn/strings.xml",
+      "line": "resource",
+      "value": "amount_placeholder",
+      "severity": "P3-L10N",
+      "categories": [
+        "missing_translation"
+      ],
+      "classification": "CONFIRMED",
+      "sink": "gn"
+    },
+    {
       "id": "L10N-EA7E2FC3DFD6",
       "path": "android/app/src/main/res/values-gn/strings.xml",
       "line": "resource",
@@ -6828,246 +6642,7 @@
       "sink": "gn"
     }
   ],
-  "hardcoded_xml": [
-    {
-      "id": "L10N-A552CB510932",
-      "path": "android/app/src/main/res/layout/activity_checkout.xml",
-      "line": 52,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-22BC8A24F188",
-      "path": "android/app/src/main/res/layout/activity_command_order.xml",
-      "line": 149,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C6BCBE997681",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 130,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-95686ADBBDA8",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 153,
-      "value": "Sangria: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-4F093B5D88EF",
-      "path": "android/app/src/main/res/layout/activity_table_order.xml",
-      "line": 157,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-CC48C4194420",
-      "path": "android/app/src/main/res/layout/fragment_venda_rapida.xml",
-      "line": 232,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-06D9E14A8E10",
-      "path": "android/app/src/main/res/layout/item_cart.xml",
-      "line": 40,
-      "value": "R$ 32,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-448EA3FD9371",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "Unit: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C0A7821D1B50",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-2BF9F2D96005",
-      "path": "android/app/src/main/res/layout/item_occupied_table_report.xml",
-      "line": 49,
-      "value": "R$ 150,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-B11A477C64F1",
-      "path": "android/app/src/main/res/layout/item_payment_method_tile.xml",
-      "line": 38,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C97FFFBCD4B4",
-      "path": "android/app/src/main/res/layout/item_product.xml",
-      "line": 77,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A3946E96E8A7",
-      "path": "android/app/src/main/res/layout/item_sale_history.xml",
-      "line": 59,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A7866235EBB1",
-      "path": "android/app/src/main/res/layout/item_table_order_item.xml",
-      "line": 37,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-3412801B92E6",
-      "path": "android/app/src/main/res/layout/layout_cart_sheet.xml",
-      "line": 55,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-18B4F37AD93C",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-28864CFE3412",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "Valor por pessoa: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    }
-  ],
+  "hardcoded_xml": [],
   "hardcoded_code": [
     {
       "id": "L10N-0BF8E2609A9F",
@@ -7277,246 +6852,7 @@
     }
   ],
   "printing_violations": [],
-  "currency_violations": [
-    {
-      "id": "L10N-A552CB510932",
-      "path": "android/app/src/main/res/layout/activity_checkout.xml",
-      "line": 52,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-22BC8A24F188",
-      "path": "android/app/src/main/res/layout/activity_command_order.xml",
-      "line": 149,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C6BCBE997681",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 130,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-95686ADBBDA8",
-      "path": "android/app/src/main/res/layout/activity_operator_dashboard.xml",
-      "line": 153,
-      "value": "Sangria: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-4F093B5D88EF",
-      "path": "android/app/src/main/res/layout/activity_table_order.xml",
-      "line": 157,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-CC48C4194420",
-      "path": "android/app/src/main/res/layout/fragment_venda_rapida.xml",
-      "line": 232,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-06D9E14A8E10",
-      "path": "android/app/src/main/res/layout/item_cart.xml",
-      "line": 40,
-      "value": "R$ 32,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-448EA3FD9371",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "Unit: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C0A7821D1B50",
-      "path": "android/app/src/main/res/layout/item_checkout_product.xml",
-      "line": 51,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-2BF9F2D96005",
-      "path": "android/app/src/main/res/layout/item_occupied_table_report.xml",
-      "line": 49,
-      "value": "R$ 150,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-B11A477C64F1",
-      "path": "android/app/src/main/res/layout/item_payment_method_tile.xml",
-      "line": 38,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-C97FFFBCD4B4",
-      "path": "android/app/src/main/res/layout/item_product.xml",
-      "line": 77,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A3946E96E8A7",
-      "path": "android/app/src/main/res/layout/item_sale_history.xml",
-      "line": 59,
-      "value": "R$ 89,90",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-A7866235EBB1",
-      "path": "android/app/src/main/res/layout/item_table_order_item.xml",
-      "line": 37,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-3412801B92E6",
-      "path": "android/app/src/main/res/layout/layout_cart_sheet.xml",
-      "line": 55,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-18B4F37AD93C",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    },
-    {
-      "id": "L10N-28864CFE3412",
-      "path": "android/app/src/main/res/layout/layout_table_checkout.xml",
-      "line": 94,
-      "value": "Valor por pessoa: R$ 0,00",
-      "severity": "P0-L10N",
-      "categories": [
-        "hardcoded_xml",
-        "currency"
-      ],
-      "classification": "CONFIRMED",
-      "attribute": "android:text",
-      "sink": "android:text"
-    }
-  ],
+  "currency_violations": [],
   "locale_propagation": {
     "findings": [
       {

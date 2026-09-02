@@ -56,7 +56,7 @@
                 android:id="@+id/tvSaleTotal"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="R$ 89,90"
+                android:text="@string/amount_placeholder"
                 android:textColor="@color/brand_orange"
                 android:textSize="16sp"
                 android:textStyle="bold" />

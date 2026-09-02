@@ -37,7 +37,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="R$ 32,90"
+                android:text="@string/amount_placeholder"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
         </LinearLayout>

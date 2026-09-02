@@ -108,7 +108,7 @@
     <string name="print_audit_report_title">RELATORIO DE AUDITORIA PDV</string>
     <string name="print_offline_mode_label">[MODO OFFLINE - REGISTRO LOCAL]</string>
     <string name="print_period_label">Periodo:</string>
-    <string name="print_emission_label">Emissao:</string>
+    <string name="print_emission_label">Emissão:</string>
     <string name="print_open_balances_title">SALDOS EM ABERTO (COBRANCA):</string>
     <string name="print_no_pending_tables">Nenhuma mesa com saldo pendente.</string>
     <string name="print_table_word">Mesa</string>
@@ -119,7 +119,7 @@
     <string name="print_payment_summary_title">RESUMO POR PAGAMENTO:</string>
     <string name="print_currency_summary_title">RESUMO POR MOEDA:</string>
     <string name="print_total_sales_label">TOTAL DE VENDAS:</string>
-    <string name="print_electronic_invoice_title">*** FATURA ELETRONICA ***</string>
+    <string name="print_electronic_invoice_title">*** FATURA ELETRÔNICA ***</string>
     <string name="print_simulated_doc">(DOCUMENTO SIMULADO)</string>
     <string name="print_number_label">Nº:</string>
     <string name="print_issuer_label">EMISSOR:</string>
@@ -138,7 +138,7 @@
     <string name="print_error">Erro na impressao: %s</string>
     <string name="print_not_detected">Impressora nao detectada ou nao suportada.</string>
     <string name="print_amount_label">VALOR:</string>
-    <string name="print_transaction_label">TRANSACAO:</string>
+    <string name="print_transaction_label">TRANSAÇÃO:</string>
     <string name="print_doc_label">DOC:</string>
     <string name="print_sn_label">S/N:</string>
     <string name="no_sale_mode_enabled">Nenhum modo de venda está habilitado para este usuário.</string>
@@ -226,7 +226,7 @@
     <string name="login_subtitle">Acesse sua conta</string><string name="view_items">VER ITENS</string><string name="processing_and_printing">Processando e imprimindo...</string><string name="order_items">Itens do pedido</string>
     <string name="comanda_module">Módulo de comanda</string><string name="scan_or_enter_comanda_code">Escaneie o QR Code ou digite o código</string><string name="comanda_code">Código da comanda</string><string name="search_comanda">BUSCAR COMANDA</string><string name="scan_qr_code">ESCANEAR QR CODE</string>
     <string name="search">Buscar</string><string name="cart_items">Itens do carrinho</string><string name="loading">Carregando...</string>
-    <string name="payment_method_title">Forma de pagamento</string><string name="amount_to_receive">Valor a receber</string>
+    <string name="payment_method_title">Forma de pagamento</string><string name="amount_to_receive">Valor a receber</string><string name="amount_placeholder">—</string><string name="unit_price_placeholder">Unitário: —</string>
     <string name="service_fee_change_title">Alterar taxa de serviço</string><string name="service_fee_default">Taxa padrão</string><string name="percentage">Percentual (%%)</string><string name="fixed_value">Valor fixo</string><string name="service_fee_exempt">Isentar (0%%)</string><string name="value_or_percentage">Valor/percentual</string><string name="apply">Aplicar</string>
     <string name="split">Dividir</string><string name="items">Itens</string><string name="number_of_people">Número de pessoas</string><string name="select_items">Selecione os itens</string><string name="finish_payment">Finalizar pagamento</string><string name="table_history">Histórico da mesa</string>
     <string name="payment_undetermined_title">Não conseguimos confirmar este pagamento</string><string name="payment_may_have_been_charged">O cartão pode ter sido cobrado. Consulte antes de tentar novamente.</string><string name="check_again">Consultar de novo</string><string name="register_pending">Registrar como pendente e resolver depois</string><string name="view_payment_receipt">Ver comprovante do app de pagamento</string>
