@@ -24,11 +24,13 @@ import android.content.ClipData
 import android.util.Log
 import com.plugpdv.pdv.service.DeviceGuardService
 import com.plugpdv.pdv.utils.DeviceIdProvider
+import com.plugpdv.pdv.utils.RememberedCredentialsStore
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class LoginActivity : BaseActivity() {
     private lateinit var binding: ActivityLoginBinding
+    private lateinit var rememberedCredentials: RememberedCredentialsStore
     private val viewModel: AuthViewModel by viewModels()
 
     @Inject
@@ -44,13 +46,16 @@ class LoginActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        rememberedCredentials = RememberedCredentialsStore(this)
+        // Remove the legacy plaintext password key from pre-03B4 installations.
+        getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().remove(Constants.PASSWORD).apply()
+        restoreRememberedCredentials()
 
-        var hasBlockReason = false
         // Exibir banner de bloqueio se vier de um force_logout
         intent.getStringExtra(KillSwitchManager.EXTRA_BLOCKED_REASON)?.let { reason ->
             showBlockedBanner(reason)
             KillSwitchManager.reset()
-            hasBlockReason = true
         }
 
         // Obtém o FCM Token apenas para fins de registro e log
@@ -76,14 +81,16 @@ class LoginActivity : BaseActivity() {
             viewModel.login(email, password)
         }
 
+        binding.cbRememberCredentials.setOnCheckedChangeListener { _, checked ->
+            if (!checked) rememberedCredentials.clear()
+        }
+
         binding.btnLangPt.setOnClickListener { changeLanguage("pt") }
         binding.btnLangEs.setOnClickListener { changeLanguage("es") }
 
         observeViewModel()
 
-        if (!hasBlockReason) {
-            checkAutoLogin()
-        }
+        // Remembered credentials prefill the form; authentication remains explicit.
     }
 
     private fun observeViewModel() {
@@ -109,7 +116,7 @@ class LoginActivity : BaseActivity() {
                     val editor = prefs.edit()
                         .putString(Constants.TOKEN, result.token)
                         .putString(Constants.EMAIL, email)
-                        .putString(Constants.PASSWORD, password)
+                        .remove(Constants.PASSWORD)
                         .putBoolean(Constants.HAS_MESA, result.hasMesa)
                         .putBoolean(Constants.HAS_VENDA_DIRETA, result.hasVendaDireta)
                         .putBoolean(Constants.HAS_COMANDA, result.hasComanda)
@@ -125,6 +132,12 @@ class LoginActivity : BaseActivity() {
                         editor.remove(Constants.SESSION_ID)
                     }
                     editor.apply()
+
+                    if (binding.cbRememberCredentials.isChecked) {
+                        rememberedCredentials.save(email, password)
+                    } else {
+                        rememberedCredentials.clear()
+                    }
                         
                     // Iniciar monitoramento Realtime (Kill-Switch)
                     deviceGuardService.start(this, result.userId, DeviceIdProvider.get(this))
@@ -161,42 +174,11 @@ class LoginActivity : BaseActivity() {
         recreate()
     }
 
-    private fun checkAutoLogin() {
-        val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        val email = prefs.getString(Constants.EMAIL, null)
-        val password = prefs.getString(Constants.PASSWORD, null)
-        val loginTime = prefs.getLong(Constants.LOGIN_TIME, 0L)
-
-        if (!email.isNullOrEmpty() && !password.isNullOrEmpty() && loginTime > 0L) {
-            val currentTime = System.currentTimeMillis()
-            val elapsed = currentTime - loginTime
-            val eightHoursMs = 8 * 60 * 60 * 1000L
-
-            if (elapsed in 0..eightHoursMs) {
-                binding.etEmail.setText(email)
-                binding.etPassword.setText(password)
-                viewModel.login(email, password)
-            } else {
-                clearSavedCredentials()
-            }
-        }
-    }
-
-    private fun clearSavedCredentials() {
-        val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .remove(Constants.TOKEN)
-            .remove(Constants.EMAIL)
-            .remove(Constants.PASSWORD)
-            .remove(Constants.SESSION_ID)
-            .remove(Constants.LOGIN_TIME)
-            .remove(Constants.USER_ID)
-            .remove(Constants.HAS_MESA)
-            .remove(Constants.HAS_VENDA_DIRETA)
-            .remove(Constants.HAS_COMANDA)
-            .apply()
-
-        com.plugpdv.pdv.utils.CashierAuthorityStore.clearAuthority(this)
+    private fun restoreRememberedCredentials() {
+        val credentials = rememberedCredentials.load() ?: return
+        binding.etEmail.setText(credentials.login)
+        binding.etPassword.setText(credentials.password)
+        binding.cbRememberCredentials.isChecked = true
     }
 
     private fun showBlockedBanner(reason: String) {

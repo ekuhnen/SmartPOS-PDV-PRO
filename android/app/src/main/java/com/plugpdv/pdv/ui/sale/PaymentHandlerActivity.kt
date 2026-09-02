@@ -162,7 +162,6 @@ class PaymentHandlerActivity : BaseActivity() {
 
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
-        val password = prefs.getString(Constants.PASSWORD, "") ?: ""
 
         var callbackUri = "$CALLBACK_SCHEME://$CALLBACK_HOST"
         if (tableNumber != -1) {
@@ -183,9 +182,8 @@ class PaymentHandlerActivity : BaseActivity() {
             .appendQueryParameter("request_id", existingAttempt.reference)
             .appendQueryParameter("callback_uri", callbackUri)
 
-        if (email.isNotEmpty() && password.isNotEmpty()) {
+        if (email.isNotEmpty()) {
             uriBuilder.appendQueryParameter("email", email)
-            uriBuilder.appendQueryParameter("password", password)
         }
 
         val paymentUri = uriBuilder.build()
@@ -251,7 +249,6 @@ class PaymentHandlerActivity : BaseActivity() {
 
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
-        val password = prefs.getString(Constants.PASSWORD, "") ?: ""
 
         var callbackUri = "$CALLBACK_SCHEME://$CALLBACK_HOST"
         if (tableNumber != -1) {
@@ -272,9 +269,8 @@ class PaymentHandlerActivity : BaseActivity() {
             .appendQueryParameter("request_id", requestId)
             .appendQueryParameter("callback_uri", callbackUri)
 
-        if (email.isNotEmpty() && password.isNotEmpty()) {
+        if (email.isNotEmpty()) {
             uriBuilder.appendQueryParameter("email", email)
-            uriBuilder.appendQueryParameter("password", password)
         }
 
         val paymentUri = uriBuilder.build()

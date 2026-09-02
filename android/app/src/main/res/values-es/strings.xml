@@ -5,6 +5,7 @@
     <string name="email">Correo electrónico</string>
     <string name="password">Contraseña</string>
     <string name="fill_all_fields">Complete todos los campos</string>
+    <string name="remember_credentials">Mantener conectado</string>
     <string name="welcome">Bienvenido, %s</string>
     <string name="invalid_credentials">Error: Credenciales inválidas</string>
     <string name="network_error">Error de red: %s</string>
