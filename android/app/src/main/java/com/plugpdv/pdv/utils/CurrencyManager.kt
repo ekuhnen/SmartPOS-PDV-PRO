@@ -159,6 +159,21 @@ class CurrencyManager private constructor() {
     }
 
     /**
+     * Quotes an amount that is already expressed in the authoritative base currency
+     * for display/payment in a transaction currency.
+     */
+    fun quoteBaseAmount(
+        baseAmount: java.math.BigDecimal,
+        baseCurrency: String,
+        transactionCurrency: String
+    ): Result<MoneyQuote> = convertMoneyExact(
+        amount = baseAmount,
+        fromCurrency = baseCurrency,
+        toCurrency = transactionCurrency,
+        baseCurrency = baseCurrency
+    )
+
+    /**
      * Converte valor financeiro com precisão estrita BigDecimal, fail-closed e normalização.
      */
     fun convertMoneyExact(
@@ -246,6 +261,7 @@ class CurrencyManager private constructor() {
         return toBrl(value, fromCurrency)
     }
 
+    @Deprecated("Input must be BRL; use explicit conversion and formatExplicit for financial values")
     fun format(valueInBrl: Double): String {
         return formatExplicit(convert(valueInBrl), selectedCurrency)
     }

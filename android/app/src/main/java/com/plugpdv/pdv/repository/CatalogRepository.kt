@@ -27,7 +27,9 @@ class CatalogRepository @Inject constructor(
             val cm = com.plugpdv.pdv.utils.CurrencyManager.getInstance()
             val productsList = catalogs.flatMap { it.products ?: emptyList() }.map { p ->
                 val currency = if (!p.price_currency.isNullOrEmpty()) p.price_currency!! else cm.getBaseCurrency()
+                // Product prices are normalized to BRL for the local catalog; keep metadata consistent.
                 p.selling_price = cm.toBrl(p.selling_price ?: 0.0, currency)
+                p.price_currency = "BRL"
                 
                 if (!p.group?.name.isNullOrEmpty() && p.category.isNullOrEmpty()) {
                     p.category = p.group?.name

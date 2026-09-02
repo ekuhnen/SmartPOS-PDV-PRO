@@ -220,7 +220,8 @@ class TableOrderViewModel @Inject constructor(
                 val product = Product(
                     id = pId,
                     name = productName,
-                    selling_price = itemPrice
+                    selling_price = itemPrice,
+                    price_currency = snapshot.baseCurrency
                 )
                 targetTable.items.add(TableItem(product = product, quantity = serverQty).apply {
                     id = firstDto.id

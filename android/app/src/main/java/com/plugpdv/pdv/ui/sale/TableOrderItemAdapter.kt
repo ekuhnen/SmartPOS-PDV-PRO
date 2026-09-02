@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.plugpdv.pdv.R
 import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.utils.CurrencyManager
+import java.math.BigDecimal
 
 class TableOrderItemAdapter(
     private var items: List<TableItem>,
@@ -43,7 +44,10 @@ class TableOrderItemAdapter(
         fun bind(item: TableItem, listener: (TableItem) -> Unit) {
             tvName.text = item.product.name ?: itemView.context.getString(R.string.unnamed_product)
             val price = item.product.selling_price
-            tvPrice.text = if (price != null) CurrencyManager.getInstance().format(price * item.quantity.toDouble()) else "UNKNOWN"
+            val currency = item.product.price_currency
+            tvPrice.text = if (price != null && !currency.isNullOrBlank()) {
+                formatAmount(price * item.quantity.toDouble(), currency)
+            } else "UNKNOWN"
             
             if (item.observation.isNullOrEmpty()) {
                 tvObservation.visibility = View.GONE
@@ -74,6 +78,20 @@ class TableOrderItemAdapter(
                 itemView.setOnClickListener(null)
             } else {
                 itemView.setOnClickListener { listener(item) }
+            }
+        }
+
+        private fun formatAmount(amount: Double, sourceCurrency: String): String {
+            val cm = CurrencyManager.getInstance()
+            val selected = cm.selectedCurrency
+            if (sourceCurrency.equals(selected, ignoreCase = true)) {
+                return cm.formatExplicit(amount, sourceCurrency)
+            }
+            val quote = cm.quoteBaseAmount(BigDecimal.valueOf(amount), sourceCurrency, selected).getOrNull()
+            return if (quote != null) {
+                cm.formatExplicit(quote.transactionAmount.toDouble(), quote.transactionCurrency)
+            } else {
+                cm.formatExplicit(amount, sourceCurrency)
             }
         }
     }

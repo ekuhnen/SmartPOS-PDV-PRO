@@ -91,7 +91,12 @@ class CommandViewModel @Inject constructor(
                     val fakeProduct = Product(
                         id = pId,
                         name = productName,
-                        selling_price = productPrice ?: 0.0
+                        selling_price = productPrice ?: 0.0,
+                        price_currency = if (localProduct != null) {
+                            localProduct.price_currency ?: "BRL"
+                        } else {
+                            "BRL"
+                        }
                     )
                     uiItems.add(TableItem(product = fakeProduct, quantity = serverQty).apply {
                         id = firstDto.id

@@ -908,10 +908,10 @@ class CheckoutViewModel @Inject constructor(
                 MoneyDecimal.of(_uiState.value.finalToPay)
             }
 
-            cm.quoteTransactionAmount(
-                amountToPayBigDecimal,
-                currentCurrency,
-                baseCurrency
+            cm.quoteBaseAmount(
+                baseAmount = amountToPayBigDecimal,
+                baseCurrency = baseCurrency,
+                transactionCurrency = currentCurrency
             ).getOrElse {
                 throw IllegalStateException(it.message ?: "FX_RATE_MISSING")
             }

@@ -25,6 +25,7 @@ data class Table(
     }
 
     fun getPendingBalance(): Double {
+        // Legacy local fallback only; authoritative open-comanda balances come from ComandaSnapshot.
         var itemsTotal = 0.0
         items.filter { !it.removed }.forEach {
             itemsTotal += (it.product.selling_price ?: 0.0) * it.quantity
@@ -33,6 +34,7 @@ data class Table(
     }
 
     fun getChangeAmount(): Double {
+        // Legacy local fallback only; do not use when an accounting snapshot is available.
         var itemsTotal = 0.0
         items.filter { !it.removed }.forEach {
             itemsTotal += (it.product.selling_price ?: 0.0) * it.quantity
@@ -41,6 +43,7 @@ data class Table(
     }
 
     fun calculateTotal(): Double {
+        // Legacy derived display fallback; never supersedes an authoritative accounting summary.
         total = items.filter { !it.removed }.sumOf { (it.product.selling_price ?: 0.0) * it.quantity }
         return total
     }

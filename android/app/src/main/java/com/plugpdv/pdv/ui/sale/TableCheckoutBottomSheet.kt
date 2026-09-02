@@ -183,7 +183,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 if (selectedCurrency.equals(baseCurrency, ignoreCase = true)) {
                     return cm.formatExplicit(amount.toDouble(), baseCurrency)
                 }
-                val quote = cm.quoteTransactionAmount(amount, selectedCurrency, baseCurrency).getOrNull()
+                val quote = cm.quoteBaseAmount(amount, baseCurrency, selectedCurrency).getOrNull()
                 return if (quote != null) {
                     cm.formatExplicit(quote.transactionAmount.toDouble(), selectedCurrency)
                 } else {
@@ -194,7 +194,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             b.tvComandaTotal.text = formatMoney(totalDecimal)
             b.tvTotalPaid.text = formatMoney(paidDecimal)
             b.tvPendingBalance.text = formatMoney(balanceDecimal)
-            b.tvTotalToPay.text = cm.format(state.finalToPay)
+            b.tvTotalToPay.text = formatBaseAmount(state.finalToPay, baseCurrency)
         }
 
         if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
@@ -265,7 +265,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.layoutItems.visibility = if (state.splitMode == 2) View.VISIBLE else View.GONE
         
         if (state.splitMode == 1) {
-            b.tvPerPersonValue.text = getString(R.string.value_per_person, cm.format(state.currentToPay))
+            b.tvPerPersonValue.text = getString(R.string.value_per_person, formatBaseAmount(state.currentToPay, baseCurrency))
         }
 
         if (state.splitMode == 2) {
@@ -321,13 +321,13 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val cm = CurrencyManager.getInstance()
         
         val baseToPay = state.currentToPay.coerceAtLeast(0.0)
-        addBreakdownRow(getString(R.string.subtotal), cm.format(baseToPay))
+        addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(baseToPay, state.baseCurrency ?: cm.getBaseCurrency()))
         
         val currentCurrency = cm.selectedCurrency
         state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach { tax ->
             val calculatedTax = baseToPay * (tax.percentage / 100.0)
             val label = "${tax.name} (${String.format("%.1f%%", tax.percentage)})"
-            addBreakdownRow(label, cm.format(calculatedTax))
+            addBreakdownRow(label, formatBaseAmount(calculatedTax, state.baseCurrency ?: cm.getBaseCurrency()))
         }
 
         // Add Service Fee
@@ -335,12 +335,26 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
         if (canOverride || sfAmount > 0) {
-            val sfRowBinding = addBreakdownRow(getString(R.string.service_fee_label_ui), cm.format(sfAmount))
+            val sfRowBinding = addBreakdownRow(getString(R.string.service_fee_label_ui), formatBaseAmount(sfAmount, state.baseCurrency ?: cm.getBaseCurrency()))
             if (canOverride) {
                 sfRowBinding.root.setOnClickListener { showServiceFeeOverrideDialog() }
                 sfRowBinding.tvLabel.setText(R.string.service_fee_change)
                 sfRowBinding.tvLabel.setTextColor(requireContext().getColor(com.google.android.material.R.color.design_default_color_primary))
             }
+        }
+    }
+
+    private fun formatBaseAmount(amount: Double, baseCurrency: String): String {
+        val cm = CurrencyManager.getInstance()
+        val selected = cm.selectedCurrency
+        if (baseCurrency.equals(selected, ignoreCase = true)) {
+            return cm.formatExplicit(amount, baseCurrency)
+        }
+        val quote = cm.quoteBaseAmount(BigDecimal.valueOf(amount), baseCurrency, selected).getOrNull()
+        return if (quote != null) {
+            cm.formatExplicit(quote.transactionAmount.toDouble(), quote.transactionCurrency)
+        } else {
+            cm.formatExplicit(amount, baseCurrency)
         }
     }
 
@@ -514,8 +528,13 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             holder.binding.cbItemSelected.isChecked = tip.selected
             holder.binding.tvItemName.text = holder.itemView.context.getString(R.string.product_with_quantity, tip.item.product.name ?: holder.itemView.context.getString(R.string.unnamed_product), tip.selectedQuantity)
             val price = tip.item.product.selling_price
-            holder.binding.tvItemValue.text = if (price != null) CurrencyManager.getInstance().format(price) else "UNKNOWN"
-            holder.binding.tvItemSubtotal.text = if (price != null) CurrencyManager.getInstance().format(price * tip.selectedQuantity) else "UNKNOWN"
+            val itemCurrency = tip.item.product.price_currency
+            holder.binding.tvItemValue.text = if (price != null && !itemCurrency.isNullOrBlank()) {
+                formatBaseAmount(price, itemCurrency)
+            } else "UNKNOWN"
+            holder.binding.tvItemSubtotal.text = if (price != null && !itemCurrency.isNullOrBlank()) {
+                formatBaseAmount(price * tip.selectedQuantity, itemCurrency)
+            } else "UNKNOWN"
             
             holder.itemView.setOnClickListener {
                 tip.selected = !tip.selected
