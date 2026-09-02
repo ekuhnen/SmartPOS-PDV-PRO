@@ -248,6 +248,18 @@
     <string name="load_comanda_error">Erro ao carregar comanda</string><string name="api_rejected_status">API recusou (Status %1$d).</string><string name="connection_error_detail">Erro de conexão: %1$s</string><string name="sync_item_error_status">Erro ao sincronizar item (Status: %1$d)</string><string name="add_item_network_error">Erro de rede ao adicionar item</string><string name="remove_item_error_status">Erro ao remover item (Status: %1$d)</string><string name="remove_item_network_error">Erro de rede ao remover item</string>
     <string name="remove_item">Remover item</string>
     <string name="service_fee_label_ui">Taxa de serviço</string>
+    <string name="view_calculation">Ver cálculo</string>
+    <string name="base_price">Preço base</string>
+    <string name="applied_rate">Cotação aplicada</string>
+    <string name="transaction_currency">Moeda da transação</string>
+    <string name="converted_subtotal">Subtotal convertido</string>
+    <string name="transaction_taxes">Impostos da transação</string>
+    <string name="no_exchange_applied">Nenhum câmbio aplicado</string>
+    <string name="calculation_unit_price_label">Preço unitário</string>
+    <string name="quantity_label">Quantidade</string>
+    <string name="base_subtotal">Subtotal base</string>
+    <string name="tax_none">Nenhum</string>
+    <string name="total_to_pay_label">Total a pagar</string>
     <string name="product_with_quantity">%1$s (x%2$d)</string>
     <string name="zero_items">0 itens</string>
     <string name="plug_pay" translatable="false">Plug Pay</string>

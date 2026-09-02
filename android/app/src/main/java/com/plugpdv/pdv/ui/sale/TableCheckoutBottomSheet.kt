@@ -40,6 +40,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private val viewModel: CheckoutViewModel by viewModels()
 
     private var pendingCheckoutOperationId: String? = null
+    private var latestState: CheckoutUiState? = null
 
     private val paymentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
@@ -141,6 +142,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         })
 
         b.btnPayLink.setOnClickListener { finalizePayment() }
+        b.btnCalculationDetails.setOnClickListener { latestState?.let { showCalculationDetails(it) } }
         b.btnPrinter.setOnClickListener { printTableReceipt() }
     }
 
@@ -156,6 +158,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private fun updateUI(state: CheckoutUiState) {
         val b = binding ?: return
+        latestState = state
         val cm = CurrencyManager.getInstance()
         val digits = state.baseMinorUnitDigits
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
@@ -324,8 +327,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(baseToPay, state.baseCurrency ?: cm.getBaseCurrency()))
         
         val currentCurrency = cm.selectedCurrency
-        state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach { tax ->
-            val calculatedTax = baseToPay * (tax.percentage / 100.0)
+        applicableTaxAmounts(state).forEach { (tax, calculatedTax) ->
             val label = "${tax.name} (${String.format("%.1f%%", tax.percentage)})"
             addBreakdownRow(label, formatBaseAmount(calculatedTax, state.baseCurrency ?: cm.getBaseCurrency()))
         }
@@ -342,6 +344,53 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 sfRowBinding.tvLabel.setTextColor(requireContext().getColor(com.google.android.material.R.color.design_default_color_primary))
             }
         }
+    }
+
+    private fun applicableTaxAmounts(state: CheckoutUiState): List<Pair<com.plugpdv.pdv.database.TaxEntity, Double>> {
+        val currency = CurrencyManager.getInstance().selectedCurrency
+        val baseToPay = state.currentToPay.coerceAtLeast(0.0)
+        return state.activeTaxes
+            .filter { it.active && it.currency.equals(currency, ignoreCase = true) }
+            .map { it to baseToPay * (it.percentage / 100.0) }
+    }
+
+    private fun showCalculationDetails(state: CheckoutUiState) {
+        val ctx = context ?: return
+        val cm = CurrencyManager.getInstance()
+        val baseCurrency = state.baseCurrency ?: cm.getBaseCurrency()
+        val selected = cm.selectedCurrency
+        val baseSubtotal = cm.formatExplicit(state.currentToPay, baseCurrency)
+        val lines = StringBuilder()
+            .append(getString(R.string.base_subtotal)).append(": ").append(baseSubtotal).append("\n")
+            .append(getString(R.string.transaction_currency)).append(": ").append(selected).append("\n")
+        if (baseCurrency.equals(selected, ignoreCase = true)) {
+            lines.append(getString(R.string.no_exchange_applied)).append("\n")
+        } else {
+            val quote = cm.quoteBaseAmount(BigDecimal.valueOf(state.currentToPay), baseCurrency, selected).getOrNull()
+            if (quote != null) {
+                lines.append(getString(R.string.applied_rate)).append(": 1 ").append(baseCurrency)
+                    .append(" = ").append(cm.formatExplicit(quote.fxRate.toDouble(), selected)).append("\n")
+                lines.append(getString(R.string.converted_subtotal)).append(": ")
+                    .append(cm.formatExplicit(quote.transactionAmount.toDouble(), selected)).append("\n")
+            }
+        }
+        lines.append(getString(R.string.transaction_taxes)).append(":\n")
+        val taxes = applicableTaxAmounts(state)
+        if (taxes.isEmpty()) {
+            lines.append(getString(R.string.tax_none)).append("\n")
+        } else {
+            taxes.forEach { (tax, amount) ->
+                lines.append(tax.name).append(" (").append(String.format("%.1f%%", tax.percentage)).append("): ")
+                    .append(formatBaseAmount(amount, baseCurrency)).append("\n")
+            }
+        }
+        lines.append(getString(R.string.total_to_pay_label)).append(": ")
+            .append(formatBaseAmount(state.finalToPay, baseCurrency))
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle(getString(R.string.view_calculation))
+            .setMessage(lines.toString())
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun formatBaseAmount(amount: Double, baseCurrency: String): String {

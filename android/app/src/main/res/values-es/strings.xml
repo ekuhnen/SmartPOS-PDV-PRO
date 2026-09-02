@@ -192,6 +192,18 @@
     <string name="load_comanda_error">Error al cargar la comanda</string><string name="api_rejected_status">La API rechazó la operación (Estado %1$d).</string><string name="connection_error_detail">Error de conexión: %1$s</string><string name="sync_item_error_status">Error al sincronizar el ítem (Estado: %1$d)</string><string name="add_item_network_error">Error de red al agregar el ítem</string><string name="remove_item_error_status">Error al eliminar el ítem (Estado: %1$d)</string><string name="remove_item_network_error">Error de red al eliminar el ítem</string>
     <string name="remove_item">Eliminar ítem</string>
     <string name="service_fee_label_ui">Cargo por servicio</string>
+    <string name="view_calculation">Ver cálculo</string>
+    <string name="base_price">Precio base</string>
+    <string name="applied_rate">Cotización aplicada</string>
+    <string name="transaction_currency">Moneda de la transacción</string>
+    <string name="converted_subtotal">Subtotal convertido</string>
+    <string name="transaction_taxes">Impuestos de la transacción</string>
+    <string name="no_exchange_applied">Sin cambio aplicado</string>
+    <string name="calculation_unit_price_label">Precio unitario</string>
+    <string name="quantity_label">Cantidad</string>
+    <string name="base_subtotal">Subtotal base</string>
+    <string name="tax_none">Ninguno</string>
+    <string name="total_to_pay_label">Total a pagar</string>
     <string name="product_with_quantity">%1$s (x%2$d)</string>
     <string name="zero_items">0 ítems</string>
 </resources>

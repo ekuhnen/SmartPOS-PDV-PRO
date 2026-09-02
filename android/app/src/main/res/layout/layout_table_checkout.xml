@@ -256,6 +256,14 @@
                         android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="@color/primary" />
+                    <ImageButton
+                        android:id="@+id/btnCalculationDetails"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:src="@drawable/ic_info_modern"
+                        android:contentDescription="@string/view_calculation" />
                 </LinearLayout>
             </LinearLayout>
 

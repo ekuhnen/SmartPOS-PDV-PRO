@@ -4,6 +4,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.plugpdv.pdv.R
@@ -39,6 +40,7 @@ class TableOrderItemAdapter(
         private val tvPrice: TextView = itemView.findViewById(R.id.tvPrice)
         private val tvObservation: TextView = itemView.findViewById(R.id.tvObservation)
         private val tvStatus: TextView = itemView.findViewById(R.id.tvStatus)
+        private val btnPriceDetails: android.widget.ImageButton = itemView.findViewById(R.id.btnPriceDetails)
         private val ivPaidIndicator: android.widget.ImageView = itemView.findViewById(R.id.ivPaidIndicator)
 
         fun bind(item: TableItem, listener: (TableItem) -> Unit) {
@@ -48,6 +50,9 @@ class TableOrderItemAdapter(
             tvPrice.text = if (price != null && !currency.isNullOrBlank()) {
                 formatAmount(price * item.quantity.toDouble(), currency)
             } else "UNKNOWN"
+            btnPriceDetails.visibility = if (price != null && !currency.isNullOrBlank() &&
+                !currency.equals(CurrencyManager.getInstance().selectedCurrency, ignoreCase = true)) View.VISIBLE else View.GONE
+            btnPriceDetails.setOnClickListener { showPriceDetails(item, price, currency) }
             
             if (item.observation.isNullOrEmpty()) {
                 tvObservation.visibility = View.GONE
@@ -93,6 +98,34 @@ class TableOrderItemAdapter(
             } else {
                 cm.formatExplicit(amount, sourceCurrency)
             }
+        }
+
+        private fun showPriceDetails(item: TableItem, price: Double?, sourceCurrency: String?) {
+            if (price == null || sourceCurrency.isNullOrBlank()) return
+            val cm = CurrencyManager.getInstance()
+            val selected = cm.selectedCurrency
+            val unitBase = cm.formatExplicit(price, sourceCurrency)
+            val baseSubtotal = cm.formatExplicit(price * item.quantity, sourceCurrency)
+            val message = if (sourceCurrency.equals(selected, ignoreCase = true)) {
+                itemView.context.getString(R.string.base_price) + ": " + unitBase + "\n" +
+                    itemView.context.getString(R.string.transaction_currency) + ": " + selected + "\n" +
+                    itemView.context.getString(R.string.no_exchange_applied)
+            } else {
+                val quote = cm.quoteBaseAmount(BigDecimal.valueOf(price), sourceCurrency, selected).getOrNull()
+                val subtotalQuote = cm.quoteBaseAmount(BigDecimal.valueOf(price * item.quantity), sourceCurrency, selected).getOrNull()
+                if (quote == null || subtotalQuote == null) return
+                itemView.context.getString(R.string.base_price) + ": " + unitBase + "\n" +
+                    itemView.context.getString(R.string.calculation_unit_price_label) + ": " + unitBase + "\n" +
+                    itemView.context.getString(R.string.quantity_label) + ": " + item.quantity + "\n" +
+                    itemView.context.getString(R.string.base_subtotal) + ": " + baseSubtotal + "\n" +
+                    itemView.context.getString(R.string.applied_rate) + ": 1 $sourceCurrency = " + cm.formatExplicit(quote.fxRate.toDouble(), selected) + "\n" +
+                    itemView.context.getString(R.string.converted_subtotal) + ": " + cm.formatExplicit(subtotalQuote.transactionAmount.toDouble(), selected)
+            }
+            AlertDialog.Builder(itemView.context)
+                .setTitle(item.product.name ?: itemView.context.getString(R.string.product))
+                .setMessage(message)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
         }
     }
 }

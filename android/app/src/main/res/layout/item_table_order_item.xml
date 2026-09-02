@@ -48,6 +48,16 @@
                 android:textColor="@color/text_secondary"
                 android:textStyle="bold"
                 android:textSize="13sp" />
+
+            <ImageButton
+                android:id="@+id/btnPriceDetails"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:padding="12dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_info_modern"
+                android:contentDescription="@string/view_calculation"
+                android:visibility="gone" />
                 
             <ImageView
                 android:id="@+id/ivPaidIndicator"
