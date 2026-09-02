@@ -129,6 +129,11 @@
     <string name="print_invoice_email_notice">Voce recebera o documento no e-mail cadastrado.</string>
     <string name="print_customer_label">CLIENTE:</string>
     <string name="print_table_label">MESA:</string>
+    <string name="print_items_label">ITENS DA COMANDA</string>
+    <string name="print_charge_items_label">ITENS DESTA COBRANÇA</string>
+    <string name="print_split_label">DIVISÃO POR PESSOAS</string>
+    <string name="print_tax_label">IMPOSTOS</string>
+    <string name="select_item_for_print">Selecione pelo menos um item para imprimir esta cobrança.</string>
     <string name="print_paid_amount_label">VALOR PAGO:</string>
     <string name="print_change_label">TROCO:</string>
     <string name="print_service_fee_label">TAXA DE SERVICO:</string>

@@ -35,6 +35,7 @@ import java.util.Locale
 @AndroidEntryPoint
 class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private var token: String? = null
+    private var tableNumber: Int = 0
     private var binding: LayoutTableCheckoutBinding? = null
     
     private val viewModel: CheckoutViewModel by viewModels()
@@ -63,7 +64,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val tableId = arguments?.getString("TABLE_ID")
-        val tableNumber = arguments?.getInt("TABLE_NUMBER") ?: 0
+        tableNumber = arguments?.getInt("TABLE_NUMBER") ?: 0
         val sectorId = arguments?.getString("SECTOR_ID")
         token = arguments?.getString("TOKEN")
         
@@ -487,11 +488,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun printTableReceipt() {
         val ctx = context?.let { LanguageManager.updateResources(it, LanguageManager.getLanguage(it)) } ?: return
         val state = viewModel.uiState.value
-        val sb = StringBuilder()
         val cm = CurrencyManager.getInstance()
 
-        sb.append(ctx.getString(R.string.print_table_label)).append("\n")
-        sb.append("--------------------------------\n")
+        if (state.splitMode == 2 && state.currentToPay <= 0.0) {
+            Toast.makeText(ctx, getString(R.string.select_item_for_print), Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val digits = state.baseMinorUnitDigits ?: return
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
@@ -502,12 +504,27 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits)
         } ?: BigDecimal.ZERO
 
-        sb.append(ctx.getString(R.string.print_total_label)).append(" ").append(cm.formatExplicit(totalDecimal.toDouble(), baseCurrency)).append("\n")
-        sb.append(ctx.getString(R.string.remaining_balance)).append(": ").append(cm.formatExplicit(balanceDecimal.toDouble(), baseCurrency)).append("\n")
-        sb.append("--------------------------------\n")
-
-        PrinterHelper.printReceipt(requireContext(), sb.toString())
+        val printModel = CheckoutPrintModelFactory.from(
+            state = state,
+            tableNumber = tableNumber,
+            transactionCurrency = cm.selectedCurrency,
+            lines = viewModel.currentChargeItems().map { (item, quantity) -> CheckoutPrintLine(item, quantity) },
+            comandaTotal = totalDecimal.toDouble(),
+            paid = paidDecimal(state, digits),
+            balance = balanceDecimal.toDouble()
+        )
+        val money: (Double) -> String = { formatBaseAmount(it, baseCurrency) }
+        val renderedLines = printModel.lines.map { line ->
+            val unit = line.item.product.selling_price ?: 0.0
+            line.copy(unitDisplay = money(unit), subtotalDisplay = money(unit * line.selectedQuantity))
+        }
+        val renderedModel = printModel.copy(lines = renderedLines)
+        val sb = CheckoutReceiptRenderer.render(ctx, renderedModel, money)
+        PrinterHelper.printReceipt(requireContext(), sb)
     }
+
+    private fun paidDecimal(state: CheckoutUiState, digits: Int): Double =
+        state.paidBaseMinor?.let { ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits).toDouble() } ?: 0.0
 
     private fun printPaymentReceipt(method: String, amount: Double, authoritativeCurrency: String) {
         val ctx = context ?: return

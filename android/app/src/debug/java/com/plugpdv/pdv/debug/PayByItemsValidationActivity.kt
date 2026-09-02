@@ -10,6 +10,11 @@ import com.plugpdv.pdv.R
 import com.plugpdv.pdv.models.ExchangeResponse
 import com.plugpdv.pdv.models.TableItemPayment
 import com.plugpdv.pdv.ui.sale.PayByItemsAdapter
+import com.plugpdv.pdv.ui.sale.CheckoutPrintLine
+import com.plugpdv.pdv.ui.sale.CheckoutPrintModelFactory
+import com.plugpdv.pdv.ui.sale.CheckoutReceiptRenderer
+import com.plugpdv.pdv.ui.sale.CheckoutUiState
+import com.plugpdv.pdv.utils.PrinterHelper
 import com.plugpdv.pdv.utils.ComandaItemHydrator
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.MoneyDecimal
@@ -22,6 +27,7 @@ class PayByItemsValidationActivity : Activity() {
     private lateinit var rows: MutableList<TableItemPayment>
     private lateinit var adapter: PayByItemsAdapter
     private lateinit var summary: TextView
+    private lateinit var printCount: TextView
     private lateinit var mode: TextView
     private var lang: String = "pt"
 
@@ -61,8 +67,31 @@ class PayByItemsValidationActivity : Activity() {
         adapter = PayByItemsAdapter(rows, { p, selected -> rows[p].selected = selected; rows[p].selectedQuantity = if (selected) (rows[p].item.quantity - rows[p].item.paidQuantity) else 0; adapter.notifyItemChanged(p); recalc() }, { p, d -> val r = rows[p]; r.selectedQuantity = (r.selectedQuantity + d).coerceIn(0, r.item.quantity - r.item.paidQuantity); r.selected = r.selectedQuantity > 0; adapter.notifyItemChanged(p); recalc() })
         list.adapter = adapter; root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         summary = TextView(this).apply { textSize = 16f }; root.addView(summary)
+        printCount = TextView(this).apply { text = "Print requests: 0" }; root.addView(printCount)
+        root.addView(Button(this).apply { text = "PRINT TOTAL PYG"; setOnClickListener { printFixture(false) } })
+        root.addView(Button(this).apply { text = "PRINT ÍTEMS PYG"; setOnClickListener { printFixture(true) } })
+        root.addView(Button(this).apply { text = "PRINT SINGLE-DISPATCH BRL"; setOnClickListener { printFixture(true, true) } })
         root.addView(Button(this).apply { text = if (l == "es") "Cobrar (validación, sin pago)" else "Cobrar (validação, sem pagamento)"; setOnClickListener { Toast.makeText(this@PayByItemsValidationActivity, getString(R.string.select_item_for_payment), Toast.LENGTH_SHORT).show() } })
         setContentView(root); recalc()
+    }
+
+    private fun printFixture(itemsOnly: Boolean, brl: Boolean = false) {
+        val currency = if (brl) "BRL" else "PYG"
+        val selected = if (itemsOnly) listOf(rows[0].item) else listOf(rows[0].item, rows[1].item)
+        // These are authoritative fixture values, not a second conversion/tax calculator.
+        val subtotal = if (brl) (if (itemsOnly) 18.0 else 116.0) else (if (itemsOnly) 20880.0 else 134560.0)
+        val tax = if (brl) (if (itemsOnly) 0.50 else 3.25) else (if (itemsOnly) 2088.0 else 13456.0)
+        val format = { value: Double -> cm.formatExplicit(value, currency) }
+        val lines = selected.map { item ->
+            val unit = item.product.selling_price ?: 0.0
+            val transactionUnit = if (brl) unit else if (item === rows[0].item) 20880.0 else 113680.0
+            CheckoutPrintLine(item, 1, format(transactionUnit), format(transactionUnit))
+        }
+        val state = CheckoutUiState(splitMode = if (itemsOnly) 2 else 0, currentToPay = subtotal, taxAmount = tax, finalToPay = subtotal + tax)
+        val model = CheckoutPrintModelFactory.from(state, 1, currency, lines, subtotal, 0.0, subtotal)
+        val count = printCount.text.toString().substringAfterLast(':').trim().toIntOrNull() ?: 0
+        printCount.text = "Print requests: ${count + 1}"
+        PrinterHelper.printReceipt(this, CheckoutReceiptRenderer.render(this, model, format))
     }
 
     private fun recalc() {

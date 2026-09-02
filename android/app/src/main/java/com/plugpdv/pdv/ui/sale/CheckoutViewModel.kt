@@ -107,6 +107,18 @@ class CheckoutViewModel @Inject constructor(
     // Split by items tracking
     val itemsToPay = mutableListOf<TableItemPayment>()
 
+    /** Items and quantities belonging to the current checkout scope. */
+    fun currentChargeItems(): List<Pair<TableItem, Int>> {
+        return if (_uiState.value.splitMode == 2) {
+            itemsToPay.filter { it.selected && it.selectedQuantity > 0 }
+                .map { it.item to it.selectedQuantity }
+        } else {
+            table?.items.orEmpty()
+                .filter { !it.removed && (it.quantity - it.paidQuantity) > 0 }
+                .map { it to (it.quantity - it.paidQuantity) }
+        }
+    }
+
     fun init(table: Table, token: String, sessionId: String?, opId: String?, opName: String?) {
         this.table = table
         init(table.id, table.number, table.sectorId, token, sessionId, opId, opName)
