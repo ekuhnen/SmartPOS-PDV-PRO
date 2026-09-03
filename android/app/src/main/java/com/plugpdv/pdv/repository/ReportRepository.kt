@@ -28,7 +28,7 @@ class ReportRepository @Inject constructor(private val apiService: PosApiService
         val pageLimit = history?.limit ?: requestedLimit
         val pageOffset = history?.offset ?: requestedOffset
         return DashboardReport(
-            sales = completedSales?.byCurrency.orEmpty().mapNotNull { row -> money(row.total, row.currency)?.let { DashboardSalesTotal(it, row.count ?: 0) } },
+            sales = (totalsByCurrency ?: completedSales?.byCurrency).orEmpty().mapNotNull { row -> money(row.total, row.currency)?.let { DashboardSalesTotal(it, row.count ?: 0) } },
             payments = paymentsByMethod.orEmpty().mapNotNull { row ->
                 val method = row.forma?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 money(row.total, row.currency)?.let { DashboardPaymentTotal(method, it, row.count ?: 0) }

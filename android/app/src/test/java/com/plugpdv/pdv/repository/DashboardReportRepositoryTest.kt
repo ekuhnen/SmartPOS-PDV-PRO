@@ -49,6 +49,14 @@ class DashboardReportRepositoryTest {
         assertNotEquals("Gs. 35.040.000", provider.formatMinorUnits(30_000L, "PYG"))
     }
 
+    @Test fun totalsByCurrencyContractIsConsumedDirectly() {
+        val value = dto().copy(totalsByCurrency = listOf(CurrencyTotalDto("PYG", 1, BigDecimal("30000"), null)))
+        stub(value)
+        val result = fetch()
+        assertEquals("PYG", result.sales.single().money.currency)
+        assertEquals(30_000L, result.sales.single().money.amountMinor)
+    }
+
     @Test fun canonicalNullIsAccepted() { stub(); assertFalse(fetch().hasCanonicalTotal) }
 
     @Test fun confirmedPaymentsAreMappedFromFormaAndTotal() {

@@ -1,6 +1,7 @@
 package com.plugpdv.pdv.api.dto
 
 import com.google.gson.JsonElement
+import com.google.gson.annotations.SerializedName
 import java.math.BigDecimal
 
 /** Exact transport representation of the deployed dashboard_v1 response. */
@@ -12,7 +13,10 @@ data class DashboardReportDto(
     val openReceivables: List<OpenReceivableDto>?,
     val cashOperations: List<CashOperationDto>?,
     val history: ReportHistoryPageDto?,
-    val notes: ReportNotesDto?
+    val notes: ReportNotesDto?,
+    @SerializedName("totals_by_currency") val totalsByCurrency: List<CurrencyTotalDto>? = null,
+    @SerializedName("total_revenue") val totalRevenue: BigDecimal? = null,
+    @SerializedName("total_revenue_currency") val totalRevenueCurrency: String? = null
 )
 
 data class ReportPeriodDto(
