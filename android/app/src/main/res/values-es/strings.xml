@@ -212,4 +212,7 @@
     <string name="total_to_pay_label">Total a pagar</string>
     <string name="product_with_quantity">%1$s (x%2$d)</string>
     <string name="zero_items">0 ítems</string>
+    <string name="dashboard_cash_operations">Operaciones de caja</string>
+    <string name="dashboard_load_more">Cargar más</string>
+    <string name="dashboard_report_error">No se pudo cargar el informe. Inténtalo de nuevo.</string>
 </resources>

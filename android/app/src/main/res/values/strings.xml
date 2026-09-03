@@ -269,4 +269,7 @@
     <string name="product_with_quantity">%1$s (x%2$d)</string>
     <string name="zero_items">0 itens</string>
     <string name="plug_pay" translatable="false">Plug Pay</string>
+    <string name="dashboard_cash_operations">Operações de caixa</string>
+    <string name="dashboard_load_more">Carregar mais</string>
+    <string name="dashboard_report_error">Não foi possível carregar o relatório. Tente novamente.</string>
 </resources>

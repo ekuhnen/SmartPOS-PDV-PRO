@@ -37,4 +37,7 @@
     <string name="total_to_pay_now">Mbyte Oñembopyaha Va’erã Ko’áğa</string>
     <string name="partial_payment_approved">Ñembopyaha vore oñemoneĩma!</string>
     <string name="no_sale_mode_enabled">Ndaipóri modo de venta oñembohekóva ko tapichápe g̃uarã.</string>
+    <string name="dashboard_cash_operations">Caja rembiapo</string>
+    <string name="dashboard_load_more">Emyanyhẽve</string>
+    <string name="dashboard_report_error">Ndaikatúi oñemyanyhẽ pe marandu. Ehaʼã jey.</string>
 </resources>

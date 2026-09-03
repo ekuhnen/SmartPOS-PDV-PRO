@@ -118,4 +118,7 @@
     <string name="print_doc_label">DOC:</string>
     <string name="print_sn_label">S/N:</string>
     <string name="no_sale_mode_enabled">No sales mode is enabled for this user.</string>
+    <string name="dashboard_cash_operations">Cash operations</string>
+    <string name="dashboard_load_more">Load more</string>
+    <string name="dashboard_report_error">Could not load the report. Try again.</string>
 </resources>

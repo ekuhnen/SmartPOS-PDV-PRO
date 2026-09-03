@@ -1,10 +1,22 @@
 package com.plugpdv.pdv.api
 
 import com.plugpdv.pdv.models.*
+import com.plugpdv.pdv.api.dto.DashboardReportDto
 import retrofit2.Response
 import retrofit2.http.*
 
 interface PosApiService {
+    @GET("api-relatorios")
+    suspend fun getDashboardReport(
+        @Header("Authorization") token: String,
+        @Query("period") period: String,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("branch_id") branchId: String? = null,
+        @Query("limit") limit: Int,
+        @Query("offset") offset: Int
+    ): DashboardReportDto
+
     @POST("auth-login")
     suspend fun login(@Body request: LoginRequest): AuthResponse
 
