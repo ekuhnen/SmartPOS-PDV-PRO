@@ -49,6 +49,12 @@
     <string name="debit">Débito</string>
     <string name="pix">PIX</string>
     <string name="cash">EFECTIVO</string>
+    <string name="cash_collected_summary">Recaudado</string>
+    <string name="cash_collected_summary_empty">Recaudado: —</string>
+    <string name="cash_opening_label">APERTURA</string>
+    <string name="cash_collected_receipt_label">COBROS / VENTAS RECIBIDAS</string>
+    <string name="cash_withdrawal_label">RETIRO / SANGRÍA</string>
+    <string name="cash_to_render_label">EFECTIVO A RENDIR</string>
     <string name="sale_completed">VENTA REALIZADA</string>
     <string name="payment_method_label">FORMA DE PAGO:</string>
     <string name="sale_finished_toast">Venta finalizada con %s</string>

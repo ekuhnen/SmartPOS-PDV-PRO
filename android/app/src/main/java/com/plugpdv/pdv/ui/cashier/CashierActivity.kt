@@ -133,6 +133,15 @@ class CashierActivity : BaseActivity() {
     }
 
     private fun observeViewModel() {
+        viewModel.cashSummary.observe(this) { summary ->
+            val lines = summary.collectedByMethod.values.flatten().groupBy { it.currency }
+                .map { (currency, values) -> formatMoney(values.sumOf { it.amountMinor }, currency) }
+            binding.tvCollectedSummary.text = if (lines.isEmpty()) {
+                getString(R.string.cash_collected_summary_empty)
+            } else {
+                getString(R.string.cash_collected_summary) + "\n" + lines.joinToString("\n")
+            }
+        }
         viewModel.isLoading.observe(this) { loading ->
             binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
             updateCashierUI()
@@ -217,9 +226,13 @@ class CashierActivity : BaseActivity() {
             "fechar", "close" -> "CIERRE"
             else -> action.uppercase()
         }
-        val receiptText = "${ctx.getString(R.string.receipt_title, receiptKind)}\n" +
-                         "${ctx.getString(R.string.print_amount_label)} $formattedWithSymbol\n" +
-                         ctx.getString(R.string.receipt_date, dateStr)
+        val receiptText = if (action.equals("fechar", true) || action.equals("close", true)) {
+            buildClosingReceipt(ctx, dateStr)
+        } else {
+            "${ctx.getString(R.string.receipt_title, receiptKind)}\n" +
+                "${ctx.getString(R.string.print_amount_label)} $formattedWithSymbol\n" +
+                ctx.getString(R.string.receipt_date, dateStr)
+        }
         
         PrinterHelper.printReceipt(ctx, receiptText)
         Toast.makeText(this, R.string.operation_success, Toast.LENGTH_SHORT).show()
@@ -232,6 +245,35 @@ class CashierActivity : BaseActivity() {
             startActivity(intent)
             finish()
         }
+    }
+
+    private fun formatMoney(minor: Long, currency: String): String =
+        com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider().formatMinorUnits(minor, currency)
+
+    private fun buildClosingReceipt(ctx: Context, dateStr: String): String {
+        val summary = viewModel.cashSummary.value ?: CashierViewModel.CashSummary()
+        val sb = StringBuilder()
+        sb.append(ctx.getString(R.string.receipt_title, "CIERRE")).append("\n")
+        sb.append(ctx.getString(R.string.receipt_date, dateStr)).append("\n")
+        fun appendGroups(titleRes: Int, groups: List<Pair<String, Long>>) {
+            sb.append(ctx.getString(titleRes)).append("\n")
+            groups.forEach { (currency, amount) -> sb.append(currency).append(" ").append(formatMoney(amount, currency)).append("\n") }
+        }
+        appendGroups(R.string.cash_opening_label, summary.opening.groupBy { it.currency }
+            .map { (currency, values) -> currency to values.sumOf { it.amountMinor } })
+        sb.append(ctx.getString(R.string.cash_collected_receipt_label)).append("\n")
+        summary.collectedByMethod.flatMap { (method, values) ->
+            values.groupBy { it.currency }.map { (currency, amounts) ->
+                val label = if (method.equals("DINHEIRO", true) || method.equals("CASH", true)) ctx.getString(R.string.cash) else method
+                Triple(label, currency, amounts.sumOf { it.amountMinor })
+            }
+        }.forEach { (method, currency, amount) ->
+            sb.append(method).append(" ").append(currency).append(" ").append(formatMoney(amount, currency)).append("\n")
+        }
+        appendGroups(R.string.cash_withdrawal_label, summary.withdrawals.groupBy { it.currency }
+            .map { (currency, values) -> currency to values.sumOf { it.amountMinor } })
+        appendGroups(R.string.cash_to_render_label, summary.cashToRender().map { it.currency to it.amountMinor })
+        return sb.toString()
     }
 
     private fun showConfirmation(action: String) {

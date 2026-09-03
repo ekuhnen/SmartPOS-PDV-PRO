@@ -9,6 +9,9 @@ import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.models.CashierHistoryResponse
 import com.plugpdv.pdv.models.CashierRequest
 import com.plugpdv.pdv.models.CashierSession
+import com.plugpdv.pdv.models.DashboardMoney
+import com.plugpdv.pdv.repository.DateFilterOption
+import com.plugpdv.pdv.repository.ReportRepository
 import com.plugpdv.pdv.utils.retryIO
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -24,8 +27,27 @@ sealed class CashierResult {
 @HiltViewModel
 class CashierViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val apiService: PosApiService
+    private val apiService: PosApiService,
+    private val reportRepository: ReportRepository = ReportRepository(apiService)
 ) : ViewModel() {
+
+    data class CashSummary(
+        val opening: List<DashboardMoney> = emptyList(),
+        val collectedByMethod: Map<String, List<DashboardMoney>> = emptyMap(),
+        val withdrawals: List<DashboardMoney> = emptyList()
+    ) {
+        fun cashToRender(): List<DashboardMoney> {
+            val cash = collectedByMethod.filterKeys { it.equals("DINHEIRO", true) || it.equals("CASH", true) }
+                .values.flatten().groupBy { it.currency }
+                .map { (currency, values) -> DashboardMoney(values.sumOf { it.amountMinor }, currency) }
+                .associateBy { it.currency }
+            val sangria = withdrawals.groupBy { it.currency }
+                .mapValues { (_, values) -> values.sumOf { it.amountMinor } }
+            return cash.mapNotNull { (currency, value) ->
+                DashboardMoney((value.amountMinor - (sangria[currency] ?: 0L)).coerceAtLeast(0L), currency)
+            }
+        }
+    }
 
     private val _history = MutableLiveData<List<CashierSession>>(emptyList())
     val history: LiveData<List<CashierSession>> = _history
@@ -53,6 +75,9 @@ class CashierViewModel @Inject constructor(
     private val _operationResult = MutableLiveData<CashierResult?>(null)
     val operationResult: LiveData<CashierResult?> = _operationResult
 
+    private val _cashSummary = MutableLiveData(CashSummary())
+    val cashSummary: LiveData<CashSummary> = _cashSummary
+
     init {
         loadInitialAuthority()
     }
@@ -79,6 +104,7 @@ class CashierViewModel @Inject constructor(
             try {
                 _isLoading.value = true
                 fetchHistoryInternal(token)
+                fetchCashSummary(token)
                 _isOffline.value = false
             } catch (e: java.io.IOException) {
                 Log.e("CashierViewModel", "IO error fetching cashier history: ${e.message}", e)
@@ -108,6 +134,20 @@ class CashierViewModel @Inject constructor(
                 _isLoading.value = false
             }
         }
+    }
+
+    private suspend fun fetchCashSummary(token: String) {
+        val report = reportRepository.getReportResult(token, DateFilterOption.TODAY).getOrNull() ?: return
+        val opening = report.cashOperations.filter { it.type.contains("ABERT", true) || it.type.contains("OPEN", true) }
+            .map { it.money }
+        val withdrawals = report.cashOperations.filter {
+            it.type.contains("RETIR", true) || it.type.contains("SANGR", true) || it.type.contains("WITHDRAW", true)
+        }.map { it.money }
+        val byMethod = report.payments
+            .filterNot { it.method.equals("REGISTRADO", true) || it.method.equals("ESTORNADO", true) }
+            .groupBy { it.method }
+            .mapValues { (_, values) -> values.map { it.money } }
+        _cashSummary.postValue(CashSummary(opening, byMethod, withdrawals))
     }
 
     private suspend fun fetchHistoryInternal(token: String) {
@@ -201,6 +241,7 @@ class CashierViewModel @Inject constructor(
                 }
                 
                 fetchHistoryInternal(token)
+                fetchCashSummary(token)
                 _operationResult.value = CashierResult.Success(action)
             } catch (e: Exception) {
                 Log.e("CashierViewModel", "Operation failed", e)
