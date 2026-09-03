@@ -332,17 +332,18 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         b.layoutTaxBreakdown.removeAllViews()
         val cm = CurrencyManager.getInstance()
         
-        val baseToPay = state.currentToPay.coerceAtLeast(0.0)
-        addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(baseToPay, state.baseCurrency ?: cm.getBaseCurrency()))
-        
-        val currentCurrency = cm.selectedCurrency
-        applicableTaxAmounts(state).forEach { (tax, calculatedTax) ->
-            val label = "${tax.name} (${String.format("%.1f%%", tax.percentage)})"
-            addBreakdownRow(label, formatBaseAmount(calculatedTax, state.baseCurrency ?: cm.getBaseCurrency()))
+        val currency = state.baseCurrency ?: cm.getBaseCurrency()
+        addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(state.authoritativeSubtotal ?: state.currentToPay, currency))
+        state.authoritativeTaxAmount?.let { amount ->
+            val snapshot = state.authoritativeTaxSnapshot.orEmpty()
+            val taxName = snapshot["name"]?.toString() ?: snapshot["tax_name"]?.toString() ?: getString(R.string.tax)
+            val rate = snapshot["rate"] ?: snapshot["percentage"]
+            val label = if (rate != null) "$taxName (${rate.toString().removeSuffix(".0")}%)" else taxName
+            addBreakdownRow(label, formatBaseAmount(amount, currency))
         }
 
         // Add Service Fee
-        val sfAmount = state.serviceFeeAmount
+        val sfAmount = state.authoritativeServiceFee ?: state.serviceFeeAmount
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
         if (canOverride || sfAmount > 0) {
@@ -355,13 +356,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
-    private fun applicableTaxAmounts(state: CheckoutUiState): List<Pair<com.plugpdv.pdv.database.TaxEntity, Double>> {
-        val currency = CurrencyManager.getInstance().selectedCurrency
-        val baseToPay = state.currentToPay.coerceAtLeast(0.0)
-        return state.activeTaxes
-            .filter { it.active && it.currency.equals(currency, ignoreCase = true) }
-            .map { it to baseToPay * (it.percentage / 100.0) }
-    }
+    private fun applicableTaxAmounts(state: CheckoutUiState): List<Pair<com.plugpdv.pdv.database.TaxEntity, Double>> = emptyList()
 
     private fun showCalculationDetails(state: CheckoutUiState) {
         val ctx = context ?: return
@@ -384,14 +379,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             }
         }
         lines.append(getString(R.string.transaction_taxes)).append(":\n")
-        val taxes = applicableTaxAmounts(state)
-        if (taxes.isEmpty()) {
+        val authoritativeTax = state.authoritativeTaxAmount
+        if (authoritativeTax == null) {
             lines.append(getString(R.string.tax_none)).append("\n")
         } else {
-            taxes.forEach { (tax, amount) ->
-                lines.append(tax.name).append(" (").append(String.format("%.1f%%", tax.percentage)).append("): ")
-                    .append(formatBaseAmount(amount, baseCurrency)).append("\n")
-            }
+            lines.append(getString(R.string.tax)).append(": ")
+                .append(formatBaseAmount(authoritativeTax, baseCurrency)).append("\n")
         }
         lines.append(getString(R.string.total_to_pay_label)).append(": ")
             .append(formatBaseAmount(state.finalToPay, baseCurrency))

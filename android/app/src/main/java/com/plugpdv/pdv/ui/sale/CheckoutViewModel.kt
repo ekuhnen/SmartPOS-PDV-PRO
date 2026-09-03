@@ -47,6 +47,11 @@ data class CheckoutUiState(
     val totalBaseMinor: Long? = null,
     val paidBaseMinor: Long? = null,
     val balanceBaseMinor: Long? = null,
+    val authoritativeSubtotal: Double? = null,
+    val authoritativeTaxAmount: Double? = null,
+    val authoritativeTaxSnapshot: Map<String, Any>? = null,
+    val authoritativeServiceFee: Double? = null,
+    val authoritativeTotal: Double? = null,
     val refreshWarning: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
@@ -500,6 +505,13 @@ class CheckoutViewModel @Inject constructor(
     ) {
         try {
             val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+            _uiState.value = _uiState.value.copy(
+                authoritativeSubtotal = detail.subtotal,
+                authoritativeTaxAmount = detail.taxAmount,
+                authoritativeTaxSnapshot = detail.taxSnapshot,
+                authoritativeServiceFee = detail.serviceFee,
+                authoritativeTotal = detail.total
+            )
             val cachedSnapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
             if (cachedSnapshot == null) {
@@ -902,40 +914,15 @@ class CheckoutViewModel @Inject constructor(
 
     private fun calculateFinalAmount() {
         val state = _uiState.value
-        val cm = CurrencyManager.getInstance()
-        val currentCurrency = cm.selectedCurrency
-        var taxPercentage = 0.0
-
-        state.activeTaxes.filter { it.currency.equals(currentCurrency, ignoreCase = true) }.forEach {
-            taxPercentage += it.percentage
-        }
-
         val baseToPay = state.currentToPay.coerceAtLeast(0.0)
-        val tax = if (taxPercentage > 0) baseToPay * (taxPercentage / 100.0) else 0.0
-
-        var sfAmount = 0.0
-        if (state.serviceFeeKind != null) {
-            when (state.serviceFeeKind) {
-                "fixed" -> {
-                    val pct = state.serviceFeeConfig?.fixedPercent ?: 0.0
-                    sfAmount = baseToPay * (pct / 100.0)
-                }
-                "manual_percent" -> {
-                    sfAmount = baseToPay * (state.serviceFeeManualValue / 100.0)
-                }
-                "manual_value" -> {
-                    sfAmount = state.serviceFeeManualValue
-                }
-                "waived" -> {
-                    sfAmount = 0.0
-                }
-            }
-        }
+        // Comanda money is server-authoritative. Payment scope never accrues tax/fee again.
+        val tax = state.authoritativeTaxAmount ?: 0.0
+        val sfAmount = state.authoritativeServiceFee ?: 0.0
 
         _uiState.value = _uiState.value.copy(
             taxAmount = tax,
             serviceFeeAmount = sfAmount,
-            finalToPay = (baseToPay + tax + sfAmount).coerceAtLeast(0.0)
+            finalToPay = baseToPay
         )
     }
 
