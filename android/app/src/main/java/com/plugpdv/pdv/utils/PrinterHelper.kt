@@ -74,6 +74,7 @@ object PrinterHelper {
                     printer.printText("--------------------------------")
                     printer.setAlignment(1)
                     printer.printText(thanksText)
+                    printer.lineFeed(3)
                     printer.close()
                 } else {
                     printer.setAlignment(1)

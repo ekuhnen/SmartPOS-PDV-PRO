@@ -19,11 +19,11 @@
     <string name="product_added">%s añadido</string>
     <string name="all_categories">Todos</string>
     
-    <string name="cashier_ops">Operaciones de Caja</string>
+    <string name="cashier_ops">OPERACIONES DE CAJA</string>
     <string name="amount_label">Valor</string>
-    <string name="open_cashier">ABRIR CAJA</string>
-    <string name="sangria">RETIRO (SANGRÍA)</string>
-    <string name="close_cashier">CERRAR CAJA</string>
+    <string name="open_cashier">Abrir caja</string>
+    <string name="sangria">Retiro de caja</string>
+    <string name="close_cashier">Cerrar caja</string>
     <string name="cashier_already_open">CAJA YA ABIERTA</string>
     <string name="session_not_found">Error: Sesión no encontrada. Reintentando...</string>
     <string name="operation_success">¡Operación realizada con éxito!</string>
@@ -48,7 +48,7 @@
     <string name="credit">Crédito</string>
     <string name="debit">Débito</string>
     <string name="pix">PIX</string>
-    <string name="cash">Efectivo</string>
+    <string name="cash">EFECTIVO</string>
     <string name="sale_completed">VENTA REALIZADA</string>
     <string name="payment_method_label">FORMA DE PAGO:</string>
     <string name="sale_finished_toast">Venta finalizada con %s</string>

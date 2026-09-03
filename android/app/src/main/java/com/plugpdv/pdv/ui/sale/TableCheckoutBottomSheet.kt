@@ -232,7 +232,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             // Print the transaction receipt automatically
             state.lastPaymentMethod?.let { method ->
                 state.lastPaymentCurrency?.let { currency ->
-                    printPaymentReceipt(method, state.lastPaymentAmount, currency)
+                    printPaymentReceipt(method, state.lastPaymentAmount, currency, viewModel.currentChargeItems())
                 }
             }
             
@@ -529,7 +529,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun paidDecimal(state: CheckoutUiState, digits: Int): Double =
         state.paidBaseMinor?.let { ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(it, digits).toDouble() } ?: 0.0
 
-    private fun printPaymentReceipt(method: String, amount: Double, authoritativeCurrency: String) {
+    private fun printPaymentReceipt(
+        method: String,
+        amount: Double,
+        authoritativeCurrency: String,
+        chargedItems: List<Pair<com.plugpdv.pdv.models.TableItem, Int>>
+    ) {
         val ctx = context ?: return
         val cm = CurrencyManager.getInstance()
         val paymentCurrency = authoritativeCurrency
@@ -538,9 +543,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         
         val sb = StringBuilder()
         sb.append("================================\n")
-        sb.append("      COMPROVANTE DE PAGAMENTO  \n")
+        sb.append("      ").append(ctx.getString(R.string.print_payment_receipt_title)).append("  \n")
         sb.append("================================\n")
-        sb.append(ctx.getString(R.string.print_date_label)).append(": ").append(dateStr).append("\n")
+        sb.append(ctx.getString(R.string.print_date_label)).append(" ").append(dateStr).append("\n")
         val methodLabel = when (method.uppercase()) {
             "DINHEIRO", "CASH" -> ctx.getString(R.string.cash)
             "PIX", "PIX_TRANSFERENCIA" -> ctx.getString(R.string.pix)
@@ -549,6 +554,21 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             else -> method
         }
         sb.append(ctx.getString(R.string.print_payment_method_label)).append(" ").append(methodLabel).append("\n")
+        if (chargedItems.isNotEmpty()) {
+            sb.append(ctx.getString(R.string.print_charge_items_label)).append("\n")
+            chargedItems.forEach { (item, quantity) ->
+                val name = item.product.name ?: ctx.getString(R.string.unnamed_product)
+                val baseAmount = java.math.BigDecimal.valueOf(item.product.selling_price ?: 0.0)
+                    .multiply(java.math.BigDecimal.valueOf(quantity.toLong()))
+                val lineAmount = cm.quoteBaseAmount(
+                    baseAmount,
+                    item.product.price_currency ?: paymentCurrency,
+                    paymentCurrency
+                ).getOrNull()?.let { cm.formatExplicit(it.transactionAmount.toDouble(), paymentCurrency) }
+                    ?: cm.formatExplicit(baseAmount.toDouble(), item.product.price_currency ?: paymentCurrency)
+                sb.append(name).append(" x").append(quantity).append(" ").append(lineAmount).append("\n")
+            }
+        }
         sb.append(ctx.getString(R.string.print_paid_amount_label)).append(" ").append(cm.formatExplicit(amount, paymentCurrency)).append("\n")
         sb.append("================================\n\n\n")
 

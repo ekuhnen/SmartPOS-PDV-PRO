@@ -212,7 +212,12 @@ class CashierActivity : BaseActivity() {
         val ctx = com.plugpdv.pdv.utils.LanguageManager.updateResources(this, com.plugpdv.pdv.utils.LanguageManager.getLanguage(this))
         val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(this)
         val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale(lang)).format(Date())
-        val receiptText = "${ctx.getString(R.string.receipt_title, action.uppercase())}\n" +
+        val receiptKind = when (action.lowercase()) {
+            "abrir", "open" -> "APERTURA"
+            "fechar", "close" -> "CIERRE"
+            else -> action.uppercase()
+        }
+        val receiptText = "${ctx.getString(R.string.receipt_title, receiptKind)}\n" +
                          "${ctx.getString(R.string.print_amount_label)} $formattedWithSymbol\n" +
                          ctx.getString(R.string.receipt_date, dateStr)
         

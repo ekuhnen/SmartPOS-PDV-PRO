@@ -63,7 +63,12 @@ class OperatorDashboardActivity : BaseActivity() {
             .ifBlank { getString(R.string.amount_placeholder) }
         binding.tvTotalSangria.visibility = View.GONE
         salesAdapter.updateData(report.sales.map { DashboardDisplayTotal(it.money.currency, it.money) })
-        paymentAdapter.updateData(report.payments.map { DashboardDisplayTotal(it.method, it.money) })
+        paymentAdapter.updateData(report.payments.map {
+            val label = if (it.method.equals("DINHEIRO", true) || it.method.equals("CASH", true)) {
+                getString(R.string.cash)
+            } else it.method
+            DashboardDisplayTotal(label, it.money)
+        })
         receivablesAdapter.updateData(report.openReceivables.map { DashboardDisplayTotal(it.money.currency, it.money) })
         cashAdapter.updateData(report.cashOperations.map { DashboardDisplayTotal(it.type, it.money) })
         historyAdapter.updateData(report.history)
