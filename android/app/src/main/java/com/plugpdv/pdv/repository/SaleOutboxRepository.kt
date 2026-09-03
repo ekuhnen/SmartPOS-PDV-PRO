@@ -204,8 +204,16 @@ class SaleOutboxRepository @Inject constructor(
             )
             paymentAttemptDao.update(updatedAttempt)
 
+            // The provider callback is authoritative for the persisted sale payload.
+            // Update JSON in the same Room transaction before any sync can dispatch it.
+            val correctedPayload = runCatching {
+                gson.fromJson(sale.payloadJson, SaleRequest::class.java)
+                    .copy(paymentMethod = method ?: existingAttempt.paymentMethod ?: sale.paymentMethod)
+            }.getOrNull()
+
             val updatedSale = sale.copy(
                 syncStatus = LocalSaleEntity.STATUS_PENDING,
+                payloadJson = correctedPayload?.let(gson::toJson) ?: sale.payloadJson,
                 updatedAt = now,
                 paymentMethod = method ?: sale.paymentMethod
             )

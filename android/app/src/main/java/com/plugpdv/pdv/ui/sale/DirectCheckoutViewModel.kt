@@ -203,6 +203,12 @@ class DirectCheckoutViewModel @Inject constructor(
         val amountsJson: String
     )
 
+    private fun transactionMoneyFromBase(amount: Double, quote: SelectedPaymentQuote): java.math.BigDecimal =
+        com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(
+            com.plugpdv.pdv.utils.MoneyDecimal.of(amount).multiply(quote.fxRate),
+            quote.transactionCurrency
+        )
+
     suspend fun getPreparedOperationForResume(): ResumedPreparedOperation? {
         val unresolved = saleOutboxRepository.getUnresolvedDirectPaymentState() ?: return null
         if (!unresolved.canResumeSameOperation) return null
@@ -262,14 +268,14 @@ class DirectCheckoutViewModel @Inject constructor(
             total = quote.transactionAmount,
             items = items,
             paymentMethod = method,
-            currency = quote.baseCurrency,
+            currency = quote.transactionCurrency,
             paymentCurrency = quote.transactionCurrency,
             exchangeRatesSnapshot = quote.snapshot,
             caixa_session_id = sessionId,
             operatorId = operatorId,
             operatorName = operatorName,
-            taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
-            serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+            taxAmount = transactionMoneyFromBase(_taxAmount.value ?: 0.0, quote),
+            serviceFeeAmount = transactionMoneyFromBase(_serviceFeeAmount.value ?: 0.0, quote),
             serviceFeeKind = _serviceFeeKind.value,
             convertedTotal = quote.baseAmount
         )
@@ -279,7 +285,7 @@ class DirectCheckoutViewModel @Inject constructor(
 
         saleOutboxRepository.prepareDirectSaleAtomic(
             saleRequest = saleRequest,
-            currency = quote.baseCurrency,
+            currency = quote.transactionCurrency,
             localId = localId,
             minimalUnitAmount = minimalUnits,
             orderId = localId,
@@ -363,14 +369,14 @@ class DirectCheckoutViewModel @Inject constructor(
             total = quote.transactionAmount,
             items = items,
             paymentMethod = "DINHEIRO",
-            currency = quote.baseCurrency,
+            currency = quote.transactionCurrency,
             paymentCurrency = quote.transactionCurrency,
             exchangeRatesSnapshot = quote.snapshot,
             caixa_session_id = sessionId,
             operatorId = operatorId,
             operatorName = operatorName,
-            taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
-            serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+            taxAmount = transactionMoneyFromBase(_taxAmount.value ?: 0.0, quote),
+            serviceFeeAmount = transactionMoneyFromBase(_serviceFeeAmount.value ?: 0.0, quote),
             serviceFeeKind = _serviceFeeKind.value,
             convertedTotal = quote.baseAmount
         )
@@ -380,7 +386,7 @@ class DirectCheckoutViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                saleOutboxRepository.enqueueSale(saleRequest, quote.baseCurrency, localId)
+                saleOutboxRepository.enqueueSale(saleRequest, quote.transactionCurrency, localId)
                 Log.d("DirectCheckoutVM", "Venda dinheiro salva na Outbox com sucesso. localId: $localId")
 
                 val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = "DINHEIRO")
@@ -444,14 +450,14 @@ class DirectCheckoutViewModel @Inject constructor(
                 total = selectedQuote.transactionAmount,
                 items = items,
                 paymentMethod = method,
-                currency = selectedQuote.baseCurrency,
+                currency = selectedQuote.transactionCurrency,
                 paymentCurrency = selectedQuote.transactionCurrency,
                 exchangeRatesSnapshot = selectedQuote.snapshot,
                 caixa_session_id = sessionId,
                 operatorId = operatorId,
                 operatorName = operatorName,
-                taxAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_taxAmount.value ?: 0.0),
-                serviceFeeAmount = com.plugpdv.pdv.utils.MoneyDecimal.of(_serviceFeeAmount.value ?: 0.0),
+                taxAmount = transactionMoneyFromBase(_taxAmount.value ?: 0.0, selectedQuote),
+                serviceFeeAmount = transactionMoneyFromBase(_serviceFeeAmount.value ?: 0.0, selectedQuote),
                 serviceFeeKind = _serviceFeeKind.value,
                 convertedTotal = selectedQuote.baseAmount
             )
@@ -461,7 +467,7 @@ class DirectCheckoutViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     _isLoading.value = true
-                    saleOutboxRepository.enqueueSale(saleRequest, selectedQuote.baseCurrency, localId)
+                    saleOutboxRepository.enqueueSale(saleRequest, selectedQuote.transactionCurrency, localId)
                     Log.d("DirectCheckoutVM", "Venda salva na Outbox com sucesso. localId: $localId")
                     val fakeResponse = SaleResponse(id = "LOCAL-$localId", status = method)
                     _saleResult.value = SaleResult.Success(fakeResponse)

@@ -232,7 +232,7 @@ class MoneyFinalGateTest {
         runBlocking {
             val prepared = viewModel.prepareDirectSaleOperation(quote, "CREDITO", "session-1", "op-1", "Op")
             assertEquals("PYG", prepared.saleRequest.paymentCurrency)
-            assertEquals("BRL", prepared.saleRequest.currency)
+            assertEquals("PYG", prepared.saleRequest.currency)
             assertEquals(0, prepared.saleRequest.total.compareTo(BigDecimal("350000")))
             assertEquals(0, prepared.saleRequest.convertedTotal?.compareTo(BigDecimal("50.00")))
             assertEquals("7000", prepared.saleRequest.exchangeRatesSnapshot?.get("PYG"))
@@ -326,7 +326,7 @@ class MoneyFinalGateTest {
             val operationId = prepared.localId
 
             currencyManager.selectedCurrency = "USD"
-            viewModel.finalizeApprovedSale(operationId, "ext-pay-1", "CREDITO")
+            viewModel.finalizeApprovedSale(operationId, "ext-pay-1", "PIX")
 
             val persistedSale = db.localSaleDao().getById(operationId)
             assertNotNull(persistedSale)
@@ -334,7 +334,8 @@ class MoneyFinalGateTest {
 
             val deserializedRequest = gson.fromJson(persistedSale.payloadJson, SaleRequest::class.java)
             assertEquals("PYG", deserializedRequest.paymentCurrency)
-            assertEquals("BRL", deserializedRequest.currency)
+            assertEquals("PYG", deserializedRequest.currency)
+            assertEquals("PIX", deserializedRequest.paymentMethod)
             assertEquals(0, deserializedRequest.total.compareTo(BigDecimal("350000")))
         }
     }
@@ -774,7 +775,7 @@ class MoneyFinalGateTest {
 
             assertEquals("PYG", receipt.transactionCurrency)
             assertEquals(0, receipt.transactionAmount.compareTo(BigDecimal("350000")))
-            assertEquals("BRL", receipt.baseCurrency)
+            assertEquals("PYG", receipt.baseCurrency)
             assertEquals(0, receipt.baseAmount.compareTo(BigDecimal("50.00")))
         }
     }
