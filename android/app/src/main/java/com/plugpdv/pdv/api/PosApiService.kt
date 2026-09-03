@@ -80,6 +80,13 @@ interface PosApiService {
         @Query("id") id: String
     ): ComandaDetailResponse
 
+    /** Payment allocation state only; never use this response as the Mesa item source. */
+    @GET("api-comandas")
+    suspend fun getComandaPaymentState(
+        @Header("Authorization") token: String,
+        @Query("recibo") comandaId: String
+    ): ComandaPaymentStateResponse?
+
     @GET("api-comandas")
     suspend fun getComandasList(
         @Header("Authorization") token: String,

@@ -18,6 +18,28 @@ data class ComandaDetailResponse(
     @SerializedName(value = "pagamentos", alternate = ["payments"]) val pagamentos: List<ComandaPaymentDto> = emptyList()
 )
 
+/** Deliberately separate from ComandaDetailResponse: this endpoint augments checkout
+ * item payment state and must never replace the normal Mesa/comanda read model. */
+data class ComandaPaymentStateResponse(
+    @SerializedName("itens_payment_state") val itensPaymentState: List<ComandaItemPaymentStateDto> = emptyList(),
+    @SerializedName(value = "pagamentos", alternate = ["payments"]) val pagamentos: List<ComandaPaymentDto> = emptyList()
+)
+
+data class ComandaItemPaymentStateDto(
+    @SerializedName(value = "comanda_item_id", alternate = ["item_id", "id"]) val comandaItemId: String? = null,
+    @SerializedName(value = "original_quantity", alternate = ["quantity", "quantidade"]) val originalQuantity: Int? = null,
+    @SerializedName(value = "paid_quantity", alternate = ["paidQuantity", "quantidade_paga"]) val paidQuantity: Int? = null,
+    @SerializedName(value = "remaining_quantity", alternate = ["remainingQuantity", "quantidade_restante"]) val remainingQuantity: Int? = null
+)
+
+data class ComandaPaymentAllocationDto(
+    @SerializedName(value = "comanda_item_id", alternate = ["item_id"]) val comandaItemId: String? = null,
+    @SerializedName(value = "name", alternate = ["item_name", "nome"]) val name: String? = null,
+    val quantity: Int = 0,
+    @SerializedName(value = "line_amount", alternate = ["amount", "valor"]) val lineAmount: Double? = null,
+    val currency: String? = null
+)
+
 data class ComandaPaymentDto(
     val id: String,
     val forma: String,
@@ -27,4 +49,6 @@ data class ComandaPaymentDto(
     @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("fx_rate") val fxRate: Double? = null,
     @SerializedName("data_pagamento") val dataPagamento: String? = null
+    ,@SerializedName("allocations") val allocations: List<ComandaPaymentAllocationDto> = emptyList()
+    ,@SerializedName("allocation_mode") val allocationMode: String? = null
 )

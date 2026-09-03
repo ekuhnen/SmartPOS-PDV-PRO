@@ -106,6 +106,13 @@ class CheckoutViewModel @Inject constructor(
 
     // Split by items tracking
     val itemsToPay = mutableListOf<TableItemPayment>()
+    private var paymentStateByItemId: List<ComandaItemPaymentStateDto> = emptyList()
+    private var itemsPaymentStateLoaded: Boolean = false
+
+    fun currentReceiptAllocations(): List<ComandaPaymentAllocationDto> =
+        _uiState.value.paymentsHistory.lastOrNull {
+            it.allocationMode.equals("items", ignoreCase = true)
+        }?.allocations.orEmpty()
 
     /** Items and quantities belonging to the current checkout scope. */
     fun currentChargeItems(): List<Pair<TableItem, Int>> {
@@ -774,7 +781,10 @@ class CheckoutViewModel @Inject constructor(
         when (mode) {
             0 -> _uiState.value = _uiState.value.copy(currentToPay = balDecimal.toDouble())
             1 -> updatePeopleSplit(1) // Default 1 person
-            2 -> setupItemsSplit()
+            2 -> {
+                setupItemsSplit()
+                loadItemsPaymentState()
+            }
         }
         calculateFinalAmount()
     }
@@ -798,7 +808,11 @@ class CheckoutViewModel @Inject constructor(
 
     private fun setupItemsSplit() {
         itemsToPay.clear()
-        val activeItems = table?.items?.filter { !it.removed && it.quantity > it.paidQuantity }.orEmpty()
+        val baseItems = table?.items.orEmpty().filter { !it.removed }
+        val overlaidItems = if (itemsPaymentStateLoaded) {
+            ComandaPaymentStateAdapter.apply(baseItems, paymentStateByItemId)
+        } else baseItems.map { it.copy(paidQuantity = 0, isPaid = false) }
+        val activeItems = overlaidItems.filter { it.quantity > it.paidQuantity }
         activeItems.forEach {
             itemsToPay.add(TableItemPayment(it))
         }
@@ -811,6 +825,38 @@ class CheckoutViewModel @Inject constructor(
             )
         } else {
             _uiState.value = _uiState.value.copy(currentToPay = 0.0)
+        }
+    }
+
+    private fun loadItemsPaymentState() {
+        val currentTable = table ?: return
+        val currentToken = token ?: return
+        val cId = currentTable.comandaId ?: return
+        itemsPaymentStateLoaded = false
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = retryIO { apiService.getComandaPaymentState("Bearer $currentToken", cId) }
+                paymentStateByItemId = response?.itensPaymentState.orEmpty()
+                itemsPaymentStateLoaded = true
+                withContext(Dispatchers.Main) {
+                    setupItemsSplit()
+                    val hasUnknownPrice = itemsToPay.any { it.item.product.selling_price == null }
+                    _uiState.value = _uiState.value.copy(
+                        error = null,
+                        isPayButtonBlocked = itemsToPay.isEmpty() || hasUnknownPrice
+                    )
+                }
+            } catch (_: Exception) {
+                paymentStateByItemId = emptyList()
+                itemsPaymentStateLoaded = false
+                withContext(Dispatchers.Main) {
+                    itemsToPay.clear()
+                    _uiState.value = _uiState.value.copy(
+                        isPayButtonBlocked = true,
+                        blockReason = "No fue posible consultar los ítems pendientes."
+                    )
+                }
+            }
         }
     }
 
@@ -1015,7 +1061,15 @@ class CheckoutViewModel @Inject constructor(
             saleItems = saleItems,
             discount = BigDecimal.ZERO,
             serviceFee = MoneyDecimal.of(sfAmount2),
-            serviceFeeKind = sfKind2
+            serviceFeeKind = sfKind2,
+            items = if (_uiState.value.splitMode == 2) {
+                itemsToPay.filter { it.selected && it.selectedQuantity > 0 }.map {
+                    ComandaItemAllocation(
+                        requireNotNull(it.item.id) { "ITEM_SPLIT_ID_MISSING" },
+                        it.selectedQuantity
+                    )
+                }
+            } else null
         )
     }
 

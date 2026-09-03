@@ -19,7 +19,8 @@ data class CommandCheckoutCommitRequest(
     @SerializedName("sale_items") val saleItems: List<SaleItem>? = null,
     @SerializedName("discount") val discount: BigDecimal = BigDecimal.ZERO,
     @SerializedName("service_fee") val serviceFee: BigDecimal = BigDecimal.ZERO,
-    @SerializedName("service_fee_kind") val serviceFeeKind: String? = null
+    @SerializedName("service_fee_kind") val serviceFeeKind: String? = null,
+    @SerializedName("items") val items: List<ComandaItemAllocation>? = null
 ) {
     constructor(
         action: String = "checkout_commit",
@@ -37,7 +38,8 @@ data class CommandCheckoutCommitRequest(
         saleItems: List<SaleItem>? = null,
         discount: Double = 0.0,
         serviceFee: Double = 0.0,
-        serviceFeeKind: String? = null
+        serviceFeeKind: String? = null,
+        items: List<ComandaItemAllocation>? = null
     ) : this(
         action = action,
         comandaId = comandaId,
@@ -54,9 +56,15 @@ data class CommandCheckoutCommitRequest(
         saleItems = saleItems,
         discount = BigDecimal.valueOf(discount),
         serviceFee = BigDecimal.valueOf(serviceFee),
-        serviceFeeKind = serviceFeeKind
+        serviceFeeKind = serviceFeeKind,
+        items = items
     )
 }
+
+data class ComandaItemAllocation(
+    @SerializedName("comanda_item_id") val comandaItemId: String,
+    val quantity: Int
+)
 
 data class ComandaCheckoutCommitResponse(
     @SerializedName("success") val success: Boolean = true,

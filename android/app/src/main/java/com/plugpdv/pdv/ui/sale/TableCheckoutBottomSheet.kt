@@ -232,7 +232,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             // Print the transaction receipt automatically
             state.lastPaymentMethod?.let { method ->
                 state.lastPaymentCurrency?.let { currency ->
-                    printPaymentReceipt(method, state.lastPaymentAmount, currency, viewModel.currentChargeItems())
+                    printPaymentReceipt(method, state.lastPaymentAmount, currency, viewModel.currentReceiptAllocations())
                 }
             }
             
@@ -533,7 +533,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         method: String,
         amount: Double,
         authoritativeCurrency: String,
-        chargedItems: List<Pair<com.plugpdv.pdv.models.TableItem, Int>>
+        allocations: List<com.plugpdv.pdv.models.ComandaPaymentAllocationDto>
     ) {
         val ctx = context ?: return
         val cm = CurrencyManager.getInstance()
@@ -554,19 +554,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             else -> method
         }
         sb.append(ctx.getString(R.string.print_payment_method_label)).append(" ").append(methodLabel).append("\n")
-        if (chargedItems.isNotEmpty()) {
+        if (allocations.isNotEmpty()) {
             sb.append(ctx.getString(R.string.print_charge_items_label)).append("\n")
-            chargedItems.forEach { (item, quantity) ->
-                val name = item.product.name ?: ctx.getString(R.string.unnamed_product)
-                val baseAmount = java.math.BigDecimal.valueOf(item.product.selling_price ?: 0.0)
-                    .multiply(java.math.BigDecimal.valueOf(quantity.toLong()))
-                val lineAmount = cm.quoteBaseAmount(
-                    baseAmount,
-                    item.product.price_currency ?: paymentCurrency,
-                    paymentCurrency
-                ).getOrNull()?.let { cm.formatExplicit(it.transactionAmount.toDouble(), paymentCurrency) }
-                    ?: cm.formatExplicit(baseAmount.toDouble(), item.product.price_currency ?: paymentCurrency)
-                sb.append(name).append(" x").append(quantity).append(" ").append(lineAmount).append("\n")
+            allocations.forEach { allocation ->
+                val name = allocation.name ?: ctx.getString(R.string.unnamed_product)
+                val lineAmount = allocation.lineAmount?.let {
+                    cm.formatExplicit(it, allocation.currency ?: paymentCurrency)
+                }.orEmpty()
+                sb.append(name).append(" x").append(allocation.quantity).append(" ").append(lineAmount).append("\n")
             }
         }
         sb.append(ctx.getString(R.string.print_paid_amount_label)).append(" ").append(cm.formatExplicit(amount, paymentCurrency)).append("\n")
