@@ -210,6 +210,7 @@ class CheckoutViewModel @Inject constructor(
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
+                            isComandaClosed = true,
                             requiresReconciliation = false,
                             blockReason = null
                         )

@@ -508,17 +508,28 @@ class OutboxSyncManager @Inject constructor(
                             "INSUFFICIENT_STOCK", "COMANDA_ALREADY_CLOSED" -> {
                                 Log.e(TAG, "Operação K=${op.idempotencyKey} falhou por regra de negócio ($errorCode). Cancelando retries.")
                                 outboxDao.markAsFailedWithKey(op.id, errorCode, "BUSINESS_RULE_ERROR", false)
+                                _checkoutResultEvents.emit(CheckoutResultEvent(op.id, op.targetGroupKey, request.mesaId, false, true))
                                 SingleOperationResult.FAILED_PERMANENT
                             }
                             else -> {
                                 Log.e(TAG, "Operação K=${op.idempotencyKey} HTTP 409 não classificado ($errorCode). Cancelando retries.")
                                 outboxDao.markAsFailedWithKey(op.id, if (errorCode.isNotEmpty()) errorCode else "HTTP_409", "UNRECOVERABLE_ERROR", false)
+                                _checkoutResultEvents.emit(CheckoutResultEvent(op.id, op.targetGroupKey, request.mesaId, false, true))
                                 SingleOperationResult.FAILED_PERMANENT
                             }
                         }
                     } else if (statusCode == 400 || statusCode == 422) {
                         Log.e(TAG, "Operação K=${op.idempotencyKey} falhou com erro permanente (HTTP $statusCode). Cancelando retries.")
                         outboxDao.markAsFailedWithKey(op.id, "HTTP_$statusCode", "UNRECOVERABLE_ERROR", false)
+                        _checkoutResultEvents.emit(
+                            CheckoutResultEvent(
+                                operationId = op.id,
+                                comandaId = op.targetGroupKey,
+                                mesaId = request.mesaId,
+                                closed = false,
+                                requiresReconciliation = true
+                            )
+                        )
                         SingleOperationResult.FAILED_PERMANENT
                     } else if (statusCode == 401 || statusCode == 403) {
                         Log.w(TAG, "Operação K=${op.idempotencyKey} aguardando re-autenticação (HTTP $statusCode).")

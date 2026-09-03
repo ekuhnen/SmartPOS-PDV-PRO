@@ -236,7 +236,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 }
             }
             
-            val isFullyPaid = state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L
+            // A closed commit is authoritative even when the pre-commit balance
+            // snapshot has not refreshed yet.
+            val isFullyPaid = state.isComandaClosed ||
+                (state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L)
 
             if (isFullyPaid) {
                 viewModel.acknowledgePaymentSuccess()
