@@ -8,6 +8,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.mockito.kotlin.*
 import java.math.BigDecimal
+import com.plugpdv.pdv.utils.DefaultCurrencyRulesProvider
 
 class DashboardReportRepositoryTest {
     private val service: PosApiService = mock()
@@ -40,6 +41,12 @@ class DashboardReportRepositoryTest {
         val result = fetch()
         assertEquals(listOf("BRL", "PYG"), result.sales.map { it.money.currency })
         assertEquals(listOf(42000L, 102250L), result.sales.map { it.money.amountMinor })
+    }
+
+    @Test fun pyg30000RendersWithoutApplyingExchangeRate() {
+        val provider = DefaultCurrencyRulesProvider()
+        assertEquals("Gs. 30.000", provider.formatMinorUnits(30_000L, "PYG"))
+        assertNotEquals("Gs. 35.040.000", provider.formatMinorUnits(30_000L, "PYG"))
     }
 
     @Test fun canonicalNullIsAccepted() { stub(); assertFalse(fetch().hasCanonicalTotal) }
