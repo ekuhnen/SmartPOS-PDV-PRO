@@ -211,6 +211,8 @@ class CheckoutViewModel @Inject constructor(
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
                             isComandaClosed = true,
+                            balanceBaseMinor = 0L,
+                            currentToPay = 0.0,
                             requiresReconciliation = false,
                             blockReason = null
                         )

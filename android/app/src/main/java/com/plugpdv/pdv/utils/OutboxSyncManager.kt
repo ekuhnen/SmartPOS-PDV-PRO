@@ -474,7 +474,14 @@ class OutboxSyncManager @Inject constructor(
                                     mesaId = commitRes?.mesaId ?: request.mesaId,
                                     closed = commitRes?.closed == true || commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true),
                                     requiresReconciliation = false,
-                                    remainingBalance = commitRes?.remainingBalance ?: 0.0
+                                    // A closed response is authoritative; never let the
+                                    // pre-payment balance leak into the terminal result.
+                                    remainingBalance = if (commitRes?.closed == true ||
+                                        commitRes?.comandaStatus.equals("FECHADA", ignoreCase = true)) {
+                                        0.0
+                                    } else {
+                                        commitRes?.remainingBalance ?: 0.0
+                                    }
                                 )
                             )
                             SingleOperationResult.SYNCED
