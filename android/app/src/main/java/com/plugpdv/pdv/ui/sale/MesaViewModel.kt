@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.plugpdv.pdv.R
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.CatalogDao
+import com.plugpdv.pdv.database.ComandaMutationDao
 import com.plugpdv.pdv.models.CommandActionRequest
 import com.plugpdv.pdv.models.Sector
 import com.plugpdv.pdv.models.Table
@@ -34,7 +35,8 @@ class MesaViewModel @Inject constructor(
     private val tableReadRepository: TableReadRepository,
     @ApplicationContext private val context: Context,
     private val comandaMutationRepository: ComandaMutationRepository? = null,
-    private val comandaOutboxDispatcher: ComandaOutboxDispatcher? = null
+    private val comandaOutboxDispatcher: ComandaOutboxDispatcher? = null,
+    private val comandaMutationDao: ComandaMutationDao? = null
 ) : ViewModel() {
 
     private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
@@ -74,6 +76,9 @@ class MesaViewModel @Inject constructor(
     private val _openSuccess = MutableLiveData<Boolean>()
     val openSuccess: LiveData<Boolean> = _openSuccess
 
+    private val _openingPending = MutableLiveData<Boolean>(false)
+    val openingPending: LiveData<Boolean> = _openingPending
+
     private val _transferSuccess = MutableLiveData<Boolean>()
     val transferSuccess: LiveData<Boolean> = _transferSuccess
 
@@ -81,6 +86,7 @@ class MesaViewModel @Inject constructor(
     val sessionExpired: LiveData<Boolean> = _sessionExpired
 
     private var isRefreshingNetwork = false
+    private var pendingOpenTableId: String? = null
 
     init {
         observeRoomTables()
@@ -91,7 +97,15 @@ class MesaViewModel @Inject constructor(
             tableReadRepository.observeTables().collectLatest { roomTables ->
                 _tables.value = roomTables
                 TableManager.setTables(roomTables) // Mirror for legacy compatibility
-                deriveSectors(roomTables)
+            deriveSectors(roomTables)
+            val pendingId = pendingOpenTableId
+            val resolved = pendingId?.let { id -> roomTables.firstOrNull { it.id == id && !it.comandaId.isNullOrBlank() } }
+            if (resolved != null) {
+                pendingOpenTableId = null
+                _openingPending.value = false
+                _openedComandaId.value = resolved.comandaId
+                _openSuccess.value = true
+            }
             }
         }
     }
@@ -238,7 +252,8 @@ class MesaViewModel @Inject constructor(
                         is com.plugpdv.pdv.repository.OpenTableResult.Accepted -> {
                             // B13: L1 nunca deve ser atribuído a variáveis que representam comandaId canônica do servidor
                             _openedComandaId.value = null
-                            _openSuccess.value = true
+                            pendingOpenTableId = table.id
+                            _openingPending.value = true
 
                             comandaOutboxDispatcher?.let { dispatcher ->
                                 launch {
@@ -246,6 +261,29 @@ class MesaViewModel @Inject constructor(
                                         dispatcher.dispatchMutationById(result.mutationId)
                                     } catch (e: Exception) {
                                         Log.w("MesaViewModel", "Immediate dispatch failed: ${e.message}")
+                                    }
+                                }
+                            }
+                            comandaMutationDao?.let { dao ->
+                                launch {
+                                    dao.observeLatestOpenForTable(table.id.orEmpty()).collectLatest { mutation ->
+                                        when (mutation?.status) {
+                                            "SYNCED" -> {
+                                                val resolved = tableReadRepository.getTableById(table.id.orEmpty())
+                                                val canonical = resolved?.comandaId
+                                                if (!canonical.isNullOrBlank()) {
+                                                    pendingOpenTableId = null
+                                                    _openingPending.value = false
+                                                    _openedComandaId.value = canonical
+                                                    _openSuccess.value = true
+                                                }
+                                            }
+                                            "RECONCILIATION_REQUIRED", "PAUSED", "FAILED", "CANCELLED" -> {
+                                                pendingOpenTableId = null
+                                                _openingPending.value = false
+                                                _error.value = localized(R.string.open_table_failed, "OPEN_TABLE_FAILED")
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -316,6 +354,7 @@ class MesaViewModel @Inject constructor(
     fun consumeOpenSuccess() {
         _openSuccess.value = false
         _openedComandaId.value = null
+        _openingPending.value = false
     }
 
     fun consumeTransferSuccess() {

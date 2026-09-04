@@ -73,6 +73,9 @@ class OutboxSyncManager @Inject constructor(
     private val _queueStatus = MutableStateFlow(OutboxQueueStatus())
     val queueStatus: StateFlow<OutboxQueueStatus> = _queueStatus.asStateFlow()
 
+    private val _syncFeedback = MutableStateFlow<String?>(null)
+    val syncFeedback: StateFlow<String?> = _syncFeedback.asStateFlow()
+
     init {
         startObservingQueue()
         startPeriodicSync()
@@ -141,7 +144,19 @@ class OutboxSyncManager @Inject constructor(
 
     fun triggerSync() {
         scope.launch {
-            processPendingOutbox()
+            _syncFeedback.value = "SYNCING"
+            val completed = runCatching { processPendingOutbox(); true }.getOrDefault(false)
+            if (!completed) {
+                _syncFeedback.value = "PENDING"
+                return@launch
+            }
+            val active = outboxDao.getActiveOperationCount()
+            val reconciliation = outboxDao.getReconciliationCount()
+            _syncFeedback.value = when {
+                reconciliation > 0 -> "RECONCILIATION"
+                active == 0 -> "SYNCED"
+                else -> "PENDING"
+            }
         }
     }
 
@@ -232,6 +247,9 @@ class OutboxSyncManager @Inject constructor(
     }
 
     suspend fun drainPendingOutbox(): Boolean {
+        // Reclaim only stale backend work; provider payment is never relaunched.
+        val nowForRecovery = System.currentTimeMillis()
+        outboxDao.recoverStaleProcessing(nowForRecovery - 120_000L, nowForRecovery)
         recoverAndPromoteApprovedCheckouts()
         val now = System.currentTimeMillis()
         val groups = outboxDao.getDistinctPendingGroups(now)

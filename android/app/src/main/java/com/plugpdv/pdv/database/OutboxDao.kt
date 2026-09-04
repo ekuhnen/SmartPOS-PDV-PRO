@@ -25,6 +25,9 @@ interface OutboxDao {
     @Query("SELECT DISTINCT targetGroupKey FROM outbox_operations WHERE status = 'PENDING' AND nextRetryAt <= :currentTime")
     suspend fun getDistinctPendingGroups(currentTime: Long): List<String>
 
+    @Query("UPDATE outbox_operations SET status = 'PENDING', nextRetryAt = :now, isRetriable = 1 WHERE status = 'PROCESSING' AND isRetriable = 1 AND lastAttemptAt IS NOT NULL AND lastAttemptAt < :staleThreshold")
+    suspend fun recoverStaleProcessing(staleThreshold: Long, now: Long): Int
+
     @Query("SELECT * FROM outbox_operations WHERE status = 'PENDING' AND nextRetryAt <= :currentTime ORDER BY createdAt ASC LIMIT :limit")
     suspend fun getPendingBatch(currentTime: Long, limit: Int = 50): List<OutboxOperationEntity>
 
@@ -57,6 +60,12 @@ interface OutboxDao {
 
     @Query("SELECT COUNT(*) FROM outbox_operations WHERE status IN ('PENDING', 'PROCESSING')")
     suspend fun getPendingCount(): Int
+
+    @Query("SELECT COUNT(*) FROM outbox_operations WHERE status IN ('WAITING_PAYMENT', 'PENDING', 'PROCESSING')")
+    suspend fun getActiveOperationCount(): Int
+
+    @Query("SELECT COUNT(*) FROM outbox_operations WHERE status = 'FAILED' AND messageKey = 'REQUIRES_RECONCILIATION'")
+    suspend fun getReconciliationCount(): Int
 
     @Query("SELECT * FROM outbox_operations WHERE targetGroupKey = :groupKey ORDER BY createdAt DESC LIMIT 10")
     suspend fun getRecentOperationsForGroup(groupKey: String): List<OutboxOperationEntity>

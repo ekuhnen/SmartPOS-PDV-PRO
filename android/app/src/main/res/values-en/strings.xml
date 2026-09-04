@@ -121,4 +121,10 @@
     <string name="dashboard_cash_operations">Cash operations</string>
     <string name="dashboard_load_more">Load more</string>
     <string name="dashboard_report_error">Could not load the report. Try again.</string>
+    <string name="opening_comanda">Opening order...</string>
+    <string name="open_table_failed">Could not open the order.</string>
+    <string name="sync_in_progress">Synchronizing...</string>
+    <string name="sync_completed">Synchronized</string>
+    <string name="sync_still_pending">Still pending</string>
+    <string name="sync_requires_reconciliation">Reconciliation required</string>
 </resources>

@@ -103,6 +103,12 @@ class MesaFragment : Fragment() {
             }
         }
 
+        viewModel.openingPending.observe(viewLifecycleOwner) { pending ->
+            if (pending == true) {
+                Toast.makeText(requireContext(), R.string.opening_comanda, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         viewModel.sessionExpired.observe(viewLifecycleOwner) { expired ->
             if (expired == true) {
                 viewModel.consumeSessionExpired()

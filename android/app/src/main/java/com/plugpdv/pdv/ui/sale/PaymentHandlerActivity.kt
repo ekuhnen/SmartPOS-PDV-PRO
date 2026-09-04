@@ -9,12 +9,18 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.PaymentAttemptEntity
+import com.plugpdv.pdv.database.AppDatabase
+import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
+import com.google.gson.Gson
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.PaymentResultStore
+import com.plugpdv.pdv.utils.OutboxSyncManager
+import com.plugpdv.pdv.outbox.SaleSyncScheduler
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,6 +57,15 @@ class PaymentHandlerActivity : BaseActivity() {
 
     @Inject
     lateinit var outboxDao: com.plugpdv.pdv.database.OutboxDao
+
+    @Inject
+    lateinit var database: AppDatabase
+
+    @Inject
+    lateinit var paymentOutboxSyncManager: OutboxSyncManager
+
+    @Inject
+    lateinit var saleSyncScheduler: SaleSyncScheduler
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -390,21 +405,49 @@ class PaymentHandlerActivity : BaseActivity() {
                     rawCallbackUri = uri.toString()
                 )
                 withContext(Dispatchers.IO) {
-                    paymentAttemptDao.update(updatedAttempt)
-                    if (isCancelled || isRejected) {
-                        outboxDao.markAsFailedWithKey(
-                            id = updatedAttempt.reference,
-                            error = normalizedStatus,
-                            messageKey = "CANCELLED_PAYMENT",
-                            isRetriable = false
-                        )
-                        Log.i(TAG, "Outbox K=${updatedAttempt.reference} terminalizada como CANCELLED_PAYMENT ($normalizedStatus). Mesa continua aberta.")
+                    database.withTransaction {
+                        paymentAttemptDao.update(updatedAttempt)
+                        if (isApproved) {
+                            // A aprovação e a promoção do checkout são uma única
+                            // transição durável. A UI/PaymentResultStore é opcional.
+                            val operation = outboxDao.getById(updatedAttempt.reference)
+                            if (operation != null && operation.status in setOf("WAITING_PAYMENT", "PENDING", "PROCESSING")) {
+                                val request = runCatching {
+                                    Gson().fromJson(operation.payloadJson, CommandCheckoutCommitRequest::class.java)
+                                }.getOrNull()
+                                if (request != null) {
+                                    val approvedRequest = request.copy(
+                                        referenciaExterna = updatedAttempt.paymentAppPaymentId ?: request.referenciaExterna,
+                                        forma = updatedAttempt.paymentMethod ?: request.forma
+                                    )
+                                    outboxDao.update(operation.copy(
+                                        payloadJson = Gson().toJson(approvedRequest),
+                                        status = "PENDING",
+                                        nextRetryAt = System.currentTimeMillis()
+                                    ))
+                                    Log.i(TAG, "checkout transition APPROVED->PENDING operationId=${operation.id} mesaId=${request.mesaId} comandaId=${request.comandaId}")
+                                }
+                            }
+                        }
+                        if (isCancelled || isRejected) {
+                            outboxDao.markAsFailedWithKey(
+                                id = updatedAttempt.reference,
+                                error = normalizedStatus,
+                                messageKey = "CANCELLED_PAYMENT",
+                                isRetriable = false
+                            )
+                            Log.i(TAG, "Outbox K=${updatedAttempt.reference} terminalizada como CANCELLED_PAYMENT ($normalizedStatus). Mesa continua aberta.")
+                        }
                     }
                 }
                 Log.d(TAG, "Tentativa de pagamento atualizada no Room: ref=${updatedAttempt.reference}, status=$normalizedStatus")
             }
 
             if (isApproved) {
+                // O sync backend já foi promovido no Room acima. Disparar é apenas
+                // uma otimização; recuperação periódica/manual também o executa.
+                paymentOutboxSyncManager.triggerSync()
+                saleSyncScheduler.scheduleSync(this@PaymentHandlerActivity)
                 val effectiveRequestId = requestId ?: existingAttempt?.reference
                 PaymentResultStore.setResult(
                     PaymentResultStore.PaymentResult(

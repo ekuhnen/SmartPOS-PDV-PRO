@@ -40,4 +40,10 @@
     <string name="dashboard_cash_operations">Caja rembiapo</string>
     <string name="dashboard_load_more">Emyanyhẽve</string>
     <string name="dashboard_report_error">Ndaikatúi oñemyanyhẽ pe marandu. Ehaʼã jey.</string>
+    <string name="opening_comanda">Oñemondo pe comanda...</string>
+    <string name="open_table_failed">Ndaikatúi oñembope comanda.</string>
+    <string name="sync_in_progress">Oñemombyky...</string>
+    <string name="sync_completed">Oñemombykyma</string>
+    <string name="sync_still_pending">Oĩ gueteri oñemombyky hag̃ua</string>
+    <string name="sync_requires_reconciliation">Oñeikotevẽ ñemopotĩ</string>
 </resources>

@@ -994,11 +994,9 @@ class ComandaOpenDurableTest {
                 Thread.sleep(20)
             }
 
-            // Verificar que openSuccess é true, mas openedComandaId é NULL (nunca L1)
-            if (viewModel.error.value != null) {
-                throw AssertionError("ViewModel error: ${viewModel.error.value}")
-            }
-            assertEquals(true, viewModel.openSuccess.value)
+            // A abertura pendente não pode liberar a tela antes da confirmação canônica.
+            assertFalse(viewModel.openSuccess.value == true)
+            assertEquals(true, viewModel.openingPending.value)
             assertNull("openedComandaId must never be populated with localComandaId L1", viewModel.openedComandaId.value)
 
             val persistedTable = database.tableDao().getTableById("tbl_tb13")

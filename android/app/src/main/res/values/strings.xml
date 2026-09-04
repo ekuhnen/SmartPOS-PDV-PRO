@@ -278,4 +278,10 @@
     <string name="dashboard_cash_operations">Operações de caixa</string>
     <string name="dashboard_load_more">Carregar mais</string>
     <string name="dashboard_report_error">Não foi possível carregar o relatório. Tente novamente.</string>
+    <string name="opening_comanda">Abrindo comanda...</string>
+    <string name="open_table_failed">Não foi possível abrir a comanda.</string>
+    <string name="sync_in_progress">Sincronizando...</string>
+    <string name="sync_completed">Sincronizado</string>
+    <string name="sync_still_pending">Ainda pendente</string>
+    <string name="sync_requires_reconciliation">Requer conciliação</string>
 </resources>

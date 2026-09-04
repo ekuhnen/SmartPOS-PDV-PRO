@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ComandaMutationDao {
@@ -19,6 +20,9 @@ interface ComandaMutationDao {
 
     @Query("SELECT * FROM comanda_mutations WHERE tableId = :tableId AND operationType = 'OPEN_TABLE' AND status NOT IN ('SYNCED', 'RECONCILIATION_REQUIRED') ORDER BY createdAt DESC LIMIT 1")
     suspend fun getPendingOpenForTable(tableId: String): ComandaMutationEntity?
+
+    @Query("SELECT * FROM comanda_mutations WHERE tableId = :tableId AND operationType = 'OPEN_TABLE' ORDER BY createdAt DESC LIMIT 1")
+    fun observeLatestOpenForTable(tableId: String): Flow<ComandaMutationEntity?>
 
     @Query("SELECT * FROM comanda_mutations WHERE tenantId = :tenantId AND (status = 'PENDING' OR (status = 'PROCESSING' AND claimedAt < :staleThreshold)) AND nextRetryAt <= :now ORDER BY createdAt ASC")
     suspend fun getEligibleMutations(tenantId: String, now: Long, staleThreshold: Long): List<ComandaMutationEntity>

@@ -129,6 +129,21 @@ open class BaseActivity : AppCompatActivity() {
                 }
             }
         }
+        lifecycleScope.launch {
+            outboxSyncManager.syncFeedback.collectLatest { feedback ->
+                val message = when (feedback) {
+                    "SYNCING" -> getString(R.string.sync_in_progress)
+                    "SYNCED" -> getString(R.string.sync_completed)
+                    "PENDING" -> getString(R.string.sync_still_pending)
+                    "RECONCILIATION" -> getString(R.string.sync_requires_reconciliation)
+                    else -> null
+                }
+                if (message != null) {
+                    val rootView = findViewById<android.view.View>(android.R.id.content)
+                    rootView?.let { Snackbar.make(it, message, Snackbar.LENGTH_SHORT).show() }
+                }
+            }
+        }
     }
 
     fun showCurrencySelector(onCurrencyChanged: Runnable?) {

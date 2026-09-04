@@ -221,4 +221,10 @@
     <string name="dashboard_cash_operations">Operaciones de caja</string>
     <string name="dashboard_load_more">Cargar más</string>
     <string name="dashboard_report_error">No se pudo cargar el informe. Inténtalo de nuevo.</string>
+    <string name="opening_comanda">Abriendo comanda...</string>
+    <string name="open_table_failed">No fue posible abrir la comanda.</string>
+    <string name="sync_in_progress">Sincronizando...</string>
+    <string name="sync_completed">Sincronizado</string>
+    <string name="sync_still_pending">Aún pendiente</string>
+    <string name="sync_requires_reconciliation">Requiere conciliación</string>
 </resources>
