@@ -290,7 +290,8 @@
                     android:layout_weight="1"
                     android:layout_height="64dp"
                     android:text="@string/finish_payment"
-                    android:textSize="18sp"
+                    android:textSize="14sp"
+                    android:maxLines="2"
                     android:backgroundTint="@color/primary"
                     android:textColor="@color/white" />
             </LinearLayout>
