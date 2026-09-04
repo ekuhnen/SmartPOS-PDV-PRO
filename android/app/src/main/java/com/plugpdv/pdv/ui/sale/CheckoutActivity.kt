@@ -318,7 +318,7 @@ class CheckoutActivity : BaseActivity() {
                     putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.localId)
                     putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, prepared.saleRequest.total.toPlainString())
                     putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.saleRequest.convertedTotal ?: prepared.saleRequest.total).toPlainString())
-                    putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, prepared.saleRequest.paymentCurrency ?: prepared.saleRequest.currency)
+                    putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, prepared.saleRequest.paymentCurrency ?: prepared.saleRequest.transactionCurrency)
                     putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, prepared.amountsJson)
                     putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.localId)
                     putExtra(PaymentHandlerActivity.EXTRA_MERCHANT_ID, operatorId ?: "merchant123")

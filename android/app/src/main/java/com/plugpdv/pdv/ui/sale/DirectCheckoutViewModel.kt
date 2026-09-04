@@ -216,7 +216,7 @@ class DirectCheckoutViewModel @Inject constructor(
         val localSale = saleOutboxRepository.getLocalSaleById(unresolved.operationId) ?: return null
         val saleReq = runCatching { gson.fromJson(localSale.payloadJson, SaleRequest::class.java) }.getOrNull() ?: return null
 
-        val txCurrency = saleReq.paymentCurrency ?: saleReq.currency
+        val txCurrency = saleReq.transactionCurrency
         val baseCurrency = saleReq.currency
         val txAmount = saleReq.total
         val baseAmount = saleReq.convertedTotal ?: saleReq.total
@@ -269,6 +269,7 @@ class DirectCheckoutViewModel @Inject constructor(
             items = items,
             paymentMethod = method,
             currency = quote.transactionCurrency,
+            transactionCurrency = quote.transactionCurrency,
             paymentCurrency = quote.transactionCurrency,
             exchangeRatesSnapshot = quote.snapshot,
             caixa_session_id = sessionId,
@@ -323,7 +324,7 @@ class DirectCheckoutViewModel @Inject constructor(
                         _latestReceiptSnapshot.value = ReceiptMoneySnapshot(
                             operationId = operationId,
                             transactionAmount = saleReq.total,
-                            transactionCurrency = saleReq.paymentCurrency ?: saleReq.currency,
+                            transactionCurrency = saleReq.transactionCurrency,
                             baseAmount = saleReq.convertedTotal ?: saleReq.total,
                             baseCurrency = saleReq.currency,
                             paymentMethod = method,
@@ -370,6 +371,7 @@ class DirectCheckoutViewModel @Inject constructor(
             items = items,
             paymentMethod = "DINHEIRO",
             currency = quote.transactionCurrency,
+            transactionCurrency = quote.transactionCurrency,
             paymentCurrency = quote.transactionCurrency,
             exchangeRatesSnapshot = quote.snapshot,
             caixa_session_id = sessionId,
@@ -451,6 +453,7 @@ class DirectCheckoutViewModel @Inject constructor(
                 items = items,
                 paymentMethod = method,
                 currency = selectedQuote.transactionCurrency,
+                transactionCurrency = selectedQuote.transactionCurrency,
                 paymentCurrency = selectedQuote.transactionCurrency,
                 exchangeRatesSnapshot = selectedQuote.snapshot,
                 caixa_session_id = sessionId,

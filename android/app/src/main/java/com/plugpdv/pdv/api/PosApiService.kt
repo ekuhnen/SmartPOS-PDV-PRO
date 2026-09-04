@@ -30,7 +30,7 @@ interface PosApiService {
     suspend fun registerSale(
         @Header("Authorization") token: String,
         @Header("Idempotency-Key") idempotencyKey: String,
-        @Body sale: SaleRequest
+        @Body sale: SaleCreateRequest
     ): SaleResponse
 
     @GET("api-vendas")

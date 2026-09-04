@@ -27,7 +27,7 @@ openapi: 3.0.3
 
 info:
   title: PlugPDV Terminal API — Cash Session (deployed contract)
-  version: "2.0.0-7A2"
+  version: "2.1.0-7D"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -831,6 +831,63 @@ x-payment-session-binding:
     yet materialized as a sale (avoids double counting).
     Cash currency of a sale = `payment_currency` when set, else
     `sales.currency`.
+
+# =====================================================================
+# 14b. TRANSACTION CURRENCY AUTHORITY (PILOT-STAB-03B.7D)
+# =====================================================================
+x-transaction-currency-authority:
+  principle: |
+    A sale has THREE currencies and they are not interchangeable:
+      * base currency      — company/catalog currency (`products.price_currency`,
+                             `owner_base_currency`). Where the price is stored.
+      * transaction currency — the currency the operator is selling in. Decides
+                             price shown, TAX rows applied, subtotal and total.
+                             Persisted in `sales.currency`.
+      * settlement currency — how the customer pays (`sales.payment_currency`).
+                             Decides `converted_total` and cash rounding.
+  wire_contract:
+    endpoint: "POST /functions/v1/api-vendas"
+    field: transaction_currency
+    type: "string, 3-letter ISO 4217, optional"
+    semantics: |
+      When sent, the database converts each catalog price into that currency via
+      `product_transaction_price()` (authoritative rate: sale snapshot > company
+      rate > inverse), applies only the tax rows registered for that currency,
+      and persists `sales.currency = transaction_currency`.
+      When omitted (legacy published app), the database falls back to the
+      company default currency. No behaviour change for existing clients.
+    defaults: |
+      `payment_currency` defaults to `transaction_currency` when not sent.
+    errors:
+      - code: TRANSACTION_CURRENCY_INVALID
+        http: 422
+      - code: TRANSACTION_CURRENCY_NOT_ENABLED
+        http: 422
+        note: "currency must exist in company_currencies with is_enabled = true"
+  audit_trail: |
+    `sale_items` persists `base_currency`, `base_unit_price`, `fx_rate_used`,
+    `fx_rate_source` next to `unit_price` (already in transaction currency), so
+    the conversion that produced each line is reproducible.
+  never: |
+    The terminal never sends prices, taxes or totals. Amounts sent by the client
+    for those fields are ignored; the database recomputes them.
+  example:
+    request:
+      transaction_currency: PYG
+      payment_method: DINHEIRO
+      exchange_rates_snapshot: { PYG: 1160 }
+      itens: [{ produto_id: "<uuid>", qtd: 1 }]
+    persisted:
+      currency: PYG
+      subtotal: 20880
+      tax_amount: 2088
+      tax_snapshot: [{ name: IVA, percentage: 10, amount: 2088 }]
+      total: 22968
+      cash_amount_due: 22950
+      cash_rounding_diff: -18
+      sale_item: { unit_price: 20880, base_currency: BRL, base_unit_price: 18, fx_rate_used: 1160, fx_rate_source: sale_snapshot }
+
+
 
 # =====================================================================
 # 15. EXAMPLES (safe, no FX, no BRL)

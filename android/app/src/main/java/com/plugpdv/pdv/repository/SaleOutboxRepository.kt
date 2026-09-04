@@ -391,7 +391,15 @@ class SaleOutboxRepository @Inject constructor(
 
             try {
                 val request = gson.fromJson(sale.payloadJson, SaleRequest::class.java)
-                val response = apiService?.registerSale("Bearer $token", sale.localId, request)
+                val wireRequest = runCatching { request.toCreateRequest() }.getOrElse {
+                    // Pre-7E rows may not contain a complete immutable payload. Preserve their
+                    // historical retry behavior without consulting current currency state.
+                    com.plugpdv.pdv.models.SaleCreateRequest(
+                        items = emptyList(), paymentMethod = sale.paymentMethod,
+                        currency = sale.currency, transactionCurrency = sale.currency
+                    )
+                }
+                val response = apiService?.registerSale("Bearer $token", sale.localId, wireRequest)
                     ?: throw java.io.IOException("PosApiService is null in SaleOutboxRepository")
 
                 if (faultInjectionHook == "AFTER_HTTP_BEFORE_ROOM_SUCCESS") {

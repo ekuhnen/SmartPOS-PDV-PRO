@@ -9,6 +9,7 @@ data class SaleRequest(
     val items: List<SaleItem>,
     @SerializedName("payment_method") val paymentMethod: String,
     val currency: String = "BRL",
+    @SerializedName("transaction_currency") val transactionCurrency: String = currency,
     @SerializedName("payment_currency") val paymentCurrency: String? = null,
     @SerializedName("exchange_rates_snapshot") val exchangeRatesSnapshot: Map<String, String>? = null,
     @SerializedName("caixa_session_id") var caixa_session_id: String? = null,
@@ -19,12 +20,29 @@ data class SaleRequest(
     @SerializedName("service_fee_kind") var serviceFeeKind: String? = null,
     @SerializedName("converted_total") var convertedTotal: BigDecimal? = null
 ) {
+    /** Network projection: server-authoritative subtotal/tax/total/rounding fields are deliberately absent. */
+    fun toCreateRequest() = SaleCreateRequest(
+        customerName = customerName,
+        items = items,
+        paymentMethod = paymentMethod,
+        currency = currency,
+        transactionCurrency = transactionCurrency,
+        paymentCurrency = paymentCurrency,
+        exchangeRatesSnapshot = exchangeRatesSnapshot,
+        caixaSessionId = caixa_session_id,
+        operatorId = operatorId,
+        operatorName = operatorName,
+        serviceFeeAmount = serviceFeeAmount,
+        serviceFeeKind = serviceFeeKind
+    )
+
     constructor(
         customerName: String? = null,
         total: Double,
         items: List<SaleItem>,
         paymentMethod: String,
         currency: String = "BRL",
+        transactionCurrency: String = currency,
         paymentCurrency: String? = null,
         exchangeRatesSnapshot: Map<String, String>? = null,
         caixa_session_id: String? = null,
@@ -40,6 +58,7 @@ data class SaleRequest(
         items = items,
         paymentMethod = paymentMethod,
         currency = currency,
+        transactionCurrency = transactionCurrency,
         paymentCurrency = paymentCurrency,
         exchangeRatesSnapshot = exchangeRatesSnapshot,
         caixa_session_id = caixa_session_id,
@@ -51,3 +70,18 @@ data class SaleRequest(
         convertedTotal = convertedTotal?.let { BigDecimal.valueOf(it) }
     )
 }
+
+data class SaleCreateRequest(
+    val customerName: String? = null,
+    val items: List<SaleItem>,
+    @SerializedName("payment_method") val paymentMethod: String,
+    val currency: String,
+    @SerializedName("transaction_currency") val transactionCurrency: String,
+    @SerializedName("payment_currency") val paymentCurrency: String? = null,
+    @SerializedName("exchange_rates_snapshot") val exchangeRatesSnapshot: Map<String, String>? = null,
+    @SerializedName("caixa_session_id") val caixaSessionId: String? = null,
+    @SerializedName("operator_id") val operatorId: String? = null,
+    @SerializedName("operator_name") val operatorName: String? = null,
+    @SerializedName("service_fee_amount") val serviceFeeAmount: BigDecimal = BigDecimal.ZERO,
+    @SerializedName("service_fee_kind") val serviceFeeKind: String? = null
+)

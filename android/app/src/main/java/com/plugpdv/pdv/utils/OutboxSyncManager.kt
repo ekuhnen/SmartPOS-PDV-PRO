@@ -566,7 +566,7 @@ class OutboxSyncManager @Inject constructor(
                 }
                 "SALE_DIRECT" -> {
                     val request = gson.fromJson(op.payloadJson, SaleRequest::class.java)
-                    val response = apiService.registerSale("Bearer $token", op.idempotencyKey, request)
+                    val response = apiService.registerSale("Bearer $token", op.idempotencyKey, request.toCreateRequest())
                     if (response.id != null) {
                         SingleOperationResult.SYNCED
                     } else {
