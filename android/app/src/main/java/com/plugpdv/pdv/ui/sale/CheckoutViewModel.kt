@@ -49,7 +49,7 @@ data class CheckoutUiState(
     val balanceBaseMinor: Long? = null,
     val authoritativeSubtotal: Double? = null,
     val authoritativeTaxAmount: Double? = null,
-    val authoritativeTaxSnapshot: List<TaxSnapshotDto>? = null,
+    val authoritativeTaxSnapshot: TaxSnapshotDto? = null,
     val authoritativeServiceFee: Double? = null,
     val authoritativeTotal: Double? = null,
     val refreshWarning: String? = null,

@@ -335,7 +335,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val currency = state.baseCurrency ?: cm.getBaseCurrency()
         addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(state.authoritativeSubtotal ?: state.currentToPay, currency))
         state.authoritativeTaxAmount?.let { amount ->
-            val snapshot = state.authoritativeTaxSnapshot?.firstOrNull()
+            val snapshot = state.authoritativeTaxSnapshot
             val taxName = snapshot?.name ?: getString(R.string.tax)
             val rate = snapshot?.rate
             val label = if (rate != null) "$taxName (${rate.toString().removeSuffix(".0")}%)" else taxName

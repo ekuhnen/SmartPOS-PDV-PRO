@@ -14,7 +14,7 @@ data class ComandaDetailResponse(
     @SerializedName("saldo_base") val saldoBase: Double? = null,
     @SerializedName("subtotal") val subtotal: Double? = null,
     @SerializedName("tax_amount") val taxAmount: Double? = null,
-    @SerializedName("tax_snapshot") val taxSnapshot: List<TaxSnapshotDto>? = null,
+    @SerializedName("tax_snapshot") val taxSnapshot: TaxSnapshotDto? = null,
     @SerializedName("service_fee") val serviceFee: Double? = null,
     @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false,
