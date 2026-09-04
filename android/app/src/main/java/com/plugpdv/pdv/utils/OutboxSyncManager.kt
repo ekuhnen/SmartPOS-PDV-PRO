@@ -454,8 +454,10 @@ class OutboxSyncManager @Inject constructor(
                         }
                     }
 
+                    Log.i(TAG, "checkout_dispatch operationId=${op.id} comandaId=${request.comandaId} mesaId=${request.mesaId} method=${request.forma}")
                     val response = apiService.commitComandaCheckout("Bearer $token", op.idempotencyKey, request)
                     val statusCode = response.code()
+                    Log.i(TAG, "checkout_dispatch_result operationId=${op.id} httpStatus=$statusCode success=${response.isSuccessful}")
 
                     if (response.isSuccessful && response.body()?.success == true) {
                         if (faultInjectionHook == "AFTER_HTTP_BEFORE_ROOM_SUCCESS") {

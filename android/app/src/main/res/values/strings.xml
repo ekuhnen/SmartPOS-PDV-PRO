@@ -284,4 +284,6 @@
     <string name="sync_completed">Sincronizado</string>
     <string name="sync_still_pending">Ainda pendente</string>
     <string name="sync_requires_reconciliation">Requer conciliação</string>
+    <string name="payment_syncing">Pagamento aprovado. Sincronizando...</string>
+    <string name="payment_approved_pending_sync">Pagamento aprovado. Aguardando sincronização.</string>
 </resources>

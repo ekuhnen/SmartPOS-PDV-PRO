@@ -127,4 +127,7 @@
     <string name="sync_completed">Synchronized</string>
     <string name="sync_still_pending">Still pending</string>
     <string name="sync_requires_reconciliation">Reconciliation required</string>
+    <string name="payment_syncing">Payment approved. Syncing...</string>
+    <string name="payment_approved_pending_sync">Payment approved. Awaiting sync.</string>
+    <string name="payment_requires_reconciliation">Approved payment requires reconciliation.</string>
 </resources>

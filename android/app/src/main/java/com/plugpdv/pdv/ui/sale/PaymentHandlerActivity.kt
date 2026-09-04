@@ -185,6 +185,8 @@ class PaymentHandlerActivity : BaseActivity() {
                 callbackUri += "&table_id=$tableId"
             }
         }
+        callbackUri += if (callbackUri.contains("?")) "&" else "?"
+        callbackUri += "request_id=${Uri.encode(existingAttempt.reference)}"
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
 
@@ -272,6 +274,8 @@ class PaymentHandlerActivity : BaseActivity() {
                 callbackUri += "&table_id=$tableId"
             }
         }
+        callbackUri += if (callbackUri.contains("?")) "&" else "?"
+        callbackUri += "request_id=${Uri.encode(requestId)}"
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
 

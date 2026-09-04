@@ -170,6 +170,15 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val digits = state.baseMinorUnitDigits
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
 
+        val showSyncStatus = state.isPendingSync || state.isLoading || state.requiresReconciliation
+        b.paymentSyncStatusRow.visibility = if (showSyncStatus) View.VISIBLE else View.GONE
+        b.tvPaymentSyncStatus.text = when {
+            state.requiresReconciliation -> getString(R.string.payment_requires_reconciliation)
+            state.isPendingSync && state.isLoading -> getString(R.string.payment_syncing)
+            state.isPendingSync -> getString(R.string.payment_approved_pending_sync)
+            else -> ""
+        }
+
         if (digits == null || state.baseCurrency.isNullOrBlank()) {
             b.tvComandaTotal.text = "--"
             b.tvTotalPaid.text = "--"
@@ -224,7 +233,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             } else if (itemSelectionMissing) {
                 b.btnPayLink.setText(R.string.select_item_for_payment)
             } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
-                b.btnPayLink.text = state.blockReason
+                b.btnPayLink.setText(R.string.sync_action)
             } else {
                 b.btnPayLink.setText(R.string.charge)
             }
