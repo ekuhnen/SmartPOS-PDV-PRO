@@ -1,0 +1,890 @@
+openapi: 3.0.3
+
+# =====================================================================
+# PILOT-STAB-03B.7A2 — TERMINAL CASH CONTRACT COMPLETION
+#
+# This file documents the CASH-SESSION API **as deployed today** in the
+# backend (Edge Function `api-caixa` + the SQL authority it calls).
+# It invents nothing. 7A1 listed seven contract debts; 7A2 closed all
+# seven in the BACKEND, and this revision describes the closed state.
+#
+# Source of truth used to write this document:
+#   supabase/functions/api-caixa/index.ts
+#   supabase/functions/_shared/idempotency.ts
+#   public.caixa_current_session(uuid, text, text)
+#   public.open_caixa_session(uuid, uuid, text, text, numeric, text, text, uuid)
+#   public.register_caixa_cash_movement(uuid, text, numeric, text, text, uuid, text, text)
+#   public.caixa_session_cash_position(uuid)
+#   public.caixa_session_payments(uuid)
+#   public.caixa_session_close_preview(uuid)
+#   public.close_caixa_session(uuid, jsonb, text, uuid, text)
+#   public.caixa_operacoes, public.caixa_session_closures
+#
+# Backend behaviour changed by this stage: additive only. No existing
+# request shape, field name or status code was altered, so the deployed
+# Android build keeps working untouched.
+# =====================================================================
+
+info:
+  title: PlugPDV Terminal API — Cash Session (deployed contract)
+  version: "2.0.0-7A2"
+  description: |
+    Terminal-facing contract for the cash session (caixa).
+
+    ## Session identity
+    A cash session **is** the `ABERTURA` (opening) row of `caixa_operacoes`.
+    `session_id` is therefore the id of that opening operation. Every later
+    movement of the session carries `caixa_session_id = session_id`.
+    Closing inserts a `FECHAMENTO` row with `valor = 0` — closing is an
+    event, never a cash movement.
+
+    ## Money transport (normative)
+    Every monetary field on the wire is a **JSON decimal number** (never a
+    string, never integer minor units). It comes from a PostgreSQL
+    `numeric` column/expression, already rounded by the database with
+    `round_money`/`round_cash` for the currency of the record.
+    The terminal MUST NOT multiply by 100 to guess minor units: PYG and CLP
+    have 0 decimals, BRL/USD/EUR have 2. If the Android domain layer wants
+    `Long` minor units it must scale using the ISO minor-unit count of the
+    `currency` field that accompanies the amount, and must never re-round.
+
+    ## Currency rules (normative)
+    * Currency is an ISO-4217 uppercase 3-letter code, validated as
+      `^[A-Z]{3}$`.
+    * Currency is a first-class attribute of each operation and of each
+      position line. It is immutable after insert.
+    * There is **no FX** anywhere in cash accounting: no conversion, no
+      cross-currency addition, no "grand total".
+    * Historical/closed session values are served from the frozen closure
+      snapshot and must never be re-rendered with the company/default
+      currency.
+
+    ## Auth
+    Every request requires `Authorization: Bearer <access token>`.
+    The backend derives the tenant (owner) and the operator from the token;
+    the terminal never sends an owner id. Sub-users must hold the
+    `smart_pos` or `sales` module permission.
+    Additional deployed gates (unchanged by this document):
+    `X-Device-Id` (device kill-switch), `X-Api-Version` / `X-App-Version`
+    (version gate → `426 UPGRADE_REQUIRED`).
+
+servers:
+  - url: https://ypvcxgkzolzxggfrmzlz.supabase.co/functions/v1
+    description: Deployed Edge Functions base URL
+
+x-money-transport:
+  json_type: number
+  representation: decimal
+  minor_units_on_wire: false
+  rounding: performed in the database, per the currency of the record
+  currency_association: every amount is paired with a sibling `currency` field
+    (or belongs to a position/summary line keyed by `currency`)
+
+x-idempotency:
+  summary: |
+    Cash operations that CREATE money facts are idempotent by
+    `Idempotency-Key`. The authority is the database
+    (`terminal_operations` + `terminal_op_begin` / `terminal_op_complete`),
+    exactly like the rest of the terminal API; `api-caixa` only translates the
+    verdict into HTTP and stores the response for replay.
+  header: "Idempotency-Key: <string, unique per device>"
+  requires: the key is only honoured together with `X-Device-Id`.
+  protected_actions: [abrir, sangria, pay_in, cash_refund, fechar]
+  semantics:
+    first_call: executed normally (200/201).
+    replay_same_key_same_body: "the stored response, plus header `X-Idempotent-Replay: true`."
+    replay_same_key_different_body: 409 `IDEMPOTENCY_CONFLICT`.
+    same_key_still_running: 409 `OPERATION_IN_PROGRESS`.
+    no_key: executes without replay protection (compatible with older clients).
+  abrir:
+    idempotent: true
+    extra_guard: single-open-session. A second `abrir` while a session is open
+      returns 409 `CASH_SESSION_ALREADY_OPEN` with the open `session_id`.
+  sangria:
+    idempotent: true
+    note: a retried request with the same key NO LONGER creates a second withdrawal.
+  pay_in:
+    idempotent: true
+  cash_refund:
+    idempotent: true
+  fechar:
+    idempotent: true
+    mechanism: >-
+      convergent by state AND by key. If the session is already closed the RPC
+      returns the frozen snapshot with `already_closed: true` and HTTP 200
+      (first close returns 201). Closing is never a cash movement.
+  preview_fechamento:
+    idempotent: true
+    note: read-only, no key needed.
+
+x-contract-debt-closed:
+  - id: CONTRACT_DEBT-1
+    area: idempotency
+    resolution: |
+      `abrir`, `sangria`, `pay_in`, `cash_refund` and `fechar` now open a
+      `terminal_operations` record (`caixa.*` operation types) via
+      `_shared/idempotency.ts`. Replay returns the stored response.
+  - id: CONTRACT_DEBT-2
+    area: pay-in / reforço
+    resolution: |
+      new action `pay_in`, backed by
+      `public.register_caixa_cash_movement(..., 'PAY_IN', ...)`.
+  - id: CONTRACT_DEBT-3
+    area: cash refund
+    resolution: |
+      new action `cash_refund`, backed by
+      `public.register_caixa_cash_movement(..., 'CASH_REFUND', ...)`.
+  - id: CONTRACT_DEBT-4
+    area: error contract
+    resolution: |
+      every business error now returns `{ error, code, message, message_key }`.
+      Unknown database exceptions are the only 500 (`INTERNAL_ERROR`) and are
+      never leaked verbatim.
+  - id: CONTRACT_DEBT-5
+    area: session read
+    resolution: |
+      `GET /api-caixa?current_session=1[&terminal_id=]` →
+      `public.caixa_current_session`. Returns `{ session: null }` when no
+      session is open. The terminal no longer infers state from history.
+  - id: CONTRACT_DEBT-6
+    area: terminal identity
+    resolution: |
+      the terminal id is read from `X-Terminal-Id`, the body field
+      `terminal_id`, or (fallback) `X-Device-Id`, and is persisted by
+      `open_caixa_session`. Every movement of the session inherits it.
+  - id: CONTRACT_DEBT-7
+    area: opening validation
+    resolution: |
+      `open_caixa_session` validates the amount (finite, >= 0, <= 1e12) and the
+      currency (ISO shape AND enabled for the company via
+      `company_currency_enabled`), raising `INVALID_AMOUNT` /
+      `INVALID_CURRENCY`. When `moeda` is omitted the company default currency
+      is used — never a hardcoded BRL.
+
+x-cash-currency-invariant: |
+  The opening defines the currency of the drawer. A movement sent with a
+  different currency is REFUSED with 422 `CASH_CURRENCY_MISMATCH` — it must
+  never create a second-currency line in the cash position. Sending no
+  currency inherits the session currency. There is no FX in cash accounting.
+
+paths:
+  /api-caixa:
+    get:
+      operationId: cashHistoryOrCashPosition
+      summary: Session/movement history, or physical cash position of one session
+      description: |
+        Three deployed behaviours on the same path:
+
+        * `?current_session=1` → the CURRENT OPEN session of the authenticated
+          operator (optionally scoped by `terminal_id`), or `{ session: null }`.
+          This is the canonical way the terminal recovers its state after a
+          restart. It never guesses from history.
+        * `?cash_position_session_id=<uuid>` → physical cash position of that
+          session, per currency (no FX).
+        * otherwise → list of `caixa_operacoes` rows of the authenticated
+          tenant, newest first, plus per-currency aggregates
+          (`totals_by_currency`, never a mixed grand total).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: current_session
+          in: query
+          schema: { type: string, example: "1" }
+          description: |
+            Any truthy value selects the current-open-session read. Takes
+            precedence over every other parameter.
+        - name: terminal_id
+          in: query
+          schema: { type: string }
+          description: |
+            Only with `current_session`. Restricts the lookup to a session
+            opened by that terminal. Falls back to the `X-Terminal-Id` header.
+        - name: cash_position_session_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: When present, the history parameters are ignored.
+        - name: date
+          in: query
+          schema: { type: string, example: "2026-09-04" }
+          description: Filters `created_at` between `<date>T00:00:00` and `<date>T23:59:59`.
+        - name: operator_id
+          in: query
+          schema: { type: string }
+        - name: tipo
+          in: query
+          schema:
+            type: string
+            enum: [ABERTURA, SANGRIA, FECHAMENTO, SUPRIMENTO, REFORCO, PAY_IN, DEVOLUCAO, ESTORNO_DINHEIRO, CASH_REFUND]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: History, or cash position when `cash_position_session_id` is used.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CurrentSessionResponse"
+                  - $ref: "#/components/schemas/CashPositionResponse"
+                  - $ref: "#/components/schemas/CashHistoryResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/PlainServerError" }
+
+    post:
+      operationId: cashAction
+      summary: Cash session actions (action-based POST)
+      description: |
+        Single endpoint, discriminated by the `action` field.
+        Deployed actions: `abrir`, `sangria`, `pay_in`, `cash_refund`,
+        `fechar`, `preview_fechamento`. Any other value returns 400
+        `UNKNOWN_ACTION` with the list of valid actions.
+
+        Send `Idempotency-Key` (with `X-Device-Id`) on every action that
+        creates a fact — see `x-idempotency`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 200 }
+          description: Unique per device. Replay returns the stored response.
+        - name: X-Terminal-Id
+          in: header
+          required: false
+          schema: { type: string }
+          description: Terminal identity persisted on the opening; falls back to `X-Device-Id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/AbrirRequest"
+                - $ref: "#/components/schemas/SangriaRequest"
+                - $ref: "#/components/schemas/PayInRequest"
+                - $ref: "#/components/schemas/CashRefundRequest"
+                - $ref: "#/components/schemas/FecharRequest"
+                - $ref: "#/components/schemas/PreviewFechamentoRequest"
+              discriminator: { propertyName: action }
+            examples:
+              abrir_pyg:
+                summary: Open with Gs. 15.000
+                value: { action: abrir, valor: 15000, moeda: PYG, observacao: "Fundo de troco" }
+              sangria_pyg:
+                summary: Withdraw Gs. 5.000
+                value: { action: sangria, session_id: "00000000-0000-0000-0000-000000000000", valor: 5000, observacao: "Sangria para cofre" }
+              pay_in_pyg:
+                summary: Cash pay-in / reforço of Gs. 3.000
+                value: { action: pay_in, session_id: "00000000-0000-0000-0000-000000000000", valor: 3000, observacao: "Reforço de troco", reference: "REF-1" }
+              cash_refund_pyg:
+                summary: Cash refund of Gs. 1.000 given back to a customer
+                value: { action: cash_refund, session_id: "00000000-0000-0000-0000-000000000000", valor: 1000, observacao: "Devolução ao cliente", reference: "venda-123" }
+              preview:
+                value: { action: preview_fechamento, session_id: "00000000-0000-0000-0000-000000000000" }
+              fechar_counted:
+                summary: Close declaring a physical count in PYG
+                value:
+                  action: fechar
+                  session_id: "00000000-0000-0000-0000-000000000000"
+                  observacao: "Fechamento do turno"
+                  counted_by_currency:
+                    - { currency: PYG, counted_amount: 10000 }
+              fechar_no_count:
+                summary: Close WITHOUT declaring any count
+                value: { action: fechar, session_id: "00000000-0000-0000-0000-000000000000" }
+      responses:
+        "200":
+          description: |
+            `preview_fechamento`, `fechar` on an already-closed session
+            (`already_closed: true`), or an idempotent replay of any action
+            (with `X-Idempotent-Replay: true`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionSnapshot" }
+        "201":
+          description: |
+            Fact created: `abrir` (session), `sangria` / `pay_in` /
+            `cash_refund` (movement), or first `fechar` of the session.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CashMovementResult"
+                  - $ref: "#/components/schemas/SessionSnapshot"
+        "400":
+          description: |
+            `SESSION_ID_REQUIRED`, `UNKNOWN_ACTION` (with `valid_actions`), or
+            `device_id_required` from the device gate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "403":
+          description: |
+            `USER_BLOCKED`, `MODULE_FORBIDDEN`, `DEVICE_BLOCKED`,
+            `device_not_registered`, or `FORBIDDEN_TENANT` when the session
+            belongs to another tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "404":
+          description: "`CASH_SESSION_NOT_FOUND` — unknown id, other tenant, or not an ABERTURA row."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "409":
+          description: |
+            `CASH_SESSION_ALREADY_OPEN` (a session is already open — body
+            carries the open `session_id`), `CASH_SESSION_CLOSED`,
+            `IDEMPOTENCY_CONFLICT` (same key, different body),
+            `OPERATION_IN_PROGRESS` (same key still running).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "422":
+          description: Typed business validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+              examples:
+                bad_amount: { value: { error: "Amount must be a finite decimal within the allowed range", code: INVALID_AMOUNT, message_key: cash.error.invalid_amount } }
+                bad_currency: { value: { error: "Currency is invalid or not enabled for this company", code: INVALID_CURRENCY, message_key: cash.error.invalid_currency } }
+                currency_mismatch: { value: { error: "Cash movement currency must match the session opening currency", code: CASH_CURRENCY_MISMATCH, message_key: cash.error.cash_currency_mismatch } }
+                bad_type: { value: { error: "Cash movement type is not supported", code: CASH_MOVEMENT_TYPE_INVALID, message_key: cash.error.cash_movement_type_invalid } }
+                not_array: { value: { error: "counted_by_currency must be an array", code: COUNTED_INVALID } }
+                count_currency: { value: { error: "Invalid currency in counted_by_currency", code: COUNTED_CURRENCY_INVALID } }
+                count_amount: { value: { error: "Invalid counted_amount", code: COUNTED_AMOUNT_INVALID } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "426": { $ref: "#/components/responses/UpgradeRequired" }
+        "500":
+          description: "`INTERNAL_ERROR` — unexpected failure; never leaks the database message."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <supabase access token>`. No token values are
+        documented here. Missing/!Bearer → 401 `"Unauthorized"`;
+        invalid/expired → 401 `"Invalid or expired token"`.
+
+  responses:
+    Unauthorized:
+      description: '`{ "error": "Unauthorized" }` or `{ "error": "Invalid or expired token" }` (no code).'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/PlainError" }
+    Forbidden:
+      description: Deactivated user, missing module permission, or FORBIDDEN_TENANT.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CodedError" }
+    UpgradeRequired:
+      description: 'Version gate rejected the app/API version (`code: UPGRADE_REQUIRED`).'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CodedError" }
+    PlainServerError:
+      description: |
+        Generic, no code: `"Failed to fetch operations"`,
+        `"Failed to compute cash position"`, `"Failed to open register"`,
+        `"Failed to register sangria"`, `"Failed to close register"`,
+        `"Failed to build closing preview"`, `"Internal server error"`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/PlainError" }
+
+  schemas:
+    Currency:
+      type: string
+      pattern: "^[A-Z]{3}$"
+      example: PYG
+      description: ISO-4217, uppercase. Immutable once stored. Never converted.
+
+    Money:
+      type: number
+      description: |
+        Decimal JSON number in the currency of the sibling `currency` field.
+        Already rounded by the database for that currency (PYG/CLP: 0
+        decimals; BRL/USD/EUR: 2). Not minor units.
+
+    # ---------------- 2. CASH SESSION READ ----------------
+    CaixaOperacao:
+      type: object
+      description: |
+        A row of `caixa_operacoes` exactly as returned by `select *`
+        (response of `abrir` and `sangria`, and each item of `operacoes`).
+      properties:
+        id: { type: string, format: uuid, description: For `tipo = ABERTURA` this is the `session_id`. }
+        user_id: { type: string, format: uuid, description: Tenant (owner) id, resolved from the token. }
+        operator_id: { type: string, nullable: true }
+        operator_name: { type: string, nullable: true }
+        tipo:
+          type: string
+          enum: [ABERTURA, SANGRIA, FECHAMENTO, SUPRIMENTO, REFORCO, PAY_IN, DEVOLUCAO, ESTORNO_DINHEIRO, CASH_REFUND]
+        valor: { $ref: "#/components/schemas/Money" }
+        observacao: { type: string, nullable: true }
+        caixa_session_id: { type: string, format: uuid, nullable: true, description: NULL on the ABERTURA row itself. }
+        branch_id: { type: string, format: uuid, nullable: true }
+        currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+          description: |
+            Stamped by trigger when absent from the request:
+            explicit `currency` → `resumo_json.moeda` →
+            `company_default_currency(user_id)`. Never hardcoded BRL.
+        resumo_json:
+          type: object
+          nullable: true
+          description: 'Mirrors `moeda`; on FECHAMENTO also `closing_is_not_a_movement: true`.'
+        created_at: { type: string, format: date-time }
+
+    CashHistoryResponse:
+      type: object
+      properties:
+        total: { type: integer, description: Number of rows returned (not a money value). }
+        operacoes:
+          type: array
+          items: { $ref: "#/components/schemas/CaixaOperacao" }
+        totals_by_currency:
+          type: array
+          description: Per-currency aggregate of the returned rows. Never summed across currencies.
+          items:
+            type: object
+            properties:
+              currency: { type: string, description: '`UNKNOWN` when the row has neither column nor resumo_json currency.' }
+              opening: { $ref: "#/components/schemas/Money" }
+              withdrawals: { $ref: "#/components/schemas/Money" }
+              closing: { $ref: "#/components/schemas/Money" }
+              count: { type: integer }
+
+    CashPosition:
+      type: object
+      description: One row of `caixa_session_cash_position(session_id)` — physical cash only.
+      properties:
+        currency: { $ref: "#/components/schemas/Currency" }
+        opening: { $ref: "#/components/schemas/Money" }
+        cash_receipts:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Sum of session payments whose method family rounds cash (`payment_method_rounds_cash`). PIX/card are excluded.
+        cash_payins:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: '`tipo IN (SUPRIMENTO, REFORCO, PAY_IN)`. Field name is `cash_payins` (not `pay_ins`).'
+        withdrawals:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: '`tipo = SANGRIA`.'
+        cash_refunds:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: '`tipo IN (DEVOLUCAO, ESTORNO_DINHEIRO, CASH_REFUND)`.'
+        expected_cash:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: opening + cash_receipts + cash_payins − withdrawals − cash_refunds, per currency.
+      required: [currency, opening, cash_receipts, cash_payins, withdrawals, cash_refunds, expected_cash]
+
+    ClosedPosition:
+      type: object
+      description: |
+        Position line served for a CLOSED session (from the frozen
+        `caixa_session_closures` snapshot). Same fields as CashPosition plus
+        the count outcome.
+      allOf:
+        - $ref: "#/components/schemas/CashPosition"
+        - type: object
+          properties:
+            counted_cash:
+              allOf: [{ $ref: "#/components/schemas/Money" }]
+              nullable: true
+              description: NULL = no count declared. 0 = counted and physically zero.
+            variance:
+              allOf: [{ $ref: "#/components/schemas/Money" }]
+              nullable: true
+              description: '`counted_cash − expected_cash`. NULL whenever counted_cash is NULL.'
+
+    CashPositionResponse:
+      type: object
+      description: Response of `GET /api-caixa?cash_position_session_id=<uuid>`.
+      properties:
+        session_id: { type: string, format: uuid }
+        cash_position_by_currency:
+          type: array
+          items: { $ref: "#/components/schemas/CashPosition" }
+
+    CurrentSessionResponse:
+      type: object
+      description: |
+        Response of `GET /api-caixa?current_session=1`. Authoritative state of
+        the drawer, from `public.caixa_current_session`.
+      properties:
+        session:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/SessionSnapshot" }]
+          description: |
+            `null` when NO session is open for this operator/terminal — that is
+            the normal, expected answer, not an error. When present it carries
+            `status: OPEN`, `session_id`, `terminal_id`, `opening_currency`,
+            `opening_amount`, `movements`, `positions_by_currency` and
+            `payments_by_method`.
+      required: [session]
+
+    CashMovementResult:
+      type: object
+      description: |
+        Response (201) of `sangria`, `pay_in` and `cash_refund`.
+      properties:
+        operation_id: { type: string, format: uuid, description: Id of the created `caixa_operacoes` row. }
+        session_id: { type: string, format: uuid }
+        tipo: { type: string, enum: [SANGRIA, PAY_IN, CASH_REFUND] }
+        currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          description: Always the session currency.
+        amount:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Already rounded by the database for that currency.
+        cash_position_by_currency:
+          type: array
+          items: { $ref: "#/components/schemas/CashPosition" }
+          description: Position AFTER the movement, so the terminal never recomputes it.
+      required: [operation_id, session_id, tipo, currency, amount]
+
+
+    PaymentSummaryLine:
+      type: object
+      description: One line of `caixa_session_payments(session_id)` — ALL methods, cash and non-cash.
+      properties:
+        currency: { $ref: "#/components/schemas/Currency" }
+        payment_method:
+          type: string
+          description: |
+            Uppercase `payment_code` when present, else the legacy method /
+            `forma` enum, else `UNKNOWN`. Examples seen in production:
+            `DINHEIRO`, `CASH`, `PIX_TRANSFERENCIA`, `CARTAO`, `VOUCHER`.
+        is_cash: { type: boolean, description: From `payment_method_rounds_cash`. Only these feed `cash_receipts`. }
+        count: { type: integer, description: Number of payments in the group (SQL column `cnt`, serialized as `count`). }
+        amount: { $ref: "#/components/schemas/Money" }
+      required: [currency, payment_method, is_cash, count, amount]
+
+    # ---------------- 7 & 9. PREVIEW / CLOSE SNAPSHOT ----------------
+    SessionSnapshot:
+      type: object
+      description: |
+        Payload returned by `preview_fechamento` (action) and by `fechar`.
+        While the session is OPEN it is computed live; once CLOSED it is the
+        immutable Z snapshot read from `caixa_session_closures` and is never
+        recomputed. Two pairs of aliases are deployed and carry identical
+        content: `positions_by_currency` == `cash_position_by_currency`, and
+        `payments_by_method_and_currency` == `payments_by_method`.
+      properties:
+        session_id: { type: string, format: uuid }
+        operator_id: { type: string, nullable: true, description: Operator that OPENED the session. }
+        operator_name: { type: string, nullable: true }
+        terminal_id: { type: string, nullable: true, description: From opening `resumo_json.terminal_id`; see CONTRACT_DEBT-6. }
+        branch_id: { type: string, format: uuid, nullable: true }
+        opened_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time, nullable: true }
+        closed_by: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [OPEN, CLOSED] }
+        opening_currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+        opening_amount: { $ref: "#/components/schemas/Money" }
+        positions_by_currency:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/CashPosition"
+              - $ref: "#/components/schemas/ClosedPosition"
+        cash_position_by_currency:
+          type: array
+          description: Alias of `positions_by_currency` (same array).
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/CashPosition"
+              - $ref: "#/components/schemas/ClosedPosition"
+        payments_by_method_and_currency:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentSummaryLine" }
+        payments_by_method:
+          type: array
+          description: Alias of `payments_by_method_and_currency` (same array).
+          items: { $ref: "#/components/schemas/PaymentSummaryLine" }
+        movements:
+          type: array
+          description: Every cash movement of the session, oldest first (opening row included).
+          items:
+            type: object
+            properties:
+              operation_id: { type: string, format: uuid }
+              type: { type: string }
+              currency: { allOf: [{ $ref: "#/components/schemas/Currency" }], nullable: true }
+              amount: { $ref: "#/components/schemas/Money" }
+              reason: { type: string, nullable: true, description: '`observacao` of the operation.' }
+              operator_id: { type: string, nullable: true }
+              operator_name: { type: string, nullable: true }
+              created_at: { type: string, format: date-time }
+        closure_snapshot:
+          type: array
+          description: |
+            Raw `caixa_session_closures` rows (minus `owner_user_id`), one per
+            currency; `[]` while the session is OPEN. This is the immutable Z
+            record: session_id, closure_op_id, currency, opening,
+            cash_receipts, cash_payins, withdrawals, cash_refunds,
+            expected_cash, counted_cash, variance, payments_by_method,
+            opened_at, closed_at, closed_by, operator_name.
+          items: { type: object }
+        already_closed:
+          type: boolean
+          description: Present only on `fechar`. `false` = closed now (201), `true` = was already closed (200).
+        closure_op_id:
+          type: string
+          format: uuid
+          description: Present only on `fechar`. Id of the FECHAMENTO row (`valor = 0`).
+
+    # ---------------- 3. OPENING ----------------
+    AbrirRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [abrir] }
+        valor:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          default: 0
+          description: |
+            Physical opening float. Optional; defaults to 0. Must be finite,
+            >= 0 and <= 1e12, else 422 `INVALID_AMOUNT`.
+        moeda:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+          description: |
+            Currency field name for opening is **`moeda`** (not `currency`).
+            Uppercased by the API and validated against the currencies ENABLED
+            for the company, else 422 `INVALID_CURRENCY`. When omitted/empty
+            the company default currency is used (never a hardcoded BRL).
+        terminal_id:
+          type: string
+          nullable: true
+          description: |
+            Optional. Falls back to `X-Terminal-Id`, then `X-Device-Id`.
+            Persisted on the opening and inherited by every movement.
+        branch_id: { type: string, format: uuid, nullable: true }
+        observacao: { type: string, default: "" }
+      description: |
+        Returns the opened session (201) — `session_id` is the id used by all
+        later calls. Idempotent with `Idempotency-Key`. While a session is
+        already open for this operator a second call returns 409
+        `CASH_SESSION_ALREADY_OPEN` carrying the open `session_id`.
+
+    # ---------------- 5. CASH MOVEMENTS ----------------
+    SangriaRequest:
+      type: object
+      required: [action, session_id, valor]
+      properties:
+        action: { type: string, enum: [sangria] }
+        session_id: { type: string, format: uuid, description: Id of the ABERTURA row. }
+        valor:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Must be > 0, else 422 `INVALID_AMOUNT`.
+        moeda:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+          description: |
+            Optional. When omitted the movement INHERITS the session currency.
+            When sent it MUST equal the session currency, else 422
+            `CASH_CURRENCY_MISMATCH`.
+        reference: { type: string, nullable: true, description: Free external reference (sale id, voucher, envelope). }
+        observacao: { type: string, default: "", description: Reason; surfaces as `reason` in `movements`. }
+      description: |
+        Cash LEAVING the drawer (withdrawal to safe/deposit). Returns
+        `CashMovementResult` (201). Idempotent with `Idempotency-Key`.
+        Errors: 404 `CASH_SESSION_NOT_FOUND`, 409 `CASH_SESSION_CLOSED`.
+
+    PayInRequest:
+      allOf: [{ $ref: "#/components/schemas/SangriaRequest" }]
+      properties:
+        action: { type: string, enum: [pay_in] }
+      description: |
+        Cash ENTERING the drawer that is not a sale (reforço/suprimento de
+        troco). Recorded as `tipo = 'PAY_IN'` and ADDED to `expected_cash`.
+        Same fields, validation and idempotency as `sangria`.
+
+    CashRefundRequest:
+      allOf: [{ $ref: "#/components/schemas/SangriaRequest" }]
+      properties:
+        action: { type: string, enum: [cash_refund] }
+      description: |
+        Cash handed BACK to a customer. Recorded as `tipo = 'CASH_REFUND'` and
+        SUBTRACTED from `expected_cash`. It is a drawer fact only — it never
+        reverses a sale, a payment or a fiscal document. Use `reference` to
+        point at the sale it relates to.
+
+    # ---------------- 7. CLOSING PREVIEW ----------------
+    PreviewFechamentoRequest:
+      type: object
+      required: [action, session_id]
+      properties:
+        action: { type: string, enum: [preview_fechamento] }
+        session_id: { type: string, format: uuid }
+      description: |
+        Canonical way the terminal obtains the closing preview: it returns the
+        full `SessionSnapshot` (positions per currency with `expected_cash`,
+        payments by method+currency, movements, session metadata).
+        `GET ?cash_position_session_id=` also exists but returns ONLY
+        `cash_position_by_currency` — no payment summary, no metadata.
+
+    # ---------------- 8. CLOSE REQUEST ----------------
+    FecharRequest:
+      type: object
+      required: [action, session_id]
+      properties:
+        action: { type: string, enum: [fechar] }
+        session_id: { type: string, format: uuid }
+        observacao: { type: string, default: "" }
+        counted_by_currency:
+          type: array
+          nullable: true
+          default: null
+          description: |
+            Physical count declaration, per currency. Deployed semantics —
+            do NOT collapse them:
+
+            * field omitted / `null`  → NO count declared for any currency.
+              Every closure row gets `counted_cash = null`, `variance = null`.
+            * entry with `counted_amount: null` (also `undefined` or `""`) →
+              that currency is skipped, i.e. NO count declared for it →
+              `counted_cash = null`, `variance = null`.
+            * entry with `counted_amount: 0` → count DECLARED as physically
+              zero → `counted_cash = 0`, `variance = 0 − expected_cash`.
+            * a currency absent from the array → no count declared for it.
+
+            Validation: not an array → 422 `COUNTED_INVALID`; currency not
+            matching `^[A-Z]{3}$` → 422 `COUNTED_CURRENCY_INVALID`;
+            non-finite or negative amount → 422 `COUNTED_AMOUNT_INVALID`.
+            Amounts are matched to positions by uppercase currency.
+          items:
+            type: object
+            required: [currency]
+            properties:
+              currency: { $ref: "#/components/schemas/Currency" }
+              counted_amount:
+                allOf: [{ $ref: "#/components/schemas/Money" }]
+                nullable: true
+      description: |
+        Closing inserts one `FECHAMENTO` row with `valor = 0` (never a cash
+        movement) and freezes one `caixa_session_closures` row per currency.
+        201 on first close, 200 with `already_closed: true` afterwards
+        (convergent, no key needed).
+
+    PlainError:
+      type: object
+      description: Untyped error — `error` only, NO `code`, NO `message_key` (CONTRACT_DEBT-4).
+      properties:
+        error: { type: string }
+        session_id: { type: string, format: uuid, description: Only on "already open session". }
+
+    CodedError:
+      type: object
+      description: Typed error.
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum:
+            - COUNTED_INVALID
+            - COUNTED_CURRENCY_INVALID
+            - COUNTED_AMOUNT_INVALID
+            - CASH_SESSION_NOT_FOUND
+            - FORBIDDEN_TENANT
+            - UPGRADE_REQUIRED
+
+# =====================================================================
+# 6. CASH REFUND — relationship, not an invented action
+# =====================================================================
+x-cash-refund:
+  terminal_endpoint: none deployed (CONTRACT_DEBT-3)
+  how_it_reaches_the_cash_position: |
+    `caixa_session_cash_position` subtracts `caixa_operacoes` rows of the
+    session whose `tipo IN ('DEVOLUCAO','ESTORNO_DINHEIRO','CASH_REFUND')`
+    into `cash_refunds`. Those rows are inserted by ERP/back-office and
+    internal paths, not by any `api-caixa` action. A cash refund tied to a
+    sale/comanda reversal therefore appears in the terminal's Z report only
+    through this position line.
+  non_cash_refunds: |
+    Non-cash reversals never touch `expected_cash`; they are visible only in
+    the payment summary of the underlying sale/comanda.
+
+# =====================================================================
+# How session payments reach the session (2 & 9)
+# =====================================================================
+x-payment-session-binding:
+  mechanism: |
+    `sales.caixa_session_id` and `pagamentos_comanda.caixa_session_id` are
+    stamped by database triggers at insert time using
+    `current_caixa_session(owner, operator)`, and are immutable afterwards.
+    The terminal never sends `caixa_session_id` on a sale or payment.
+  summary_source: |
+    `caixa_session_payments(session_id)` = sales of the session (excluding
+    `status = 'cancelled'`, amount = `cash_amount_due` when present else
+    `total`) UNION comanda payments with `status = 'CONFIRMADO'` that are not
+    yet materialized as a sale (avoids double counting).
+    Cash currency of a sale = `payment_currency` when set, else
+    `sales.currency`.
+
+# =====================================================================
+# 15. EXAMPLES (safe, no FX, no BRL)
+# =====================================================================
+x-examples:
+  session_A_opening_and_withdrawal_only:
+    steps:
+      - request: { action: abrir, valor: 15000, moeda: PYG }
+      - request: { action: sangria, session_id: "<session>", valor: 5000, observacao: "Sangria" }
+    preview_response:
+      status: OPEN
+      positions_by_currency:
+        - currency: PYG
+          opening: 15000
+          cash_receipts: 0
+          cash_payins: 0
+          withdrawals: 5000
+          cash_refunds: 0
+          expected_cash: 10000
+      payments_by_method: []
+
+  session_B_cash_and_pix:
+    steps:
+      - request: { action: abrir, valor: 15000, moeda: PYG }
+      - note: cash sale PYG 20000 (stamped to the session by trigger)
+      - note: PIX sale PYG 30000 (stamped to the session by trigger)
+      - request: { action: sangria, session_id: "<session>", valor: 5000 }
+    preview_response:
+      status: OPEN
+      positions_by_currency:
+        - currency: PYG
+          opening: 15000
+          cash_receipts: 20000
+          cash_payins: 0
+          withdrawals: 5000
+          cash_refunds: 0
+          expected_cash: 30000
+      payments_by_method:
+        - { currency: PYG, payment_method: DINHEIRO, is_cash: true, count: 1, amount: 20000 }
+        - { currency: PYG, payment_method: PIX_TRANSFERENCIA, is_cash: false, count: 1, amount: 30000 }
+    close_request:
+      action: fechar
+      session_id: "<session>"
+      counted_by_currency: [{ currency: PYG, counted_amount: 30000 }]
+    close_response_excerpt:
+      status: CLOSED
+      already_closed: false
+      positions_by_currency:
+        - currency: PYG
+          opening: 15000
+          cash_receipts: 20000
+          cash_payins: 0
+          withdrawals: 5000
+          cash_refunds: 0
+          expected_cash: 30000
+          counted_cash: 30000
+          variance: 0

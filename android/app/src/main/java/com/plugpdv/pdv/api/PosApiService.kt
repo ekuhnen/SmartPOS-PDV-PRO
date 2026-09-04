@@ -45,11 +45,19 @@ interface PosApiService {
         @Query("date") date: String?
     ): CashierHistoryResponse
 
+    @GET("api-caixa")
+    suspend fun getCurrentCashSession(
+        @Header("Authorization") token: String,
+        @Query("current_session") currentSession: String = "1",
+        @Query("terminal_id") terminalId: String? = null
+    ): CashSessionResponse
+
     @POST("api-caixa")
     suspend fun operateCashier(
         @Header("Authorization") token: String,
+        @Header("Idempotency-Key") idempotencyKey: String?,
         @Body request: CashierRequest
-    ): Response<Void>
+    ): Response<CashActionResponse>
 
     @POST("api-cambio")
     suspend fun getExchangeRates(

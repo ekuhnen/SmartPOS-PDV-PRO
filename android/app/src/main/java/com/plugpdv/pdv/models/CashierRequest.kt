@@ -1,12 +1,14 @@
 package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
+import java.math.BigDecimal
+
+data class CountedCashRequest(val currency: String,
+    @SerializedName("counted_amount") val countedAmount: BigDecimal?)
 
 data class CashierRequest(
-    @SerializedName(value = "action", alternate = ["tipo"]) val action: String,
-    @SerializedName("valor") val valor: Double,
-    @SerializedName("moeda") var moeda: String = "BRL",
-    @SerializedName("session_id") var session_id: String? = null,
-    @SerializedName("observacao") var observacao: String? = null,
-    @SerializedName("resumo") var resumo: Map<String, Double>? = null
+    val action: String, val valor: BigDecimal? = null, val moeda: String? = null,
+    @SerializedName("session_id") val sessionId: String? = null,
+    val observacao: String? = null, val reference: String? = null,
+    @SerializedName("counted_by_currency") val countedByCurrency: List<CountedCashRequest>? = null
 )
