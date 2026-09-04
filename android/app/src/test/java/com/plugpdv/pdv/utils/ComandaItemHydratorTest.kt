@@ -36,4 +36,67 @@ class ComandaItemHydratorTest {
         assertTrue(ComandaItemHydrator.fromSnapshot("[]", "BRL").isEmpty())
         assertTrue(ComandaItemHydrator.fromSnapshot(null, "BRL").isEmpty())
     }
+
+    @Test
+    fun authoritativeUnitPriceWinsOverNestedCatalogBasePrice() {
+        val json = gson.toJson(listOf(
+            MesaItemDto(
+                id = "hot-dog",
+                produto_id = "p1",
+                preco_unitario = 20_880.0,
+                quantidade = 1,
+                nestedProduct = Product(id = "p1", selling_price = 18.0, price_currency = "BRL")
+            )
+        ))
+
+        val item = ComandaItemHydrator.fromSnapshot(json, "PYG").single()
+
+        assertEquals(20_880.0, item.product.selling_price!!, 0.0)
+        assertEquals("PYG", item.product.price_currency)
+    }
+
+    @Test
+    fun authoritativeSubtotalProvidesUnitPriceWhenUnitPriceIsAbsent() {
+        val json = gson.toJson(listOf(
+            MesaItemDto(id = "hot-dog", produto_id = "p1", preco_unitario = null, quantidade = 1, subtotal = 20_880.0)
+        ))
+
+        val item = ComandaItemHydrator.fromSnapshot(json, "PYG").single()
+
+        assertEquals(20_880.0, item.product.selling_price!!, 0.0)
+        assertEquals("PYG", item.product.price_currency)
+    }
+
+    @Test
+    fun nestedCatalogBasePriceIsNeverReinterpretedAsComandaCurrency() {
+        val json = gson.toJson(listOf(
+            MesaItemDto(
+                id = "hot-dog",
+                produto_id = "p1",
+                preco_unitario = null,
+                quantidade = 1,
+                subtotal = null,
+                nestedProduct = Product(id = "p1", selling_price = 18.0, price_currency = "BRL")
+            )
+        ))
+
+        val item = ComandaItemHydrator.fromSnapshot(json, "PYG").single()
+
+        assertEquals(null, item.product.selling_price)
+        assertEquals("PYG", item.product.price_currency)
+    }
+
+    @Test
+    fun preservesThreeAuthoritativePygItemPrices() {
+        val json = gson.toJson(listOf(
+            MesaItemDto(id = "1", produto_id = "p1", preco_unitario = 20_880.0, quantidade = 1),
+            MesaItemDto(id = "2", produto_id = "p2", preco_unitario = 6_960.0, quantidade = 1),
+            MesaItemDto(id = "3", produto_id = "p3", preco_unitario = 11_600.0, quantidade = 1)
+        ))
+
+        val items = ComandaItemHydrator.fromSnapshot(json, "PYG")
+
+        assertEquals(listOf(20_880.0, 6_960.0, 11_600.0), items.map { it.product.selling_price })
+        assertTrue(items.all { it.product.price_currency == "PYG" })
+    }
 }

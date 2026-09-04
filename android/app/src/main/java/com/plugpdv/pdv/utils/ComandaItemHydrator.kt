@@ -7,6 +7,12 @@ import com.plugpdv.pdv.models.TableItem
 
 /** Reconstructs checkout items from the authoritative comanda snapshot payload. */
 object ComandaItemHydrator {
+    fun authoritativeUnitPrice(dto: MesaItemDto, quantity: Int): Double? = when {
+        dto.preco_unitario != null && dto.preco_unitario != 0.0 -> dto.preco_unitario
+        dto.subtotal != null && dto.subtotal != 0.0 && quantity > 0 -> dto.subtotal / quantity
+        else -> null
+    }
+
     fun fromSnapshot(itemsJson: String?, baseCurrency: String?): MutableList<TableItem> {
         if (itemsJson.isNullOrBlank() || baseCurrency.isNullOrBlank()) return mutableListOf()
         val items: List<MesaItemDto> = runCatching {
@@ -16,12 +22,7 @@ object ComandaItemHydrator {
         return items.mapNotNull { dto ->
             val productId = dto.nestedProduct?.id ?: dto.produto_id ?: return@mapNotNull null
             val quantity = (dto.quantidade ?: 0).coerceAtLeast(0)
-            val unitPrice = when {
-                dto.preco_unitario != null && dto.preco_unitario != 0.0 -> dto.preco_unitario
-                dto.nestedProduct?.selling_price != null && dto.nestedProduct.selling_price != 0.0 -> dto.nestedProduct.selling_price
-                dto.subtotal != null && dto.subtotal != 0.0 && quantity > 0 -> dto.subtotal / quantity
-                else -> null
-            }
+            val unitPrice = authoritativeUnitPrice(dto, quantity)
             val paidQuantity = (dto.paidQuantity ?: if (dto.paid == true) quantity else 0)
                 .coerceIn(0, quantity)
             val removed = dto.status.equals("CANCELADO", true) || dto.status.equals("REMOVIDO", true)

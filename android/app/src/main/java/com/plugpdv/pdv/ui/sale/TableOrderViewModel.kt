@@ -14,6 +14,7 @@ import com.plugpdv.pdv.database.ComandaSnapshotEntity
 import com.plugpdv.pdv.models.*
 import com.plugpdv.pdv.repository.ComandaSnapshotRepository
 import com.plugpdv.pdv.repository.TableReadRepository
+import com.plugpdv.pdv.utils.ComandaItemHydrator
 import com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy
 import com.plugpdv.pdv.utils.SnapshotAuthorityDecision
 import com.plugpdv.pdv.utils.TableManager
@@ -207,15 +208,7 @@ class TableOrderViewModel @Inject constructor(
 
                 // Invariant: Snapshot item price contained in MesaItemDto (preco_unitario / subtotal) is authoritative for the snapshot.
                 // Catalog selling_price MUST NOT be used as historical price fallback.
-                val itemPrice = if (firstDto.preco_unitario != null && firstDto.preco_unitario != 0.0) {
-                    firstDto.preco_unitario
-                } else if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
-                    firstDto.nestedProduct?.selling_price
-                } else if (firstDto.subtotal != null && firstDto.subtotal != 0.0 && serverQty > 0) {
-                    firstDto.subtotal / serverQty
-                } else {
-                    null
-                }
+                val itemPrice = ComandaItemHydrator.authoritativeUnitPrice(firstDto, serverQty)
 
                 val product = Product(
                     id = pId,
