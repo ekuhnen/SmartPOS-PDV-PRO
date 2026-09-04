@@ -126,7 +126,7 @@ class ReconciliationHardwareAndroidTest {
         assertEquals("Must return 1 mutation for authority", 1, authorityMutations.size)
         assertEquals("mut_hw_ui1", authorityMutations[0].id)
 
-        val humanMsg = ReconciliationReasonMapper.toHumanMessage(authorityMutations[0].reconciliationReason)
+        val humanMsg = context.getString(ReconciliationReasonMapper.messageRes(authorityMutations[0].reconciliationReason))
         assertEquals("Esta mesa já está ocupada por outra operação.", humanMsg)
     }
 
