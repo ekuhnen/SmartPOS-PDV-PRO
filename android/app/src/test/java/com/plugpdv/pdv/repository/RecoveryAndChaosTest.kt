@@ -186,6 +186,19 @@ class RecoveryAndChaosTest {
     }
 
     @Test
+    fun externalCheckoutRequiresDurableApprovalEvenWhenReferenceExists() {
+        assertTrue(OutboxSyncManager.canDispatchExternalCheckout(false, "APPROVED"))
+        assertFalse(OutboxSyncManager.canDispatchExternalCheckout(false, "UNKNOWN"))
+        assertFalse(OutboxSyncManager.canDispatchExternalCheckout(false, "PENDING"))
+        assertFalse(OutboxSyncManager.canDispatchExternalCheckout(false, null))
+    }
+
+    @Test
+    fun cashCheckoutRemainsAllowedWithoutPaymentAttempt() {
+        assertTrue(OutboxSyncManager.canDispatchExternalCheckout(true, null))
+    }
+
+    @Test
     fun testCashWithoutAttemptAllowed() {
         val req = CommandCheckoutCommitRequest(
             comandaId = "c-1",

@@ -61,6 +61,8 @@ class OutboxSyncManager @Inject constructor(
         const val CRITICAL_QUEUE_DELAY_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutos
         const val MAX_BACKOFF_SECONDS = 60L
         var faultInjectionHook: String? = null
+        internal fun canDispatchExternalCheckout(isCash: Boolean, attemptStatus: String?): Boolean =
+            isCash || attemptStatus == "APPROVED"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -435,10 +437,7 @@ class OutboxSyncManager @Inject constructor(
 
                     if (!isCash) {
                         val matchingAttempt = paymentAttemptDao.getByReference(op.idempotencyKey)
-                        val hasApprovedAttempt = matchingAttempt?.status == "APPROVED"
-                        val hasValidExternalRef = !request.referenciaExterna.isNullOrEmpty()
-
-                        if (!hasApprovedAttempt && !hasValidExternalRef) {
+                        if (!canDispatchExternalCheckout(isCash, matchingAttempt?.status)) {
                             Log.e(TAG, "Tentativa de checkout sem aprovação comprovada do pagamento externo (K=${op.idempotencyKey}). Bloqueando envio.")
                             outboxDao.markAsFailedWithKey(op.id, "MISSING_PAYMENT_APPROVAL", "REQUIRES_RECONCILIATION", false)
                             _checkoutResultEvents.emit(
