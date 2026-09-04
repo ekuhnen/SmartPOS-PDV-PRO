@@ -14,12 +14,19 @@ data class ComandaDetailResponse(
     @SerializedName("saldo_base") val saldoBase: Double? = null,
     @SerializedName("subtotal") val subtotal: Double? = null,
     @SerializedName("tax_amount") val taxAmount: Double? = null,
-    @SerializedName("tax_snapshot") val taxSnapshot: Map<String, Any>? = null,
+    @SerializedName("tax_snapshot") val taxSnapshot: List<TaxSnapshotDto>? = null,
     @SerializedName("service_fee") val serviceFee: Double? = null,
     @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false,
     @SerializedName(value = "itens", alternate = ["items"]) val itens: List<MesaItemDto> = emptyList(),
     @SerializedName(value = "pagamentos", alternate = ["payments"]) val pagamentos: List<ComandaPaymentDto> = emptyList()
+)
+
+/** Descriptive tax metadata; tax_amount remains the monetary authority. */
+data class TaxSnapshotDto(
+    @SerializedName(value = "name", alternate = ["tax_name"]) val name: String? = null,
+    @SerializedName(value = "rate", alternate = ["percentage"]) val rate: Double? = null,
+    @SerializedName("code") val code: String? = null
 )
 
 /** Deliberately separate from ComandaDetailResponse: this endpoint augments checkout
