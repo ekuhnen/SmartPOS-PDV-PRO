@@ -63,6 +63,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingCheckoutOperationId = savedInstanceState?.getString("PENDING_CHECKOUT_OPERATION_ID")
         val tableId = arguments?.getString("TABLE_ID")
         tableNumber = arguments?.getInt("TABLE_NUMBER") ?: 0
         val sectorId = arguments?.getString("SECTOR_ID")
@@ -106,11 +107,16 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         if (result.status.equals("APPROVED", ignoreCase = true)) {
             Log.d("TableCheckoutBottomSheet", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}")
             val method = PaymentMethod.fromString(result.method)
-            val key = pendingCheckoutOperationId
+            val key = CheckoutOperationCorrelation.resolve(result.requestId, pendingCheckoutOperationId)
             if (!key.isNullOrEmpty()) {
                 viewModel.finalizeApprovedCheckout(key, result.paymentId, method)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("PENDING_CHECKOUT_OPERATION_ID", pendingCheckoutOperationId)
+        super.onSaveInstanceState(outState)
     }
 
     private fun setupUI() {
