@@ -1,6 +1,7 @@
 package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
+import com.google.gson.JsonElement
 
 data class ComandaDetailResponse(
     val id: String,
@@ -14,7 +15,7 @@ data class ComandaDetailResponse(
     @SerializedName("saldo_base") val saldoBase: Double? = null,
     @SerializedName("subtotal") val subtotal: Double? = null,
     @SerializedName("tax_amount") val taxAmount: Double? = null,
-    @SerializedName("tax_snapshot") val taxSnapshot: TaxSnapshotDto? = null,
+    @SerializedName("tax_snapshot") val taxSnapshot: JsonElement? = null,
     @SerializedName("service_fee") val serviceFee: Double? = null,
     @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false,

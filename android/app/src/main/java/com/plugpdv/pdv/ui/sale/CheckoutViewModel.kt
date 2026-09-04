@@ -508,7 +508,7 @@ class CheckoutViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 authoritativeSubtotal = detail.subtotal,
                 authoritativeTaxAmount = detail.taxAmount,
-                authoritativeTaxSnapshot = detail.taxSnapshot,
+                authoritativeTaxSnapshot = TaxSnapshotNormalizer.first(detail.taxSnapshot),
                 authoritativeServiceFee = detail.serviceFee,
                 authoritativeTotal = detail.total
             )
