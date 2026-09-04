@@ -229,6 +229,7 @@
     <string name="sync_requires_reconciliation">Requiere conciliación</string>
     <string name="payment_syncing">Pago aprobado. Sincronizando...</string>
     <string name="payment_waiting_provider">Esperando pago...</string>
+    <string name="payment_processing">Procesando pago...</string>
     <string name="payment_approved_pending_sync">Pago aprobado. Pendiente de sincronización.</string>
     <string name="currency">Moneda</string>
     <string name="cash_action_open">Abrir</string>

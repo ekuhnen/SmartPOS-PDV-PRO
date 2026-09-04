@@ -59,6 +59,7 @@ data class CheckoutUiState(
     val paymentSuccess: Boolean = false,
     val isComandaClosed: Boolean = false,
     val isAwaitingProvider: Boolean = false,
+    val isCashProcessing: Boolean = false,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -213,6 +214,7 @@ class CheckoutViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             isAwaitingProvider = false,
+                            isCashProcessing = false,
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = false,
@@ -224,6 +226,7 @@ class CheckoutViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             isAwaitingProvider = false,
+                            isCashProcessing = false,
                             isPendingSync = false,
                             isPayButtonBlocked = true,
                             paymentSuccess = false,
@@ -234,6 +237,7 @@ class CheckoutViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             isAwaitingProvider = false,
+                            isCashProcessing = false,
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
@@ -248,6 +252,7 @@ class CheckoutViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             isAwaitingProvider = false,
+                            isCashProcessing = false,
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
@@ -1113,6 +1118,7 @@ class CheckoutViewModel @Inject constructor(
         withContext(Dispatchers.Main) {
             _uiState.value = _uiState.value.copy(
                 isAwaitingProvider = true,
+                isCashProcessing = false,
                 isPendingSync = false,
                 isPayButtonBlocked = true,
                 blockReason = "Aguardando pagamento..."
@@ -1133,6 +1139,7 @@ class CheckoutViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             isLoading = false,
             isAwaitingProvider = false,
+            isCashProcessing = false,
             isPendingSync = false,
             isPayButtonBlocked = false,
             requiresReconciliation = false,
@@ -1144,7 +1151,7 @@ class CheckoutViewModel @Inject constructor(
 
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
         val gson = Gson()
-        _uiState.value = _uiState.value.copy(isLoading = true, isAwaitingProvider = false, error = null)
+        _uiState.value = _uiState.value.copy(isLoading = true, isAwaitingProvider = false, isCashProcessing = false, error = null)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1172,6 +1179,7 @@ class CheckoutViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             isAwaitingProvider = false,
+                            isCashProcessing = false,
                             paymentSuccess = false,
                             isPendingSync = true,
                             isPayButtonBlocked = true,
@@ -1211,7 +1219,7 @@ class CheckoutViewModel @Inject constructor(
             return
         }
         val gson = Gson()
-        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+        _uiState.value = _uiState.value.copy(isLoading = true, isCashProcessing = method == PaymentMethod.CASH, error = null)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1239,6 +1247,7 @@ class CheckoutViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         paymentSuccess = false,
+                        isCashProcessing = method == PaymentMethod.CASH,
                         isPendingSync = true,
                         isPayButtonBlocked = true,
                         blockReason = "Pagamento em sincronização com o servidor",
@@ -1252,7 +1261,7 @@ class CheckoutViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("CheckoutViewModel", "Erro ao executar checkout: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    _uiState.value = _uiState.value.copy(isLoading = false, error = "Erro ao executar checkout: ${e.message}")
+                    _uiState.value = _uiState.value.copy(isLoading = false, isCashProcessing = false, isPendingSync = false, isPayButtonBlocked = false, blockReason = null, error = "Erro ao executar checkout: ${e.message}")
                 }
             }
         }

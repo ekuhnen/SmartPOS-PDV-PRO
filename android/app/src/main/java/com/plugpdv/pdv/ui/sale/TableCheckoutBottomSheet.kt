@@ -177,11 +177,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val digits = state.baseMinorUnitDigits
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
 
-        val showSyncStatus = state.isAwaitingProvider || state.isPendingSync || state.isLoading || state.requiresReconciliation
+        val showSyncStatus = state.isAwaitingProvider || state.isCashProcessing || state.isPendingSync || state.isLoading || state.requiresReconciliation
         b.paymentSyncStatusRow.visibility = if (showSyncStatus) View.VISIBLE else View.GONE
         b.tvPaymentSyncStatus.text = when {
             state.requiresReconciliation -> getString(R.string.payment_requires_reconciliation)
             state.isAwaitingProvider -> getString(R.string.payment_waiting_provider)
+            state.isCashProcessing -> getString(R.string.payment_processing)
             state.isPendingSync && state.isLoading -> getString(R.string.payment_syncing)
             state.isPendingSync -> getString(R.string.payment_approved_pending_sync)
             else -> ""
