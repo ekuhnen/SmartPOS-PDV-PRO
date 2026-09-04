@@ -14,8 +14,19 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 import android.content.Context
+import com.plugpdv.pdv.utils.ComandaItemHydrator
 import com.plugpdv.pdv.utils.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
+
+internal data class CommandItemMoney(val price: Double?, val currency: String?)
+
+internal object CommandItemMoneyMapper {
+    fun fromAuthoritativeDetail(item: MesaItemDto, quantity: Int, baseCurrency: String?): CommandItemMoney =
+        CommandItemMoney(
+            price = ComandaItemHydrator.authoritativeUnitPrice(item, quantity),
+            currency = baseCurrency?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        )
+}
 
 @HiltViewModel
 class CommandViewModel @Inject constructor(
@@ -77,26 +88,17 @@ class CommandViewModel @Inject constructor(
                         productName = firstDto.nestedProduct?.name ?: firstDto.nome
                     }
 
-                    var productPrice = localProduct?.selling_price
-                    if (productPrice == null || productPrice == 0.0) {
-                        val rawPrice = if (firstDto.nestedProduct?.selling_price != null && firstDto.nestedProduct?.selling_price != 0.0) {
-                            firstDto.nestedProduct?.selling_price ?: 0.0
-                        } else {
-                            firstDto.preco_unitario ?: 0.0
-                        }
-                        val currency = firstDto.nestedProduct?.price_currency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().getBaseCurrency()
-                        productPrice = com.plugpdv.pdv.utils.CurrencyManager.getInstance().toBrl(rawPrice, currency)
-                    }
+                    val authoritativeMoney = CommandItemMoneyMapper.fromAuthoritativeDetail(
+                        firstDto,
+                        serverQty,
+                        response.baseCurrency
+                    )
 
                     val fakeProduct = Product(
                         id = pId,
                         name = productName,
-                        selling_price = productPrice ?: 0.0,
-                        price_currency = if (localProduct != null) {
-                            localProduct.price_currency ?: "BRL"
-                        } else {
-                            "BRL"
-                        }
+                        selling_price = authoritativeMoney.price,
+                        price_currency = authoritativeMoney.currency
                     )
                     uiItems.add(TableItem(product = fakeProduct, quantity = serverQty).apply {
                         id = firstDto.id
