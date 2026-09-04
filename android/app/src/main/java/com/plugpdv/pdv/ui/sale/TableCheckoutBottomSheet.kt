@@ -53,10 +53,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 val method = PaymentMethod.fromString(methodStr)
                 viewModel.finalizeApprovedCheckout(requestId, paymentId, method)
             } else {
+                viewModel.onProviderPaymentFinished(status)
+                pendingCheckoutOperationId = null
                 Toast.makeText(context, getString(R.string.payment_not_approved, status), Toast.LENGTH_LONG).show()
             }
         } else if (result.resultCode == Activity.RESULT_CANCELED) {
             val message = result.data?.getStringExtra("message") ?: "Cancelado"
+            viewModel.onProviderPaymentFinished(result.data?.getStringExtra("status") ?: "CANCELLED")
+            pendingCheckoutOperationId = null
             Toast.makeText(context, getString(R.string.payment_cancelled_or_error, message), Toast.LENGTH_LONG).show()
         }
     }
@@ -166,14 +170,18 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun updateUI(state: CheckoutUiState) {
         val b = binding ?: return
         latestState = state
+        if (state.paymentSuccess && !state.isPendingSync && !state.isAwaitingProvider && !state.isLoading) {
+            pendingCheckoutOperationId = null
+        }
         val cm = CurrencyManager.getInstance()
         val digits = state.baseMinorUnitDigits
         val baseCurrency = state.baseCurrency ?: cm.selectedCurrency
 
-        val showSyncStatus = state.isPendingSync || state.isLoading || state.requiresReconciliation
+        val showSyncStatus = state.isAwaitingProvider || state.isPendingSync || state.isLoading || state.requiresReconciliation
         b.paymentSyncStatusRow.visibility = if (showSyncStatus) View.VISIBLE else View.GONE
         b.tvPaymentSyncStatus.text = when {
             state.requiresReconciliation -> getString(R.string.payment_requires_reconciliation)
+            state.isAwaitingProvider -> getString(R.string.payment_waiting_provider)
             state.isPendingSync && state.isLoading -> getString(R.string.payment_syncing)
             state.isPendingSync -> getString(R.string.payment_approved_pending_sync)
             else -> ""
@@ -232,7 +240,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 b.btnPayLink.setText(R.string.payment_requires_reconciliation_short)
             } else if (itemSelectionMissing) {
                 b.btnPayLink.setText(R.string.select_item_for_payment)
-            } else if (state.isPayButtonBlocked && !state.blockReason.isNullOrEmpty()) {
+            } else if (state.isPayButtonBlocked && !state.isAwaitingProvider && !state.blockReason.isNullOrEmpty()) {
                 b.btnPayLink.setText(R.string.sync_action)
             } else {
                 b.btnPayLink.setText(R.string.charge)

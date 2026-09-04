@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.plugpdv.pdv.api.PosApiService
 import com.google.gson.Gson
+import com.plugpdv.pdv.R
 import com.plugpdv.pdv.database.ComandaSnapshotEntity
 import com.plugpdv.pdv.database.OutboxDao
 import com.plugpdv.pdv.database.OutboxOperationEntity
@@ -57,6 +58,7 @@ data class CheckoutUiState(
     val error: String? = null,
     val paymentSuccess: Boolean = false,
     val isComandaClosed: Boolean = false,
+    val isAwaitingProvider: Boolean = false,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -207,9 +209,21 @@ class CheckoutViewModel @Inject constructor(
             outboxSyncManager.checkoutResultEvents.collect { event ->
                 val cId = table?.comandaId
                 if (cId != null && event.comandaId == cId) {
-                    if (event.requiresReconciliation) {
+                    if (event.terminalFailure) {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
+                            isAwaitingProvider = false,
+                            isPendingSync = false,
+                            isPayButtonBlocked = false,
+                            paymentSuccess = false,
+                            requiresReconciliation = false,
+                            blockReason = null,
+                            error = context.getString(R.string.cash_error_business, "HTTP 4xx")
+                        )
+                    } else if (event.requiresReconciliation) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            isAwaitingProvider = false,
                             isPendingSync = false,
                             isPayButtonBlocked = true,
                             paymentSuccess = false,
@@ -219,6 +233,7 @@ class CheckoutViewModel @Inject constructor(
                     } else if (event.closed) {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
+                            isAwaitingProvider = false,
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
@@ -232,6 +247,7 @@ class CheckoutViewModel @Inject constructor(
                         fetchComandaPayments()
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
+                            isAwaitingProvider = false,
                             isPendingSync = false,
                             isPayButtonBlocked = false,
                             paymentSuccess = true,
@@ -1096,17 +1112,39 @@ class CheckoutViewModel @Inject constructor(
 
         withContext(Dispatchers.Main) {
             _uiState.value = _uiState.value.copy(
-                isPendingSync = true,
+                isAwaitingProvider = true,
+                isPendingSync = false,
                 isPayButtonBlocked = true,
-                blockReason = "Pagamento aprovado aguardando sincronização com o servidor"
+                blockReason = "Aguardando pagamento..."
             )
         }
         return PreparedCheckoutResult(key, finalRequest)
     }
 
+    /** Clears volatile checkout gating after an explicit provider terminal result. */
+    fun onProviderPaymentFinished(status: String?) {
+        val terminal = status.equals("CANCELLED", true) ||
+            status.equals("CANCELED", true) ||
+            status.equals("ABORTED", true) ||
+            status.equals("REJECTED", true) ||
+            status.equals("FAILED_TO_START", true) ||
+            status.equals("ERROR", true)
+        if (!terminal) return
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            isAwaitingProvider = false,
+            isPendingSync = false,
+            isPayButtonBlocked = false,
+            requiresReconciliation = false,
+            paymentSuccess = false,
+            blockReason = null,
+            error = null
+        )
+    }
+
     fun finalizeApprovedCheckout(checkoutOperationId: String, paymentId: String?, method: PaymentMethod) {
         val gson = Gson()
-        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+        _uiState.value = _uiState.value.copy(isLoading = true, isAwaitingProvider = false, error = null)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1133,6 +1171,7 @@ class CheckoutViewModel @Inject constructor(
                         fetchComandaPayments()
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
+                            isAwaitingProvider = false,
                             paymentSuccess = false,
                             isPendingSync = true,
                             isPayButtonBlocked = true,
@@ -1202,7 +1241,7 @@ class CheckoutViewModel @Inject constructor(
                         paymentSuccess = false,
                         isPendingSync = true,
                         isPayButtonBlocked = true,
-                        blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
+                        blockReason = "Pagamento em sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
                         lastPaymentAmount = finalRequest.valor.toDouble(),
                         lastPaymentCurrency = finalRequest.moeda

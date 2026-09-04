@@ -34,7 +34,8 @@ data class CheckoutResultEvent(
     val mesaId: String?,
     val closed: Boolean,
     val requiresReconciliation: Boolean,
-    val remainingBalance: Double = 0.0
+    val remainingBalance: Double = 0.0,
+    val terminalFailure: Boolean = false
 )
 
 data class OutboxQueueStatus(
@@ -553,7 +554,11 @@ class OutboxSyncManager @Inject constructor(
                                 comandaId = op.targetGroupKey,
                                 mesaId = request.mesaId,
                                 closed = false,
-                                requiresReconciliation = true
+                                // A typed terminal business/validation failure is not
+                                // an indeterminate external payment. Keep the durable
+                                // FAILED record, but release checkout for a new attempt.
+                                requiresReconciliation = false,
+                                terminalFailure = true
                             )
                         )
                         SingleOperationResult.FAILED_PERMANENT
