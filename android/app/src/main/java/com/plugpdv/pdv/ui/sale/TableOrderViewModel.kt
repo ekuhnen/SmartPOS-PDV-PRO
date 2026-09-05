@@ -25,6 +25,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import retrofit2.HttpException
 import javax.inject.Inject
 
@@ -84,6 +85,12 @@ class TableOrderViewModel @Inject constructor(
 
     private val pendingAdditions = mutableMapOf<String, Int>()
     private val previousServerQuantities = mutableMapOf<String, Int>()
+    private data class QueuedAdd(val product: Product, val request: CommandActionRequest, val sequence: Long)
+    private val mutationQueue = ArrayDeque<QueuedAdd>()
+    private var mutationWorker: Job? = null
+    private var mutationSequence = 0L
+    private var reconciliationGeneration = 0L
+    private var mutationGeneration = 0L
 
     /** Payment allocation is a separate authoritative overlay, never a Mesa item source. */
     private suspend fun applyPaymentStateOverlay(targetTable: Table, authToken: String, comandaId: String) {
@@ -111,6 +118,9 @@ class TableOrderViewModel @Inject constructor(
 
         pendingAdditions.clear()
         previousServerQuantities.clear()
+        mutationQueue.clear()
+        mutationWorker?.cancel()
+        mutationWorker = null
 
         viewModelScope.launch {
             loadLocalTableAndSnapshot()
@@ -272,8 +282,13 @@ class TableOrderViewModel @Inject constructor(
     }
 
     private suspend fun performSyncTable(isNewlyOpened: Boolean = false, showLoading: Boolean = true) {
+        if (mutationQueue.isNotEmpty() || mutationWorker?.isActive == true) {
+            Log.d("PERF_MESA", "reconciliation_skipped_stale=true queue_depth=${mutationQueue.size}")
+            return
+        }
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
+        val refreshGeneration = mutationGeneration
 
         try {
             if (showLoading) _isLoading.value = true
@@ -305,7 +320,11 @@ class TableOrderViewModel @Inject constructor(
                         Log.d("PERF_MESA", "snapshot_apply_ms=${SystemClock.elapsedRealtime() - snapshotStart}")
                         try {
                             applyPaymentStateOverlay(candidateTable, currentToken, cId)
-                            _table.value = candidateTable
+                            if (mutationQueue.isEmpty() && mutationGeneration == refreshGeneration) {
+                                _table.value = candidateTable
+                            } else {
+                                Log.d("PERF_MESA", "reconciliation_skipped_stale=true")
+                            }
                         } catch (e: Exception) {
                             Log.w("TableOrderViewModel", "Payment allocation overlay unavailable", e)
                             // Keep the last authoritative combined state intact.
@@ -394,21 +413,48 @@ class TableOrderViewModel @Inject constructor(
         _table.value = optimistic
         Log.d("PERF_MESA", "add_visual_ms=${SystemClock.elapsedRealtime() - tapAt}")
 
-        viewModelScope.launch {
-            val httpStart = SystemClock.elapsedRealtime()
-            try {
-                retryIO { apiService.manageComanda("Bearer $currentToken", request) }
-                Log.d("PERF_MESA", "mutation_http_ms=${SystemClock.elapsedRealtime() - httpStart}")
-                syncTable(showLoading = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: java.io.IOException) {
-                _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
-                syncTable(showLoading = false)
-            } catch (e: Exception) {
-                _error.value = localized(R.string.add_item_error, "ADD_ITEM_ERROR", e.localizedMessage.orEmpty())
-                syncTable(showLoading = false)
+        mutationSequence += 1
+        mutationGeneration += 1
+        mutationQueue.add(QueuedAdd(product, request, mutationSequence))
+        Log.d("PERF_MESA", "queue_depth=${mutationQueue.size}")
+        startMutationWorker(currentToken)
+    }
+
+    private fun startMutationWorker(authToken: String) {
+        if (mutationWorker?.isActive == true) return
+        mutationWorker = viewModelScope.launch {
+            while (mutationQueue.isNotEmpty()) {
+                val mutation = mutationQueue.removeFirst()
+                val httpStart = SystemClock.elapsedRealtime()
+                Log.d("PERF_MESA", "mutation_seq=${mutation.sequence} pending_count=${mutationQueue.size}")
+                try {
+                    retryIO { apiService.manageComanda("Bearer $authToken", mutation.request) }
+                    Log.d("PERF_MESA", "mutation_http_ms=${SystemClock.elapsedRealtime() - httpStart}")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: java.io.IOException) {
+                    rollbackOptimisticAddition(mutation.product)
+                    _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
+                } catch (e: Exception) {
+                    rollbackOptimisticAddition(mutation.product)
+                    _error.value = localized(R.string.add_item_error, "ADD_ITEM_ERROR", e.localizedMessage.orEmpty())
+                }
             }
+            reconciliationGeneration += 1
+            Log.d("PERF_MESA", "reconciliation_generation=$reconciliationGeneration pending_count=0")
+            mutationWorker = null
+            syncTable(showLoading = false)
+        }
+    }
+
+    private fun rollbackOptimisticAddition(product: Product) {
+        val current = _table.value ?: return
+        val copy = current.copy(items = current.items.map { it.copy(product = it.product.copy(), serverIds = it.serverIds?.toMutableList()) }.toMutableList())
+        val item = copy.items.lastOrNull { !it.removed && it.id == null && it.product.id == product.id }
+            ?: copy.items.lastOrNull { !it.removed && it.product.id == product.id }
+        if (item != null) {
+            if (item.quantity > 1) item.quantity -= 1 else copy.items.remove(item)
+            _table.value = copy
         }
     }
 
