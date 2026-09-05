@@ -110,4 +110,7 @@
     <string name="cash_error_cash_currency_mismatch">A moeda deve ser a mesma da sessão.</string>
     <string name="cash_error_cash_movement_type_invalid">Operação de caixa inválida.</string>
     <string name="cash_closing">Oñemboty viru ryru…</string>
+    <string name="cash_tender_label">Pirapire</string>
+    <string name="items_quote_loading">Oñemboheko pe hepy autorizado...</string>
+    <string name="items_quote_error">Ndaikatúi oñemboheko pe hepy.</string>
 </resources>

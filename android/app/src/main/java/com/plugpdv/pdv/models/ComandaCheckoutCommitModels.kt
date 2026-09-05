@@ -66,6 +66,44 @@ data class ComandaItemAllocation(
     val quantity: Int
 )
 
+data class PaymentQuoteRequest(
+    @SerializedName("action") val action: String = "payment_quote",
+    @SerializedName("comanda_id") val comandaId: String,
+    @SerializedName("items") val items: List<ComandaItemAllocation>,
+    @SerializedName("forma") val forma: String = "DINHEIRO",
+    @SerializedName("moeda") val moeda: String? = null
+)
+
+data class PaymentQuoteLine(
+    @SerializedName("comanda_item_id") val comandaItemId: String? = null,
+    @SerializedName("nome_snapshot") val name: String? = null,
+    @SerializedName("paid_quantity") val paidQuantity: Int = 0,
+    @SerializedName("unit_price") val unitPrice: Double? = null,
+    @SerializedName("item_subtotal") val itemSubtotal: Double? = null,
+    @SerializedName("allocated_discount") val allocatedDiscount: Double? = null,
+    @SerializedName("allocated_tax") val allocatedTax: Double? = null,
+    @SerializedName("allocated_service") val allocatedService: Double? = null,
+    @SerializedName("coverage_amount") val coverageAmount: Double? = null,
+    val currency: String? = null
+)
+
+data class PaymentQuoteResponse(
+    @SerializedName("comanda_id") val comandaId: String? = null,
+    val currency: String? = null,
+    val items: List<PaymentQuoteLine> = emptyList(),
+    @SerializedName("item_subtotal") val itemSubtotal: Double? = null,
+    @SerializedName("allocated_discount") val allocatedDiscount: Double? = null,
+    @SerializedName("allocated_tax") val allocatedTax: Double? = null,
+    @SerializedName("allocated_service") val allocatedService: Double? = null,
+    @SerializedName("accounting_total") val accountingTotal: Double? = null,
+    @SerializedName("transaction_currency") val transactionCurrency: String? = null,
+    @SerializedName("transaction_amount") val transactionAmount: Double? = null,
+    @SerializedName("cash_tender") val cashTender: Double? = null,
+    @SerializedName("cash_rounding_diff") val cashRoundingDiff: Double? = null,
+    @SerializedName("fx_rate") val fxRate: Double? = null,
+    @SerializedName("fx_source") val fxSource: String? = null
+)
+
 data class ComandaCheckoutCommitResponse(
     @SerializedName("success") val success: Boolean = true,
     @SerializedName("created_new") val createdNew: Boolean = true,

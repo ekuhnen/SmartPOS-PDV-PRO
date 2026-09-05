@@ -346,4 +346,7 @@
     <string name="cash_error_cash_currency_mismatch">A moeda deve ser a mesma da sessão.</string>
     <string name="cash_error_cash_movement_type_invalid">Operação de caixa inválida.</string>
     <string name="cash_closing">Fechando caixa…</string>
+    <string name="cash_tender_label">Efectivo</string>
+    <string name="items_quote_loading">Calculando valor autorizado...</string>
+    <string name="items_quote_error">No fue posible calcular el valor de los ítems.</string>
 </resources>

@@ -222,7 +222,16 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             b.tvComandaTotal.text = formatMoney(totalDecimal)
             b.tvTotalPaid.text = formatMoney(paidDecimal)
             b.tvPendingBalance.text = formatMoney(balanceDecimal)
-            b.tvTotalToPay.text = formatBaseAmount(state.finalToPay, baseCurrency)
+            b.tvTotalToPay.text = if (state.splitMode == 2 && state.itemQuoteLoading) {
+                getString(R.string.items_quote_loading)
+            } else if (state.splitMode == 2 && state.itemQuoteError) {
+                getString(R.string.items_quote_error)
+            } else {
+                formatBaseAmount(state.finalToPay, baseCurrency)
+            }
+            val tender = state.itemQuote?.cashTender
+            b.tvCashTender.visibility = if (state.splitMode == 2 && tender != null && state.itemQuote?.cashRoundingDiff != 0.0) View.VISIBLE else View.GONE
+            if (tender != null) b.tvCashTender.text = getString(R.string.cash_tender_label) + ": " + formatBaseAmount(tender, state.itemQuote?.transactionCurrency ?: baseCurrency)
         }
 
         if (state.moneyAuthorityState == MoneyAuthorityState.LOAD_ERROR) {
@@ -364,8 +373,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val cm = CurrencyManager.getInstance()
         
         val currency = state.baseCurrency ?: cm.getBaseCurrency()
-        addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(state.authoritativeSubtotal ?: state.currentToPay, currency))
-        state.authoritativeTaxAmount?.let { amount ->
+        val quote = if (state.splitMode == 2) state.itemQuote else null
+        addBreakdownRow(getString(R.string.subtotal), formatBaseAmount(quote?.itemSubtotal ?: state.authoritativeSubtotal ?: state.currentToPay, currency))
+        (quote?.allocatedDiscount)?.let { amount -> addBreakdownRow("Desconto", formatBaseAmount(amount, currency)) }
+        (quote?.allocatedTax ?: state.authoritativeTaxAmount)?.let { amount ->
             val snapshot = state.authoritativeTaxSnapshot
             val taxName = snapshot?.name ?: getString(R.string.tax)
             val rate = snapshot?.rate
@@ -374,7 +385,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         // Add Service Fee
-        val sfAmount = state.authoritativeServiceFee ?: state.serviceFeeAmount
+        val sfAmount = quote?.allocatedService ?: state.authoritativeServiceFee ?: state.serviceFeeAmount
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
         if (canOverride || sfAmount > 0) {
@@ -470,32 +481,50 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, Quote: $quote")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
-                    viewModel.finalizePayment(PaymentMethod.CASH, suppliedQuote = quote)
+                    lifecycleScope.launch {
+                        try {
+                            if (viewModel.uiState.value.splitMode == 2) {
+                                viewModel.refreshItemsQuoteForPayment(PaymentMethod.CASH)
+                                viewModel.finalizePayment(PaymentMethod.CASH)
+                            } else {
+                                viewModel.finalizePayment(PaymentMethod.CASH, suppliedQuote = quote)
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, e.message ?: getString(R.string.start_payment_error), Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
                 PaymentMethodSelectorBottomSheet.PaymentType.PLUG_PAY -> {
                     lifecycleScope.launch {
                         try {
-                            val prepared = viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, suppliedQuote = quote)
+                            if (viewModel.uiState.value.splitMode == 2) viewModel.refreshItemsQuoteForPayment(PaymentMethod.CREDIT)
+                            val prepared = if (viewModel.uiState.value.splitMode == 2) {
+                                viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT)
+                            } else {
+                                viewModel.prepareCheckoutOperation(PaymentMethod.CREDIT, suppliedQuote = quote)
+                            }
                             pendingCheckoutOperationId = prepared.operationKey
 
                             val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
                             val operatorId = prefs.getString(Constants.OPERATOR_ID, null)
 
+                            val transactionAmount = prepared.request.valor
+                                ?: throw IllegalStateException("PAYMENT_QUOTE_TRANSACTION_AMOUNT_MISSING")
                             val amountsJsonStr = PaymentHelper.generateAmountsJsonExact(
-                                baseAmount = prepared.request.valorBase ?: prepared.request.valor,
-                                baseCurrency = prepared.request.baseCurrency ?: quote.baseCurrency,
-                                transactionCurrency = quote.transactionCurrency,
-                                transactionAmount = prepared.request.valor,
-                                snapshot = prepared.request.exchangeRatesSnapshot ?: quote.snapshot,
+                                baseAmount = prepared.request.valorBase ?: transactionAmount,
+                                baseCurrency = prepared.request.baseCurrency ?: prepared.request.moeda,
+                                transactionCurrency = prepared.request.moeda,
+                                transactionAmount = transactionAmount,
+                                snapshot = prepared.request.exchangeRatesSnapshot,
                                 activeTaxes = emptyList()
                             )
 
                             val intent = Intent(context, PaymentHandlerActivity::class.java).apply {
                                 putExtra(PaymentHandlerActivity.EXTRA_REQUEST_ID, prepared.operationKey)
                                 putExtra(PaymentHandlerActivity.EXTRA_IDEMPOTENCY_KEY, prepared.operationKey)
-                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, prepared.request.valor.toPlainString())
-                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.request.valorBase ?: prepared.request.valor).toPlainString())
-                                putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, quote.transactionCurrency)
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT, transactionAmount.toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_AMOUNT_BRL, (prepared.request.valorBase ?: transactionAmount).toPlainString())
+                                putExtra(PaymentHandlerActivity.EXTRA_CURRENCY, prepared.request.moeda)
                                 putExtra(PaymentHandlerActivity.EXTRA_AMOUNTS_JSON, amountsJsonStr)
                                 putExtra(PaymentHandlerActivity.EXTRA_ORDER_ID, prepared.request.comandaId)
                                 putExtra(PaymentHandlerActivity.EXTRA_TABLE_ID, prepared.request.mesaId)

@@ -274,6 +274,15 @@
                         android:src="@drawable/ic_info_modern"
                         android:contentDescription="@string/view_calculation" />
                 </LinearLayout>
+                <TextView
+                    android:id="@+id/tvCashTender"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="end"
+                    android:textSize="14sp"
+                    android:textColor="@color/black"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <!-- Actions -->

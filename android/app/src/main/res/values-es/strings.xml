@@ -289,4 +289,7 @@
     <string name="cash_error_cash_currency_mismatch">La moneda debe coincidir con la sesión.</string>
     <string name="cash_error_cash_movement_type_invalid">Operación de caja inválida.</string>
     <string name="cash_closing">Cerrando caja…</string>
+    <string name="cash_tender_label">Efectivo</string>
+    <string name="items_quote_loading">Calculando el importe autorizado...</string>
+    <string name="items_quote_error">No se pudo calcular el importe de los ítems.</string>
 </resources>

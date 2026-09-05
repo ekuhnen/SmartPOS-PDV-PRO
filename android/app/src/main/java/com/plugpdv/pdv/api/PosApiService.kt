@@ -82,6 +82,12 @@ interface PosApiService {
         @Body request: CommandCheckoutCommitRequest
     ): Response<ComandaCheckoutCommitResponse>
 
+    @POST("api-comandas")
+    suspend fun quoteComandaItems(
+        @Header("Authorization") token: String,
+        @Body request: PaymentQuoteRequest
+    ): PaymentQuoteResponse
+
     @GET("api-comandas")
     suspend fun getComandaDetail(
         @Header("Authorization") token: String,

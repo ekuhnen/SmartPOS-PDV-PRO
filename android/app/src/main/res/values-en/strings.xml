@@ -191,4 +191,7 @@
     <string name="cash_error_cash_currency_mismatch">Currency must match the session.</string>
     <string name="cash_error_cash_movement_type_invalid">Invalid cash operation.</string>
     <string name="cash_closing">Closing cash session…</string>
+    <string name="cash_tender_label">Cash</string>
+    <string name="items_quote_loading">Calculating authorized amount...</string>
+    <string name="items_quote_error">Could not calculate the item amount.</string>
 </resources>

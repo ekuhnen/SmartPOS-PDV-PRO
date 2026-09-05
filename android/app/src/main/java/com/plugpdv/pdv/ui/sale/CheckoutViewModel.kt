@@ -63,6 +63,9 @@ data class CheckoutUiState(
     val itemPaymentStateReady: Boolean = false,
     val itemPaymentStateRefreshing: Boolean = false,
     val itemPaymentStateError: Boolean = false,
+    val itemQuote: PaymentQuoteResponse? = null,
+    val itemQuoteLoading: Boolean = false,
+    val itemQuoteError: Boolean = false,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -119,6 +122,7 @@ class CheckoutViewModel @Inject constructor(
     val itemsToPay = mutableListOf<TableItemPayment>()
     private var paymentStateByItemId: List<ComandaItemPaymentStateDto> = emptyList()
     private var itemsPaymentStateLoaded: Boolean = false
+    private var itemQuoteRequestVersion: Long = 0L
 
     fun currentReceiptAllocations(): List<ComandaPaymentAllocationDto> =
         _uiState.value.paymentsHistory.lastOrNull {
@@ -856,9 +860,12 @@ class CheckoutViewModel @Inject constructor(
             1 -> updatePeopleSplit(1) // Default 1 person
             2 -> {
                 if (_uiState.value.itemPaymentStateReady) setupItemsSplit() else itemsToPay.clear()
+                val hasUnknownHistoricalPrice = table?.items.orEmpty().any { !it.removed && it.product.selling_price == null }
                 _uiState.value = _uiState.value.copy(
                     itemPaymentStateRefreshing = !_uiState.value.itemPaymentStateReady,
-                    itemPaymentStateError = false
+                    itemPaymentStateError = false,
+                    isPayButtonBlocked = true,
+                    blockReason = if (hasUnknownHistoricalPrice) "Divis\u00e3o por itens indispon\u00edvel: item com pre\u00e7o hist\u00f3rico desconhecido." else _uiState.value.blockReason
                 )
                 loadItemsPaymentState()
             }
@@ -967,6 +974,23 @@ class CheckoutViewModel @Inject constructor(
 
     private fun calculateItemsTotal() {
         val selectedItems = itemsToPay.filter { it.selected }
+        val allocations = selectedItems.filter { it.selectedQuantity > 0 }.mapNotNull {
+            it.item.id?.let { id -> ComandaItemAllocation(id, it.selectedQuantity) }
+        }
+        itemQuoteRequestVersion += 1
+        val requestVersion = itemQuoteRequestVersion
+        _uiState.value = _uiState.value.copy(
+            currentToPay = 0.0,
+            finalToPay = 0.0,
+            itemQuote = null,
+            itemQuoteLoading = allocations.isNotEmpty(),
+            itemQuoteError = false,
+            isPayButtonBlocked = true,
+            blockReason = if (allocations.isEmpty()) null else "Atualizando valor..."
+        )
+        if (allocations.isNotEmpty()) requestItemsPaymentQuote(allocations, "DINHEIRO", requestVersion)
+        /* quote authority is resolved asynchronously above */
+        /*
         val hasUnknownPrice = selectedItems.any { it.item.product.selling_price == null }
         if (hasUnknownPrice) {
             _uiState.value = _uiState.value.copy(
@@ -981,11 +1005,92 @@ class CheckoutViewModel @Inject constructor(
             }
             _uiState.value = _uiState.value.copy(currentToPay = total)
         }
-        calculateFinalAmount()
+        calculateFinalAmount()*/
+    }
+
+    private fun requestItemsPaymentQuote(
+        allocations: List<ComandaItemAllocation>,
+        forma: String,
+        requestVersion: Long
+    ) {
+        val currentTable = table ?: return
+        val authToken = token ?: return
+        val comandaId = currentTable.comandaId ?: return
+        val currency = CurrencyManager.getInstance().selectedCurrency
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val quote = retryIO {
+                    apiService.quoteComandaItems(
+                        "Bearer $authToken",
+                        PaymentQuoteRequest(comandaId = comandaId, items = allocations, forma = forma, moeda = currency)
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    if (requestVersion == itemQuoteRequestVersion) applyItemsQuote(quote)
+                }
+            } catch (e: Exception) {
+                Log.w("CheckoutViewModel", "Payment quote failed", e)
+                withContext(Dispatchers.Main) {
+                    if (requestVersion == itemQuoteRequestVersion) {
+                        _uiState.value = _uiState.value.copy(
+                            itemQuote = null, itemQuoteLoading = false, itemQuoteError = true,
+                            currentToPay = 0.0, finalToPay = 0.0, isPayButtonBlocked = true,
+                            blockReason = "Não foi possível calcular o valor dos itens."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun applyItemsQuote(quote: PaymentQuoteResponse) {
+        val accounting = quote.accountingTotal ?: throw IllegalStateException("PAYMENT_QUOTE_AMOUNT_MISSING")
+        _uiState.value = _uiState.value.copy(
+            itemQuote = quote,
+            itemQuoteLoading = false,
+            itemQuoteError = false,
+            currentToPay = accounting,
+            taxAmount = quote.allocatedTax ?: 0.0,
+            serviceFeeAmount = quote.allocatedService ?: 0.0,
+            finalToPay = accounting,
+            isPayButtonBlocked = false,
+            blockReason = null
+        )
+    }
+
+    suspend fun refreshItemsQuoteForPayment(method: PaymentMethod): PaymentQuoteResponse {
+        val currentTable = table ?: throw IllegalStateException("COMANDA_NOT_LOADED")
+        val authToken = token ?: throw IllegalStateException("AUTH_REQUIRED")
+        val allocations = itemsToPay.filter { it.selected && it.selectedQuantity > 0 }.map {
+            ComandaItemAllocation(requireNotNull(it.item.id) { "ITEM_SPLIT_ID_MISSING" }, it.selectedQuantity)
+        }
+        if (allocations.isEmpty()) throw IllegalStateException("ITEM_SPLIT_SELECTION_REQUIRED")
+        val quote = retryIO {
+            apiService.quoteComandaItems(
+                "Bearer $authToken",
+                PaymentQuoteRequest(
+                    comandaId = requireNotNull(currentTable.comandaId),
+                    items = allocations,
+                    forma = method.apiValue,
+                    moeda = CurrencyManager.getInstance().selectedCurrency
+                )
+            )
+        }
+        withContext(Dispatchers.Main) { applyItemsQuote(quote) }
+        return quote
     }
 
     private fun calculateFinalAmount() {
         val state = _uiState.value
+        if (state.splitMode == 2) {
+            val quote = state.itemQuote
+            _uiState.value = state.copy(
+                taxAmount = quote?.allocatedTax ?: 0.0,
+                serviceFeeAmount = quote?.allocatedService ?: 0.0,
+                finalToPay = quote?.accountingTotal ?: 0.0
+            )
+            return
+        }
         val baseToPay = state.currentToPay.coerceAtLeast(0.0)
         // Comanda money is server-authoritative. Payment scope never accrues tax/fee again.
         val tax = state.authoritativeTaxAmount ?: 0.0
@@ -1042,7 +1147,30 @@ class CheckoutViewModel @Inject constructor(
         }
         val currentCurrency = manualCurrency ?: suppliedQuote?.transactionCurrency ?: cm.selectedCurrency
 
-        val quote = if (suppliedQuote != null) {
+        val authoritativeItemsQuote = if (_uiState.value.splitMode == 2) {
+            _uiState.value.itemQuote ?: run {
+                if (itemsToPay.any { it.selected && it.item.product.selling_price == null }) {
+                    throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE")
+                }
+                throw IllegalStateException("PAYMENT_QUOTE_REQUIRED")
+            }
+        } else null
+        val quote = if (authoritativeItemsQuote != null) {
+            val accounting = authoritativeItemsQuote.accountingTotal
+                ?: throw IllegalStateException("PAYMENT_QUOTE_AMOUNT_MISSING")
+            val transaction = if (method == PaymentMethod.CASH) {
+                authoritativeItemsQuote.cashTender ?: throw IllegalStateException("PAYMENT_QUOTE_CASH_TENDER_MISSING")
+            } else {
+                authoritativeItemsQuote.transactionAmount ?: throw IllegalStateException("PAYMENT_QUOTE_TRANSACTION_AMOUNT_MISSING")
+            }
+            MoneyQuote(
+                transactionAmount = MoneyDecimal.of(transaction),
+                transactionCurrency = authoritativeItemsQuote.transactionCurrency ?: currentCurrency,
+                baseAmount = MoneyDecimal.of(accounting),
+                baseCurrency = authoritativeItemsQuote.currency ?: baseCurrency,
+                fxRate = MoneyDecimal.of(authoritativeItemsQuote.fxRate ?: 1.0)
+            )
+        } else if (suppliedQuote != null) {
             suppliedQuote.toMoneyQuote()
         } else {
             val amountToPayBigDecimal = if (manualAmount != null) {
@@ -1060,7 +1188,7 @@ class CheckoutViewModel @Inject constructor(
             }
         }
 
-        if (manualBaseAmount != null) {
+        if (manualBaseAmount != null && _uiState.value.splitMode != 2) {
             val suppliedBase = MoneyDecimal.roundToCurrency(MoneyDecimal.of(manualBaseAmount), baseCurrency)
             if (suppliedBase.compareTo(quote.baseAmount) != 0) {
                 throw IllegalStateException("MONEY_AMOUNT_MISMATCH: Supplied base $suppliedBase != quote base ${quote.baseAmount}")
@@ -1082,19 +1210,8 @@ class CheckoutViewModel @Inject constructor(
             else -> true
         }
 
-        if (_uiState.value.splitMode == 2) {
-            val selectedToPay = itemsToPay.filter { it.selected }
-            val itemWithUnknownPrice = selectedToPay.find { it.item.product.selling_price == null }
-            if (itemWithUnknownPrice != null) {
-                throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${itemWithUnknownPrice.item.product.name}' has unknown historical price")
-            }
-        }
-
         val saleItems = if (_uiState.value.splitMode == 2) {
-            itemsToPay.filter { it.selected }.map {
-                val price = it.item.product.selling_price ?: throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${it.item.product.name}' has unknown price")
-                SaleItem(it.item.product.id, it.item.product.name, it.selectedQuantity, price)
-            }
+            null
         } else if (_uiState.value.splitMode == 1) {
             currentTable.items.filter { !it.removed }
                 .map { SaleItem(it.product.id, it.product.name, it.quantity, it.product.selling_price ?: 0.0) }
@@ -1103,7 +1220,7 @@ class CheckoutViewModel @Inject constructor(
                 .map { SaleItem(it.product.id, it.product.name, it.quantity - it.paidQuantity, it.product.selling_price ?: 0.0) }
         }
 
-        val sfAmount2 = if (manualAmount != null || suppliedQuote != null) 0.0 else _uiState.value.serviceFeeAmount
+        val sfAmount2 = if (_uiState.value.splitMode == 2 || manualAmount != null || suppliedQuote != null) 0.0 else _uiState.value.serviceFeeAmount
         val sfKind2 = if (manualAmount != null || suppliedQuote != null) null else (_uiState.value.serviceFeeKind ?: if (sfAmount2 > 0) "fixed" else null)
 
         return CommandCheckoutCommitRequest(
@@ -1112,7 +1229,7 @@ class CheckoutViewModel @Inject constructor(
             forma = method.apiValue,
             valor = quote.transactionAmount,
             moeda = quote.transactionCurrency,
-            valorBase = quote.baseAmount,
+            valorBase = if (_uiState.value.splitMode == 2) null else quote.baseAmount,
             baseCurrency = quote.baseCurrency,
             fxRate = quote.fxRate,
             exchangeRatesSnapshot = quote.snapshot,
@@ -1143,10 +1260,8 @@ class CheckoutViewModel @Inject constructor(
             throw IllegalStateException("PAYMENT_MUTATION_FORBIDDEN: Authoritative remote checkout required")
         }
         if (_uiState.value.splitMode == 2) {
-            val selectedToPay = itemsToPay.filter { it.selected }
-            val itemWithUnknownPrice = selectedToPay.find { it.item.product.selling_price == null }
-            if (itemWithUnknownPrice != null) {
-                throw IllegalStateException("ITEM_SPLIT_UNKNOWN_PRICE: Item '${itemWithUnknownPrice.item.product.name}' has unknown historical price")
+            if (_uiState.value.itemQuote == null || _uiState.value.itemQuoteLoading || _uiState.value.itemQuoteError) {
+                throw IllegalStateException("PAYMENT_QUOTE_REQUIRED")
             }
         }
         val finalRequest = buildCommitRequest(method, manualAmount, manualCurrency, manualBaseAmount, suppliedQuote)
@@ -1236,7 +1351,7 @@ class CheckoutViewModel @Inject constructor(
                             isPayButtonBlocked = true,
                             blockReason = "Pagamento aprovado aguardando sincronização com o servidor",
                             lastPaymentMethod = method.apiValue,
-                            lastPaymentAmount = request.valor.toDouble(),
+                            lastPaymentAmount = request.valor?.toDouble() ?: 0.0,
                             lastPaymentCurrency = request.moeda
                         )
                     }
@@ -1303,7 +1418,7 @@ class CheckoutViewModel @Inject constructor(
                         isPayButtonBlocked = true,
                         blockReason = "Pagamento em sincronização com o servidor",
                         lastPaymentMethod = method.apiValue,
-                        lastPaymentAmount = finalRequest.valor.toDouble(),
+                        lastPaymentAmount = finalRequest.valor?.toDouble() ?: 0.0,
                         lastPaymentCurrency = finalRequest.moeda
                     )
                 }
