@@ -101,6 +101,13 @@ class TableOrderActivity : BaseActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Revalidate both the Mesa detail and its separate item-allocation overlay
+        // whenever checkout returns. Never rely on the previous in-memory map.
+        if (::binding.isInitialized) tableOrderViewModel.syncTable()
+    }
+
     private var isOrderExpanded = true
     private fun toggleOrderSection() {
         isOrderExpanded = !isOrderExpanded

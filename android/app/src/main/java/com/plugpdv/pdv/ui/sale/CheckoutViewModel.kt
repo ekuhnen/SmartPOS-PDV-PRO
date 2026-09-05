@@ -234,31 +234,34 @@ class CheckoutViewModel @Inject constructor(
                             blockReason = "Pagamento aprovado requer conciliação"
                         )
                     } else if (event.closed) {
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            isAwaitingProvider = false,
-                            isCashProcessing = false,
-                            isPendingSync = false,
-                            isPayButtonBlocked = false,
-                            paymentSuccess = true,
-                            isComandaClosed = true,
-                            balanceBaseMinor = 0L,
-                            currentToPay = 0.0,
-                            requiresReconciliation = false,
-                            blockReason = null
-                        )
+                        fetchComandaPayments {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isAwaitingProvider = false,
+                                isCashProcessing = false,
+                                isPendingSync = false,
+                                isPayButtonBlocked = false,
+                                paymentSuccess = true,
+                                isComandaClosed = true,
+                                balanceBaseMinor = 0L,
+                                currentToPay = 0.0,
+                                requiresReconciliation = false,
+                                blockReason = null
+                            )
+                        }
                     } else {
-                        fetchComandaPayments()
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            isAwaitingProvider = false,
-                            isCashProcessing = false,
-                            isPendingSync = false,
-                            isPayButtonBlocked = false,
-                            paymentSuccess = true,
-                            requiresReconciliation = false,
-                            blockReason = null
-                        )
+                        fetchComandaPayments {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isAwaitingProvider = false,
+                                isCashProcessing = false,
+                                isPendingSync = false,
+                                isPayButtonBlocked = false,
+                                paymentSuccess = true,
+                                requiresReconciliation = false,
+                                blockReason = null
+                            )
+                        }
                     }
                 }
             }
@@ -501,7 +504,7 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
-    fun fetchComandaPayments() {
+    fun fetchComandaPayments(onRefreshed: (() -> Unit)? = null) {
         val currentTable = table ?: return
         val currentToken = token ?: return
         val cId = currentTable.comandaId ?: return
@@ -514,7 +517,14 @@ class CheckoutViewModel @Inject constructor(
                 SnapshotAuthorityDecision.MISSING_AUTHORITY
             }
             performRemoteRefresh(currentTable, currentToken, cId, durableBlock, localAuthorityDecision)
+            onRefreshed?.invoke()
         }
+    }
+
+    private suspend fun refreshAuthoritativeItemPaymentState(authToken: String, comandaId: String) {
+        val response = retryIO { apiService.getComandaPaymentState("Bearer $authToken", comandaId) }
+        paymentStateByItemId = response?.itensPaymentState.orEmpty()
+        itemsPaymentStateLoaded = true
     }
 
     private suspend fun performRemoteRefresh(
@@ -570,6 +580,13 @@ class CheckoutViewModel @Inject constructor(
             val decision = ComandaSnapshotAuthorityPolicy.evaluate(cachedSnapshot, cId, context)
             // Remote snapshot wins over the potentially empty Room table projection.
             currentTable.items = ComandaItemHydrator.fromSnapshot(cachedSnapshot.itemsJson, cachedSnapshot.baseCurrency)
+            try {
+                refreshAuthoritativeItemPaymentState(currentToken, cId)
+            } catch (e: Exception) {
+                paymentStateByItemId = emptyList()
+                itemsPaymentStateLoaded = false
+                Log.w("CheckoutViewModel", "Item payment allocation refresh unavailable", e)
+            }
             if (_uiState.value.splitMode == 2) setupItemsSplit()
             val digits = cachedSnapshot.baseMinorUnitDigits
             val baseCurrency = cachedSnapshot.baseCurrency
