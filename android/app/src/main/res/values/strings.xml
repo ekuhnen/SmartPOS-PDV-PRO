@@ -291,6 +291,8 @@
     <string name="paid_quantity_status">Pago %1$d/%2$d</string>
     <string name="comanda_balance">Saldo a pagar</string>
     <string name="comanda_paid">Pago</string>
+    <string name="items_payment_refreshing">Atualizando itens...</string>
+    <string name="items_payment_refresh_error">Não foi possível atualizar os itens. Tente novamente.</string>
     <string name="payment_approved_pending_sync">Pagamento aprovado. Aguardando sincronização.</string>
     <string name="currency">Moeda</string>
     <string name="cash_action_open">Abrir</string>

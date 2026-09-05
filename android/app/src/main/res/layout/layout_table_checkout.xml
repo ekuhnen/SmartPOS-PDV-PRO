@@ -112,6 +112,15 @@
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     android:layout_marginBottom="8dp" />
+                <TextView
+                    android:id="@+id/tvItemsPaymentState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/items_payment_refreshing"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone"
+                    android:layout_marginBottom="8dp" />
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rvSelectItems"
                     android:layout_width="match_parent"

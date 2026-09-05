@@ -303,7 +303,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         if (state.splitMode == 2) {
-            setupItemsAdapter()
+            val itemsReady = state.itemPaymentStateReady
+            b.rvSelectItems.visibility = if (itemsReady) View.VISIBLE else View.GONE
+            b.tvItemsPaymentState.visibility = if (itemsReady && !state.itemPaymentStateRefreshing && !state.itemPaymentStateError) View.GONE else View.VISIBLE
+            b.tvItemsPaymentState.text = when {
+                state.itemPaymentStateError && itemsReady -> getString(R.string.items_payment_refresh_error)
+                else -> getString(R.string.items_payment_refreshing)
+            }
+            if (itemsReady) setupItemsAdapter()
         }
 
         populateTaxBreakdown(state)

@@ -60,6 +60,9 @@ data class CheckoutUiState(
     val isComandaClosed: Boolean = false,
     val isAwaitingProvider: Boolean = false,
     val isCashProcessing: Boolean = false,
+    val itemPaymentStateReady: Boolean = false,
+    val itemPaymentStateRefreshing: Boolean = false,
+    val itemPaymentStateError: Boolean = false,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -371,7 +374,9 @@ class CheckoutViewModel @Inject constructor(
         // that supplies the monetary fields. Room's table cache may legitimately have
         // an empty itemsJson after a table refresh.
         table?.items = ComandaItemHydrator.fromSnapshot(snapshot.itemsJson, snapshot.baseCurrency)
-        if (_uiState.value.splitMode == 2) setupItemsSplit()
+        if (_uiState.value.splitMode == 2) {
+            if (_uiState.value.itemPaymentStateReady) setupItemsSplit() else itemsToPay.clear()
+        }
 
         val digits = snapshot.baseMinorUnitDigits
         val balDecimal = if (digits != null && snapshot.balanceBaseMinor != null) {
@@ -581,13 +586,31 @@ class CheckoutViewModel @Inject constructor(
             // Remote snapshot wins over the potentially empty Room table projection.
             currentTable.items = ComandaItemHydrator.fromSnapshot(cachedSnapshot.itemsJson, cachedSnapshot.baseCurrency)
             try {
+                if (_uiState.value.splitMode == 2) {
+                    _uiState.value = _uiState.value.copy(itemPaymentStateRefreshing = true)
+                }
                 refreshAuthoritativeItemPaymentState(currentToken, cId)
+                if (_uiState.value.splitMode == 2) setupItemsSplit()
+                _uiState.value = _uiState.value.copy(
+                    itemPaymentStateReady = true,
+                    itemPaymentStateRefreshing = false,
+                    itemPaymentStateError = false
+                )
             } catch (e: Exception) {
-                paymentStateByItemId = emptyList()
-                itemsPaymentStateLoaded = false
+                // Keep a previously authoritative overlay during refresh. On first
+                // load, remain unavailable instead of exposing every item as payable.
+                val hadReadyOverlay = _uiState.value.itemPaymentStateReady
+                itemsPaymentStateLoaded = hadReadyOverlay
                 Log.w("CheckoutViewModel", "Item payment allocation refresh unavailable", e)
+                _uiState.value = _uiState.value.copy(
+                    itemPaymentStateRefreshing = false,
+                    itemPaymentStateError = true,
+                    itemPaymentStateReady = hadReadyOverlay
+                )
             }
-            if (_uiState.value.splitMode == 2) setupItemsSplit()
+            if (_uiState.value.splitMode == 2 && !_uiState.value.itemPaymentStateReady) {
+                itemsToPay.clear()
+            }
             val digits = cachedSnapshot.baseMinorUnitDigits
             val baseCurrency = cachedSnapshot.baseCurrency
             val totalBaseMinor = cachedSnapshot.totalBaseMinor
@@ -832,7 +855,11 @@ class CheckoutViewModel @Inject constructor(
             0 -> _uiState.value = _uiState.value.copy(currentToPay = balDecimal.toDouble())
             1 -> updatePeopleSplit(1) // Default 1 person
             2 -> {
-                setupItemsSplit()
+                if (_uiState.value.itemPaymentStateReady) setupItemsSplit() else itemsToPay.clear()
+                _uiState.value = _uiState.value.copy(
+                    itemPaymentStateRefreshing = !_uiState.value.itemPaymentStateReady,
+                    itemPaymentStateError = false
+                )
                 loadItemsPaymentState()
             }
         }
@@ -882,7 +909,9 @@ class CheckoutViewModel @Inject constructor(
         val currentTable = table ?: return
         val currentToken = token ?: return
         val cId = currentTable.comandaId ?: return
-        itemsPaymentStateLoaded = false
+        val hadReadyOverlay = _uiState.value.itemPaymentStateReady
+        itemsPaymentStateLoaded = hadReadyOverlay
+        _uiState.value = _uiState.value.copy(itemPaymentStateRefreshing = true, itemPaymentStateError = false)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = retryIO { apiService.getComandaPaymentState("Bearer $currentToken", cId) }
@@ -893,16 +922,21 @@ class CheckoutViewModel @Inject constructor(
                     val hasUnknownPrice = itemsToPay.any { it.item.product.selling_price == null }
                     _uiState.value = _uiState.value.copy(
                         error = null,
+                        itemPaymentStateReady = true,
+                        itemPaymentStateRefreshing = false,
+                        itemPaymentStateError = false,
                         isPayButtonBlocked = itemsToPay.isEmpty() || hasUnknownPrice
                     )
                 }
             } catch (_: Exception) {
-                paymentStateByItemId = emptyList()
-                itemsPaymentStateLoaded = false
+                itemsPaymentStateLoaded = hadReadyOverlay
                 withContext(Dispatchers.Main) {
-                    itemsToPay.clear()
+                    if (!hadReadyOverlay) itemsToPay.clear()
                     _uiState.value = _uiState.value.copy(
-                        isPayButtonBlocked = true,
+                        itemPaymentStateReady = hadReadyOverlay,
+                        itemPaymentStateRefreshing = false,
+                        itemPaymentStateError = true,
+                        isPayButtonBlocked = if (hadReadyOverlay) _uiState.value.isPayButtonBlocked else true,
                         blockReason = "No fue posible consultar los ítems pendientes."
                     )
                 }
