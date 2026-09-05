@@ -225,22 +225,25 @@ class TableOrderActivity : BaseActivity() {
         val currentTable = table
         val summary = tableOrderViewModel.accountingSummary.value
         if (summary != null) {
-            val decimal = com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(
-                summary.totalBaseMinor,
-                summary.baseMinorUnitDigits
-            )
             val cm = CurrencyManager.getInstance()
             val displayCurrency = cm.selectedCurrency
-            binding.tvTotal.text = if (displayCurrency.equals(summary.baseCurrency, ignoreCase = true)) {
-                cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
-            } else {
-                cm.quoteBaseAmount(BigDecimal.valueOf(decimal.toDouble()), summary.baseCurrency, displayCurrency)
-                    .getOrNull()
-                    ?.let { quote -> cm.formatExplicit(quote.transactionAmount.toDouble(), quote.transactionCurrency) }
-                    ?: cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
+            fun formatMinor(value: Long): String {
+                val decimal = com.plugpdv.pdv.utils.ComandaSnapshotAuthorityPolicy.fromMinorUnitsWithFrozenScale(value, summary.baseMinorUnitDigits)
+                return if (displayCurrency.equals(summary.baseCurrency, ignoreCase = true)) {
+                    cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
+                } else {
+                    cm.quoteBaseAmount(BigDecimal.valueOf(decimal.toDouble()), summary.baseCurrency, displayCurrency)
+                        .getOrNull()?.let { quote -> cm.formatExplicit(quote.transactionAmount.toDouble(), quote.transactionCurrency) }
+                        ?: cm.formatExplicit(decimal.toDouble(), summary.baseCurrency)
+                }
             }
+            binding.tvTotal.text = formatMinor(summary.balanceBaseMinor)
+            binding.tvComandaTotal.text = getString(R.string.comanda_total) + ": " + formatMinor(summary.totalBaseMinor)
+            binding.tvComandaPaid.text = getString(R.string.comanda_paid) + ": " + formatMinor(summary.paidBaseMinor)
         } else {
             binding.tvTotal.text = CurrencyManager.getInstance().format(currentTable?.calculateTotal() ?: 0.0)
+            binding.tvComandaTotal.text = ""
+            binding.tvComandaPaid.text = ""
         }
         currentTable?.items?.let { items ->
             orderAdapter = TableOrderItemAdapter(items) { item ->

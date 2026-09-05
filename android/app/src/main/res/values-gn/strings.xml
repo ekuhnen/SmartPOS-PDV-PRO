@@ -49,6 +49,10 @@
     <string name="payment_syncing">Jehepyre oñemombyky...</string>
     <string name="payment_waiting_provider">Oñeha’ã ojehepyme’ẽ...</string>
     <string name="payment_processing">Oñemboguata jehepyme’ẽ...</string>
+    <string name="paid_status">OJEPYME’ẼMA</string>
+    <string name="paid_quantity_status">Ojehepyme’ẽ %1$d/%2$d</string>
+    <string name="comanda_balance">Saldo ojehepyme’ẽ hag̃ua</string>
+    <string name="comanda_paid">Ojehepyme’ẽ</string>
     <string name="payment_approved_pending_sync">Jehepyre oñemoneĩma. Oha’arõ oñemombyky.</string>
     <string name="payment_requires_reconciliation">Jehepyre oñemoneĩma oikotevẽ ñemoñepyrũ.</string>
     <string name="back">Voltar</string>

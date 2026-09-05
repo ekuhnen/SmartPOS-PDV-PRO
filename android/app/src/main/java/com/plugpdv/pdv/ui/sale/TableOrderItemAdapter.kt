@@ -62,6 +62,7 @@ class TableOrderItemAdapter(
                 tvObservation.text = item.observation
             }
 
+            val isFullyPaid = item.isPaid || item.paidQuantity >= item.quantity
             if (item.removed) {
                 tvStatus.visibility = View.VISIBLE
                 tvStatus.text = itemView.context.getString(R.string.removed_with_reason, item.removalReason)
@@ -69,6 +70,20 @@ class TableOrderItemAdapter(
                 tvQuantity.alpha = 0.5f
                 tvPrice.alpha = 0.5f
                 tvPrice.paintFlags = tvPrice.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            } else if (isFullyPaid) {
+                tvStatus.visibility = View.VISIBLE
+                tvStatus.text = itemView.context.getString(R.string.paid_status)
+                tvName.alpha = 0.7f
+                tvQuantity.alpha = 0.7f
+                tvPrice.alpha = 0.7f
+                tvPrice.paintFlags = tvPrice.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+            } else if (item.paidQuantity > 0) {
+                tvStatus.visibility = View.VISIBLE
+                tvStatus.text = itemView.context.getString(R.string.paid_quantity_status, item.paidQuantity, item.quantity)
+                tvName.alpha = 1.0f
+                tvQuantity.alpha = 1.0f
+                tvPrice.alpha = 1.0f
+                tvPrice.paintFlags = tvPrice.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
             } else {
                 tvStatus.visibility = View.GONE
                 tvName.alpha = 1.0f
@@ -77,7 +92,6 @@ class TableOrderItemAdapter(
                 tvPrice.paintFlags = tvPrice.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
             }
 
-            val isFullyPaid = item.isPaid || item.paidQuantity >= item.quantity
             ivPaidIndicator.visibility = if (isFullyPaid) View.VISIBLE else View.GONE
 
             if (item.removed || isFullyPaid) {

@@ -148,7 +148,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/total"
+                    android:text="@string/comanda_balance"
                     android:textSize="12sp" />
                 <TextView
                     android:id="@+id/tvTotal"
@@ -158,6 +158,18 @@
                     android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="@color/black" />
+                <TextView
+                    android:id="@+id/tvComandaTotal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="10sp"
+                    android:textColor="#666666" />
+                <TextView
+                    android:id="@+id/tvComandaPaid"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="10sp"
+                    android:textColor="#666666" />
             </LinearLayout>
             <Button
                 android:id="@+id/btnUpdateTable"

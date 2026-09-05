@@ -130,6 +130,10 @@
     <string name="payment_syncing">Payment approved. Syncing...</string>
     <string name="payment_waiting_provider">Waiting for payment...</string>
     <string name="payment_processing">Processing payment...</string>
+    <string name="paid_status">PAID</string>
+    <string name="paid_quantity_status">Paid %1$d/%2$d</string>
+    <string name="comanda_balance">Balance due</string>
+    <string name="comanda_paid">Paid</string>
     <string name="payment_approved_pending_sync">Payment approved. Awaiting sync.</string>
     <string name="payment_requires_reconciliation">Approved payment requires reconciliation.</string>
     <string name="back">Back</string>

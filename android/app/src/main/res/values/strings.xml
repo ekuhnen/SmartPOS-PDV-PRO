@@ -287,6 +287,10 @@
     <string name="payment_syncing">Pagamento aprovado. Sincronizando...</string>
     <string name="payment_waiting_provider">Aguardando pagamento...</string>
     <string name="payment_processing">Processando pagamento...</string>
+    <string name="paid_status">PAGO</string>
+    <string name="paid_quantity_status">Pago %1$d/%2$d</string>
+    <string name="comanda_balance">Saldo a pagar</string>
+    <string name="comanda_paid">Pago</string>
     <string name="payment_approved_pending_sync">Pagamento aprovado. Aguardando sincronização.</string>
     <string name="currency">Moeda</string>
     <string name="cash_action_open">Abrir</string>

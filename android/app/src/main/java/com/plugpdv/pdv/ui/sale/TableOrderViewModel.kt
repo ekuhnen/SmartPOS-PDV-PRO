@@ -84,6 +84,24 @@ class TableOrderViewModel @Inject constructor(
     private val pendingAdditions = mutableMapOf<String, Int>()
     private val previousServerQuantities = mutableMapOf<String, Int>()
 
+    /** Payment allocation is a separate authoritative overlay, never a Mesa item source. */
+    private suspend fun applyPaymentStateOverlay(targetTable: Table, authToken: String, comandaId: String) {
+        val response = retryIO { apiService.getComandaPaymentState("Bearer $authToken", comandaId) }
+        val states = response?.itensPaymentState.orEmpty()
+        targetTable.items.forEach { item ->
+            val state = states.firstOrNull { allocation ->
+                val id = allocation.comandaItemId
+                id != null && (id == item.id || item.serverIds?.contains(id) == true)
+            }
+            val ordered = item.quantity.coerceAtLeast(0)
+            val paid = state?.paidQuantity
+                ?: state?.remainingQuantity?.let { (ordered - it).coerceAtLeast(0) }
+                ?: 0
+            item.paidQuantity = paid.coerceIn(0, ordered)
+            item.isPaid = item.paidQuantity >= ordered && ordered > 0
+        }
+    }
+
     fun init(tableId: String?, tableNumber: Int, sectorId: String?, token: String) {
         this.tableId = tableId
         this.tableNumber = tableNumber
@@ -269,6 +287,11 @@ class TableOrderViewModel @Inject constructor(
                     val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
                     if (decision == SnapshotAuthorityDecision.USABLE) {
                         applySnapshotToTable(currentTable, snapshot)
+                        try {
+                            applyPaymentStateOverlay(currentTable, currentToken, cId)
+                        } catch (e: Exception) {
+                            Log.w("TableOrderViewModel", "Payment allocation overlay unavailable", e)
+                        }
                     }
                 }
                 _readProvenance.value = ReadProvenance.REMOTE_REFRESHED
