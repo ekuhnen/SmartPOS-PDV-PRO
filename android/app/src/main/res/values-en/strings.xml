@@ -194,4 +194,5 @@
     <string name="cash_tender_label">Cash</string>
     <string name="items_quote_loading">Calculating authorized amount...</string>
     <string name="items_quote_error">Could not calculate the item amount.</string>
+    <string name="print_failed_retry">Could not print. Try again.</string>
 </resources>

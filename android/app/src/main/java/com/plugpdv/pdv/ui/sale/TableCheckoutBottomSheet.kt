@@ -154,7 +154,9 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
         b.btnPayLink.setOnClickListener { finalizePayment() }
         b.btnCalculationDetails.setOnClickListener { latestState?.let { showCalculationDetails(it) } }
-        b.btnPrinter.setOnClickListener { printTableReceipt() }
+        b.btnPrinter.setOnClickListener {
+            if (viewModel.uiState.value.isComandaClosed) printClosingReceipt(reprint = true) else printTableReceipt()
+        }
     }
 
     private fun observeViewModel() {
@@ -275,6 +277,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
                 (state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L)
 
             if (isFullyPaid) {
+                printClosingReceipt()
                 viewModel.acknowledgePaymentSuccess()
                 val totalFactura = state.fullTableTotalPaid
                 
@@ -578,6 +581,19 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val renderedModel = printModel.copy(lines = renderedLines)
         val sb = CheckoutReceiptRenderer.render(ctx, renderedModel, money)
         PrinterHelper.printReceipt(requireContext(), sb)
+    }
+
+    private fun printClosingReceipt(reprint: Boolean = false) {
+        val ctx = context ?: return
+        val currentTable = viewModel.currentTableForReceipt() ?: return
+        val state = viewModel.uiState.value
+        val key = "CLOSING_RECEIPT_PRINTED_${currentTable.comandaId.orEmpty()}"
+        val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        if (!reprint && prefs.getBoolean(key, false)) return
+        val content = ComandaClosingReceiptRenderer.render(ctx, currentTable, state, reprint)
+        runCatching { PrinterHelper.printReceipt(ctx, content) }
+            .onSuccess { if (!reprint) prefs.edit().putBoolean(key, true).apply() }
+            .onFailure { Toast.makeText(ctx, getString(R.string.print_failed_retry), Toast.LENGTH_SHORT).show() }
     }
 
     private fun paidDecimal(state: CheckoutUiState, digits: Int): Double =

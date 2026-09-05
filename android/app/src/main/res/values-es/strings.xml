@@ -292,4 +292,5 @@
     <string name="cash_tender_label">Efectivo</string>
     <string name="items_quote_loading">Calculando el importe autorizado...</string>
     <string name="items_quote_error">No se pudo calcular el importe de los ítems.</string>
+    <string name="print_failed_retry">No se pudo imprimir. Inténtelo de nuevo.</string>
 </resources>

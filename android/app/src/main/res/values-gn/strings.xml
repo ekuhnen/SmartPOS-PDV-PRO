@@ -113,4 +113,5 @@
     <string name="cash_tender_label">Pirapire</string>
     <string name="items_quote_loading">Oñemboheko pe hepy autorizado...</string>
     <string name="items_quote_error">Ndaikatúi oñemboheko pe hepy.</string>
+    <string name="print_failed_retry">Ndaikatúi oñeimprime. Eha’ãjey.</string>
 </resources>

@@ -534,6 +534,8 @@ class CheckoutViewModel @Inject constructor(
         }
     }
 
+    fun currentTableForReceipt(): Table? = table
+
     private suspend fun refreshAuthoritativeItemPaymentState(authToken: String, comandaId: String) {
         val response = retryIO { apiService.getComandaPaymentState("Bearer $authToken", comandaId) }
         paymentStateByItemId = response?.itensPaymentState.orEmpty()
