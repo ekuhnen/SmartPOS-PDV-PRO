@@ -143,12 +143,18 @@ class TableOrderViewModel @Inject constructor(
             null
         }
 
-        if (resolvedTable == null) return
+        if (resolvedTable == null) {
+            Log.d("PERF_MESA", "cache_miss_reason=NO_TABLE")
+            return
+        }
 
         _table.value = resolvedTable
 
         val tenantId = TenantBindingStore.getActiveTenantId(context)
-        if (tenantId.isNullOrBlank()) return
+        if (tenantId.isNullOrBlank()) {
+            Log.d("PERF_MESA", "cache_miss_reason=TENANT_MISSING")
+            return
+        }
 
         var effectiveSnapshot: ComandaSnapshotEntity? = null
         val cId = resolvedTable.comandaId
@@ -160,8 +166,10 @@ class TableOrderViewModel @Inject constructor(
                 val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
                 if (decision == SnapshotAuthorityDecision.USABLE) {
                     effectiveSnapshot = snapshot
+                } else {
+                    Log.d("PERF_MESA", "cache_miss_reason=AUTHORITY_REJECTED")
                 }
-            }
+            } else Log.d("PERF_MESA", "cache_miss_reason=NO_SNAPSHOT")
         }
 
         // 2. Safe fallback: if primary lookup is unavailable and tableId is known, query by exact tenantId + tableId
@@ -209,6 +217,9 @@ class TableOrderViewModel @Inject constructor(
             _readProvenance.value = ReadProvenance.LOCAL_CACHED
             _table.value = resolvedTable
             Log.d("PERF_MESA", "cached_first_frame_ms=${SystemClock.elapsedRealtime() - localStart}")
+            Log.d("PERF_MESA", "cached_items_count=${resolvedTable.items.size}")
+        } else {
+            Log.d("PERF_MESA", "cache_miss_reason=NO_USABLE_SNAPSHOT")
         }
     }
 
@@ -226,15 +237,12 @@ class TableOrderViewModel @Inject constructor(
                 val firstDto = dtoList.first()
                 val serverQty = dtoList.sumOf { it.quantidade ?: 0 }
 
-                val localProduct = try {
-                    catalogDao.getProductById(pId)
-                } catch (e: Exception) {
-                    null
-                }
-
-                var productName = localProduct?.name
+                // Snapshot DTO already carries the authoritative historical price
+                // and normally the product name. Avoid a blocking DAO lookup for
+                // every line during local-first opening.
+                var productName = firstDto.nestedProduct?.name ?: firstDto.nome
                 if (productName.isNullOrEmpty()) {
-                    productName = firstDto.nestedProduct?.name ?: firstDto.nome
+                    productName = try { catalogDao.getProductById(pId)?.name } catch (_: Exception) { null }
                 }
 
                 // Invariant: Snapshot item price contained in MesaItemDto (preco_unitario / subtotal) is authoritative for the snapshot.
@@ -314,6 +322,7 @@ class TableOrderViewModel @Inject constructor(
                                 )
                             }.toMutableList()
                         )
+                        val previousItemCount = currentTable.items.size
                         val previousAccounting = _accountingSummary.value
                         val snapshotStart = SystemClock.elapsedRealtime()
                         applySnapshotToTable(candidateTable, snapshot)
@@ -322,6 +331,7 @@ class TableOrderViewModel @Inject constructor(
                             applyPaymentStateOverlay(candidateTable, currentToken, cId)
                             if (mutationQueue.isEmpty() && mutationGeneration == refreshGeneration) {
                                 _table.value = candidateTable
+                                Log.d("PERF_MESA", "remote_diff_count=${kotlin.math.abs(candidateTable.items.size - previousItemCount)}")
                             } else {
                                 Log.d("PERF_MESA", "reconciliation_skipped_stale=true")
                             }
