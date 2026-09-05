@@ -6,6 +6,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.plugpdv.pdv.R
 import com.plugpdv.pdv.databinding.ItemCheckoutSplitBinding
 import com.plugpdv.pdv.models.TableItemPayment
+import com.plugpdv.pdv.models.PaymentQuoteResponse
 import com.plugpdv.pdv.utils.CurrencyManager
 import java.math.BigDecimal
 
@@ -13,7 +14,8 @@ import java.math.BigDecimal
 class PayByItemsAdapter(
     private val items: List<TableItemPayment>,
     private val onSelect: (Int, Boolean) -> Unit,
-    private val onQuantityChanged: (Int, Int) -> Unit
+    private val onQuantityChanged: (Int, Int) -> Unit,
+    private val quotes: Map<String, PaymentQuoteResponse> = emptyMap()
 ) : RecyclerView.Adapter<PayByItemsAdapter.ViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder =
         ViewHolder(ItemCheckoutSplitBinding.inflate(LayoutInflater.from(parent.context), parent, false))
@@ -35,7 +37,10 @@ class PayByItemsAdapter(
         val price = tip.item.product.selling_price
         val currency = tip.item.product.price_currency
         holder.binding.tvItemValue.text = format(price, currency, 1)
-        holder.binding.tvItemSubtotal.text = format(price, currency, selectedQty)
+        val quote = tip.item.id?.let { quotes["$it|${selectedQty.coerceAtLeast(1)}|${CurrencyManager.getInstance().selectedCurrency}"] }
+        holder.binding.tvItemSubtotal.text = quote?.items?.firstOrNull()?.coverageAmount?.let {
+            CurrencyManager.getInstance().formatExplicit(it, quote.currency ?: currency ?: CurrencyManager.getInstance().selectedCurrency)
+        } ?: if (selectedQty > 0) "…" else "—"
         holder.itemView.setOnClickListener { onSelect(position, !tip.selected) }
         holder.binding.cbItemSelected.setOnClickListener { onSelect(position, holder.binding.cbItemSelected.isChecked) }
         holder.binding.btnDecreaseQuantity.setOnClickListener { onQuantityChanged(position, -1) }

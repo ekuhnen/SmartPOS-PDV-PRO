@@ -66,6 +66,7 @@ data class CheckoutUiState(
     val itemQuote: PaymentQuoteResponse? = null,
     val itemQuoteLoading: Boolean = false,
     val itemQuoteError: Boolean = false,
+    val itemQuoteCacheVersion: Long = 0L,
     val isPendingSync: Boolean = false,
     val isPayButtonBlocked: Boolean = true,
     val blockReason: String? = "Carregando dados financeiros...",
@@ -123,6 +124,9 @@ class CheckoutViewModel @Inject constructor(
     private var paymentStateByItemId: List<ComandaItemPaymentStateDto> = emptyList()
     private var itemsPaymentStateLoaded: Boolean = false
     private var itemQuoteRequestVersion: Long = 0L
+    private val itemQuoteCache = mutableMapOf<String, PaymentQuoteResponse>()
+    private val selectedQuantitiesByItemId = mutableMapOf<String, Int>()
+    val itemQuotes: Map<String, PaymentQuoteResponse> get() = itemQuoteCache
 
     fun currentReceiptAllocations(): List<ComandaPaymentAllocationDto> =
         _uiState.value.paymentsHistory.lastOrNull {
@@ -898,7 +902,10 @@ class CheckoutViewModel @Inject constructor(
         } else baseItems.map { it.copy(paidQuantity = 0, isPaid = false) }
         val activeItems = overlaidItems.filter { it.quantity > it.paidQuantity }
         activeItems.forEach {
-            itemsToPay.add(TableItemPayment(it))
+            val payment = TableItemPayment(it)
+            payment.selectedQuantity = selectedQuantitiesByItemId[it.id].orZero().coerceAtMost(it.quantity - it.paidQuantity)
+            payment.selected = payment.selectedQuantity > 0
+            itemsToPay.add(payment)
         }
         val hasUnknownPrice = activeItems.any { it.product.selling_price == null }
         if (hasUnknownPrice) {
@@ -909,6 +916,32 @@ class CheckoutViewModel @Inject constructor(
             )
         } else {
             _uiState.value = _uiState.value.copy(currentToPay = 0.0)
+        }
+        prequotePayableItems(activeItems)
+    }
+
+    private fun Int?.orZero(): Int = this ?: 0
+
+    private fun quoteKey(itemId: String, quantity: Int): String = "$itemId|$quantity|${CurrencyManager.getInstance().selectedCurrency}"
+
+    private fun prequotePayableItems(items: List<TableItem>) {
+        val currentTable = table ?: return
+        val authToken = token ?: return
+        val cId = currentTable.comandaId ?: return
+        items.filter { it.id != null && it.quantity > it.paidQuantity }.forEach { item ->
+            val id = requireNotNull(item.id)
+            if (itemQuoteCache.containsKey(quoteKey(id, 1))) return@forEach
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching {
+                    apiService.quoteComandaItems(
+                        "Bearer $authToken",
+                        PaymentQuoteRequest(comandaId = cId, items = listOf(ComandaItemAllocation(id, 1)), forma = "DINHEIRO", moeda = CurrencyManager.getInstance().selectedCurrency)
+                    )
+                }.onSuccess { quote ->
+                    itemQuoteCache[quoteKey(id, 1)] = quote
+                    _uiState.value = _uiState.value.copy(itemQuoteCacheVersion = _uiState.value.itemQuoteCacheVersion + 1)
+                }
+            }
         }
     }
 
@@ -923,6 +956,7 @@ class CheckoutViewModel @Inject constructor(
             try {
                 val response = retryIO { apiService.getComandaPaymentState("Bearer $currentToken", cId) }
                 paymentStateByItemId = response?.itensPaymentState.orEmpty()
+                itemQuoteCache.clear()
                 itemsPaymentStateLoaded = true
                 withContext(Dispatchers.Main) {
                     setupItemsSplit()
@@ -959,6 +993,7 @@ class CheckoutViewModel @Inject constructor(
                 item.selectedQuantity = item.item.quantity - item.item.paidQuantity
             }
             if (!isSelected) item.selectedQuantity = 0
+            item.item.id?.let { selectedQuantitiesByItemId[it] = item.selectedQuantity }
             calculateItemsTotal()
         }
     }
@@ -969,6 +1004,7 @@ class CheckoutViewModel @Inject constructor(
         val remaining = (payment.item.quantity - payment.item.paidQuantity).coerceAtLeast(0)
         payment.selectedQuantity = (payment.selectedQuantity + delta).coerceIn(0, remaining)
         payment.selected = payment.selectedQuantity > 0
+        payment.item.id?.let { selectedQuantitiesByItemId[it] = payment.selectedQuantity }
         calculateItemsTotal()
     }
 
@@ -979,16 +1015,20 @@ class CheckoutViewModel @Inject constructor(
         }
         itemQuoteRequestVersion += 1
         val requestVersion = itemQuoteRequestVersion
+        val cachedSingleQuote = if (allocations.size == 1) {
+            itemQuoteCache[quoteKey(allocations[0].comandaItemId, allocations[0].quantity)]
+        } else null
         _uiState.value = _uiState.value.copy(
             currentToPay = 0.0,
             finalToPay = 0.0,
-            itemQuote = null,
-            itemQuoteLoading = allocations.isNotEmpty(),
+            itemQuote = cachedSingleQuote,
+            itemQuoteLoading = allocations.isNotEmpty() && cachedSingleQuote == null,
             itemQuoteError = false,
-            isPayButtonBlocked = true,
-            blockReason = if (allocations.isEmpty()) null else "Atualizando valor..."
+            isPayButtonBlocked = allocations.isNotEmpty() && cachedSingleQuote == null,
+            blockReason = if (allocations.isEmpty()) null else if (cachedSingleQuote == null) "Atualizando valor..." else null
         )
-        if (allocations.isNotEmpty()) requestItemsPaymentQuote(allocations, "DINHEIRO", requestVersion)
+        if (cachedSingleQuote != null) applyItemsQuote(cachedSingleQuote)
+        else if (allocations.isNotEmpty()) requestItemsPaymentQuote(allocations, "DINHEIRO", requestVersion)
         /* quote authority is resolved asynchronously above */
         /*
         val hasUnknownPrice = selectedItems.any { it.item.product.selling_price == null }
@@ -1116,6 +1156,8 @@ class CheckoutViewModel @Inject constructor(
     }
 
     fun acknowledgePaymentSuccess() {
+        selectedQuantitiesByItemId.clear()
+        itemQuoteCache.clear()
         _uiState.value = _uiState.value.copy(
             paymentSuccess = false,
             lastPaymentMethod = null,

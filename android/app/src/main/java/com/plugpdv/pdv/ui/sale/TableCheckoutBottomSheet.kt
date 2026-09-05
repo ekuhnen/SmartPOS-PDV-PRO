@@ -360,7 +360,8 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             b.rvSelectItems.adapter = PayByItemsAdapter(
                 viewModel.itemsToPay,
                 onSelect = { pos, selected -> viewModel.onItemSelected(pos, selected) },
-                onQuantityChanged = { pos, delta -> viewModel.updateItemSelectedQuantity(pos, delta) }
+                onQuantityChanged = { pos, delta -> viewModel.updateItemSelectedQuantity(pos, delta) },
+                quotes = viewModel.itemQuotes
             )
         } else {
             b.rvSelectItems.adapter?.notifyDataSetChanged()
