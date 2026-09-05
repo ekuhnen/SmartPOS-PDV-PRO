@@ -26,8 +26,8 @@ openapi: 3.0.3
 # =====================================================================
 
 info:
-  title: PlugPDV Terminal API — Cash Session (deployed contract)
-  version: "2.1.0-7D"
+  title: PlugPDV Terminal API — Cash Session + Pay-by-Items (deployed contract)
+  version: "2.2.0-04H1"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -166,6 +166,20 @@ x-cash-currency-invariant: |
   different currency is REFUSED with 422 `CASH_CURRENCY_MISMATCH` — it must
   never create a second-currency line in the cash position. Sending no
   currency inherits the session currency. There is no FX in cash accounting.
+
+x-items-payment-idempotency: |
+  `payment_quote` is a pure read: no `terminal_operations` row, no payment,
+  no allocation, no audit event, no cash receipt. It may be called as often
+  as the UI needs.
+
+  `checkout_commit` is durable and idempotent in the DATABASE
+  (`terminal_op_begin`/`terminal_op_complete` over `terminal_operations`,
+  unique per device + `Idempotency-Key`). Replaying the same key with the
+  same body returns the stored response with `X-Idempotent-Replay: true`:
+  exactly one `pagamentos_comanda` row, one set of
+  `comanda_payment_allocations` (`allocation.skipped = true`), one cash
+  receipt and one `eventos_auditoria` PAGAMENTO event. Same key with a
+  different body → 409 `IDEMPOTENCY_KEY_CONFLICT`.
 
 paths:
   /api-caixa:
@@ -361,6 +375,162 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CodedError" }
+
+  /api-comandas:
+    post:
+      operationId: comandaTerminalActions
+      summary: Item-payment preview (`payment_quote`) and ITEMS checkout commit (`checkout_commit`)
+      description: |
+        Action-based endpoint (`{ "action": "...", ... }` in the POST body).
+        Only the two actions required by pay-by-items (PILOT-STAB-04H) are
+        documented here, exactly as deployed in
+        `supabase/functions/api-comandas/index.ts`.
+
+        ## Money authority (normative)
+        The terminal is NEVER the monetary authority. The selected items are
+        the ONLY monetary input. The database computes, from
+        `public.comanda_items_payment_quote`:
+
+        ```text
+        line_subtotal   = telescopic share of comandas.total_bruto
+        line_discount   = telescopic share of comandas.total_descontos
+        line_tax        = telescopic share of comandas.tax_amount
+        line_service    = telescopic share of comandas.total_taxas
+        coverage_amount = line_subtotal - line_discount + line_tax + line_service
+        accounting_total = SUM(coverage_amount)      -- comanda currency
+        transaction_amount = round_money(accounting_total * fx_rate, transaction_currency)
+        cash_tender        = round_cash_for_payment(transaction_amount, ...)   -- CASH only
+        ```
+
+        Shares are cumulative-by-gross-subtotal, so when every quantity is
+        paid the coverages telescope to exactly `comandas.total_liquido`.
+
+        ## Cash vs non-cash (normative)
+        Cash denomination rounding is applied ONLY to the physical tender
+        (`cash_tender`). Accounting coverage (`accounting_total`) is never
+        rounded to cash increments. For `PIX_TRANSFERENCIA`, `CARTAO`,
+        `VOUCHER` and `OUTRO`, `cash_tender == transaction_amount` and
+        `cash_rounding_diff == 0`.
+
+        ## Allocation identity (normative)
+        An allocation is identified by `comanda_item_id` + `quantity`.
+        Product id/name are NEVER allocation identity: two lines of the same
+        product are two independent `comanda_item_id`s, and one line with
+        `qtd = 2` may be paid one unit at a time.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: |
+            REQUIRED for `checkout_commit` (400 `IDEMPOTENCY_KEY_REQUIRED`
+            otherwise). MUST NOT be used for `payment_quote`, which is a pure
+            read with no financial effect. Uniqueness scope is
+            (device, key) in `public.terminal_operations`.
+        - name: X-Device-Id
+          in: header
+          required: false
+          schema: { type: string, format: uuid }
+          description: |
+            REQUIRED for `checkout_commit` (400 `DEVICE_REQUIRED`). Malformed
+            uuid → 400 `device_id_invalid`; unknown → 403
+            `device_not_registered`; blocked → 403 `DEVICE_BLOCKED`; owner
+            mismatch → 403 `TENANT_DEVICE_MISMATCH`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PaymentQuoteRequest"
+                - $ref: "#/components/schemas/ItemsCheckoutCommitRequest"
+              discriminator:
+                propertyName: action
+            examples:
+              payment_quote_cash:
+                summary: Preview of Heineken x1 in a PYG comanda, CASH
+                value:
+                  action: payment_quote
+                  comanda_id: 4332681a-15f8-4a71-9603-3586a975b20c
+                  items: [{ comanda_item_id: 8f1c…, quantity: 1 }]
+                  forma: DINHEIRO
+                  moeda: PYG
+              checkout_commit_items:
+                summary: ITEMS-mode commit (no client amount)
+                value:
+                  action: checkout_commit
+                  comanda_id: 4332681a-15f8-4a71-9603-3586a975b20c
+                  items: [{ comanda_item_id: 8f1c…, quantity: 1 }]
+                  forma: DINHEIRO
+                  moeda: PYG
+      responses:
+        "200":
+          description: |
+            `payment_quote` result — authoritative, read-only, no mutation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentQuoteResponse" }
+        "201":
+          description: |
+            `checkout_commit` first execution (`outcome: "new"`). A replay of
+            the same Idempotency-Key returns the SAME body with header
+            `X-Idempotent-Replay: true` and the stored status code.
+          headers:
+            X-Idempotent-Replay:
+              schema: { type: string, enum: ["true"] }
+              description: Present only on replay of a stored operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemsCheckoutCommitResponse" }
+        "400":
+          description: |
+            `ALLOCATION_PAYLOAD_INVALID`, `ALLOCATION_ITEMS_REQUIRED`,
+            `ALLOCATION_ITEM_NOT_IN_COMANDA`, `ALLOCATION_QUANTITY_INVALID`,
+            `IDEMPOTENCY_KEY_REQUIRED`, `DEVICE_REQUIRED`, `device_id_invalid`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "403":
+          description: "`device_not_registered`, `DEVICE_BLOCKED`, `TENANT_DEVICE_MISMATCH`, `FORBIDDEN_TENANT`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "404":
+          description: "`COMANDA_NOT_FOUND`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "409":
+          description: |
+            `ALLOCATION_EXCEEDS_ITEM_QUANTITY` (item/quantity already paid),
+            `ALLOCATION_ITEM_NOT_PAYABLE` (cancelled item),
+            `ALLOCATION_NO_PAYABLE_ITEMS`, `COMANDA_CANCELLED`,
+            `COMANDA_ALREADY_CLOSED` (outcome `reconciliation`),
+            `IDEMPOTENCY_KEY_CONFLICT` (same key, different `request_hash`),
+            `INSUFFICIENT_STOCK`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "422":
+          description: |
+            `ITEMS_AMOUNT_MISMATCH` (client amount ≠ authoritative amount;
+            body carries `expected_accounting_base`,
+            `expected_transaction_amount`, `expected_cash_tender`,
+            `allocation_preview`), `MONEY_AMOUNT_MISMATCH`,
+            `TRANSACTION_CURRENCY_REQUIRED`, `BASE_CURRENCY_MISMATCH`,
+            `COMANDA_CURRENCY_MISSING`, `FX_RATE_MISSING`,
+            `PAYMENT_METHOD_INVALID`, `ENUM_VALUE_INVALID`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "426": { $ref: "#/components/responses/UpgradeRequired" }
+        "503":
+          description: "`device_check_failed` — device registry unavailable (never used for a malformed id)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
 
 components:
   securitySchemes:
@@ -776,6 +946,311 @@ components:
         movement) and freezes one `caixa_session_closures` row per currency.
         201 on first close, 200 with `already_closed: true` afterwards
         (convergent, no key needed).
+
+    # ---------------- 6. PAY-BY-ITEMS (PILOT-STAB-04H / 04H1) ----------------
+    PaidItem:
+      type: object
+      description: |
+        One selected allocation. Identity is `comanda_item_id` + `quantity`
+        — never product id or product name. Accepted aliases (deployed in
+        `normalizePaidItems`): `comanda_item_id` | `item_id`, and
+        `quantity` | `qtd` | `paid_quantity`. The array itself may arrive as
+        `items` | `itens_pagos` | `paid_items`.
+      required: [comanda_item_id, quantity]
+      properties:
+        comanda_item_id: { type: string, format: uuid }
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+          description: |
+            Quantity being paid now, ≤ remaining quantity of that line.
+            A line with `qtd = 2` may be paid `1` then `1`.
+
+    PaymentQuoteRequest:
+      type: object
+      description: |
+        `action: "payment_quote"` — pure read. Never send an amount: there is
+        no `valor`/`valor_base` field in this contract, and any amount would
+        be ignored. No `Idempotency-Key`, no financial effect.
+      required: [action, comanda_id, items]
+      properties:
+        action: { type: string, enum: [payment_quote] }
+        comanda_id: { type: string, format: uuid }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PaidItem" }
+        forma:
+          type: string
+          default: DINHEIRO
+          description: |
+            Payment method, needed ONLY to compute the physical tender.
+            Enum `DINHEIRO | CARTAO | PIX_TRANSFERENCIA | VOUCHER | OUTRO`,
+            with terminal aliases normalised server-side (`PIX`, `CASH`,
+            `EFECTIVO`, `CARD`, `TARJETA`, `CREDITO`, `DEBITO`, `QR`,
+            `TICKET`, `VALE`, `OTHER`, …). Unknown value → 422
+            `PAYMENT_METHOD_INVALID`.
+        moeda:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+          description: |
+            Payment (transaction) currency. Omit/`null` = the comanda currency.
+            Cross-currency requires an FX rate, else 422 `FX_RATE_MISSING`.
+
+    PaymentQuoteLine:
+      type: object
+      description: Per-line authoritative allocation (element of `items`).
+      properties:
+        comanda_item_id: { type: string, format: uuid }
+        nome_snapshot: { type: string }
+        paid_quantity: { type: number }
+        unit_price: { $ref: "#/components/schemas/Money" }
+        item_subtotal: { $ref: "#/components/schemas/Money" }
+        allocated_discount: { $ref: "#/components/schemas/Money" }
+        allocated_tax: { $ref: "#/components/schemas/Money" }
+        allocated_service: { $ref: "#/components/schemas/Money" }
+        coverage_amount:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`item_subtotal - allocated_discount + allocated_tax + allocated_service`."
+        currency: { $ref: "#/components/schemas/Currency" }
+
+    PaymentQuoteResponse:
+      type: object
+      description: |
+        Verbatim output of `public.comanda_items_payment_quote`. Every money
+        field is already rounded by the database. The terminal MUST display
+        and send these values, never recompute them.
+
+        Physical example (PYG comanda 39.440 + IVA 10% = 43.384):
+        Heineken x1 → `item_subtotal` 11600, `allocated_tax` 1160,
+        `accounting_total` 12760. Coca x1 → 6960 / 696 / 7656.
+        Cachorro x1 → 20880 / 2088 / 22968. Sum = 43384 exactly.
+      properties:
+        comanda_id: { type: string, format: uuid }
+        currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          description: Comanda (accounting) currency.
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentQuoteLine" }
+        item_subtotal: { $ref: "#/components/schemas/Money" }
+        allocated_discount: { $ref: "#/components/schemas/Money" }
+        allocated_tax: { $ref: "#/components/schemas/Money" }
+        allocated_service: { $ref: "#/components/schemas/Money" }
+        accounting_total:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: |
+            Authoritative accounting coverage in `currency`. This is what the
+            comanda balance is reduced by — NOT the cash tender.
+        comanda_total:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`comandas.total_liquido` (subtotal − discount + tax + service)."
+        payable_subtotal: { $ref: "#/components/schemas/Money" }
+        paid_subtotal_before: { $ref: "#/components/schemas/Money" }
+        settles_full_comanda:
+          type: boolean
+          description: True when this selection covers every payable quantity.
+        transaction_currency: { $ref: "#/components/schemas/Currency" }
+        fx_rate: { type: number }
+        fx_source: { type: string, description: "`identity`, snapshot, company rate or inverse." }
+        transaction_amount:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`accounting_total` expressed in `transaction_currency`."
+        cash_tender:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: |
+            PHYSICAL amount to collect. Equals `transaction_amount` for every
+            non-cash method. For `DINHEIRO` it is
+            `round_cash_for_payment(transaction_amount, …)` — e.g. PYG
+            increment 50: accounting 22968 → tender 22950, diff −18, while
+            comanda coverage stays 22968.
+        cash_rounding_diff:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`cash_tender - transaction_amount`. Always 0 for non-cash."
+
+    ItemsCheckoutCommitRequest:
+      type: object
+      description: |
+        `action: "checkout_commit"` in ITEMS mode. Requires headers
+        `Idempotency-Key` and `X-Device-Id`.
+
+        **Deployed behaviour of the legacy amount fields (normative):**
+        * `valor` — OPTIONAL LEGACY. When `items` is present the server
+          recomputes the authoritative amount and OVERWRITES `valor` with
+          `transaction_amount`. If a non-null `valor` is sent and, once
+          rounded to the transaction currency, it is neither
+          `transaction_amount` nor `cash_tender`, the request is REFUSED with
+          422 `ITEMS_AMOUNT_MISMATCH` (no payment, no allocation).
+          Omitting it (the default `0` is treated as sent) is not required;
+          the safest terminal behaviour is to send the `cash_tender` /
+          `transaction_amount` returned by `payment_quote`, or nothing.
+        * `valor_base` — OPTIONAL LEGACY, validated only: it must equal the
+          authoritative `accounting_base` or the derived `calculated_base`,
+          else 422 `MONEY_AMOUNT_MISMATCH`. It NEVER sets the amount.
+        * `moeda` — REQUIRED (422 `TRANSACTION_CURRENCY_REQUIRED`). There is
+          no implicit BRL.
+      required: [action, comanda_id, items, moeda]
+      properties:
+        action: { type: string, enum: [checkout_commit] }
+        comanda_id: { type: string, format: uuid }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PaidItem" }
+        forma: { type: string, default: DINHEIRO }
+        moeda: { $ref: "#/components/schemas/Currency" }
+        valor:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          nullable: true
+          description: Optional legacy echo — validated, then overwritten. Not authority.
+        valor_base:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          nullable: true
+          description: Optional legacy echo in the comanda currency — validated only.
+        base_currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          nullable: true
+          description: If sent, must equal the comanda currency (422 `BASE_CURRENCY_MISMATCH`).
+        exchange_rates_snapshot:
+          type: object
+          nullable: true
+          description: Optional FX snapshot consulted first by `resolve_fx_rate`.
+        referencia_externa: { type: string, description: Provider/correlation reference. }
+
+    PaymentAllocationRow:
+      type: object
+      description: Persisted row of `public.comanda_payment_allocations`.
+      properties:
+        id: { type: string, format: uuid }
+        pagamento_id: { type: string, format: uuid }
+        comanda_item_id: { type: string, format: uuid }
+        paid_quantity: { type: number }
+        unit_price: { $ref: "#/components/schemas/Money" }
+        line_amount: { $ref: "#/components/schemas/Money" }
+        allocated_discount: { $ref: "#/components/schemas/Money" }
+        allocated_tax: { $ref: "#/components/schemas/Money" }
+        allocated_service: { $ref: "#/components/schemas/Money" }
+        coverage_amount: { $ref: "#/components/schemas/Money" }
+        currency: { $ref: "#/components/schemas/Currency" }
+
+    ItemsCheckoutCommitResponse:
+      type: object
+      description: |
+        Verbatim result of `public.commit_comanda_checkout_idempotent`. The
+        terminal must NOT reconstruct any of these values.
+      properties:
+        outcome:
+          type: string
+          enum: [new, replay, recovered, reconciliation, error, conflict]
+        operation_id:
+          type: string
+          format: uuid
+          description: "`terminal_operations.id` for this Idempotency-Key."
+        payment_id: { type: string, format: uuid, description: "`pagamentos_comanda.id`." }
+        sale_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set only when this payment closed the comanda (one sale per comanda).
+        comanda_id: { type: string, format: uuid }
+        base_currency:
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          description: Comanda/accounting currency.
+        transaction_currency: { $ref: "#/components/schemas/Currency" }
+        fx_rate: { type: number }
+        fx_source: { type: string }
+        valor:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: PERSISTED physical value in `transaction_currency` (cash tender when CASH).
+        cash_rounding_diff: { $ref: "#/components/schemas/Money" }
+        valor_base:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          nullable: true
+          description: Legacy derived base value; `null` in ITEMS mode.
+        accounting_base:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Authoritative coverage applied to the comanda (= `accounting_total`).
+        total_liquido: { $ref: "#/components/schemas/Money" }
+        total_pago_base: { $ref: "#/components/schemas/Money" }
+        saldo_base:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Remaining balance in `base_currency` after this payment.
+        closed:
+          type: boolean
+          description: True when the comanda was closed (table released, sale registered).
+        allocation:
+          type: object
+          description: |
+            Result of `allocate_comanda_payment_items`: `{ applied, skipped,
+            allocations: [PaymentAllocationRow], quote }`.
+          properties:
+            applied: { type: boolean }
+            skipped: { type: boolean, description: True on replay — no duplicate allocation. }
+            allocations:
+              type: array
+              items: { $ref: "#/components/schemas/PaymentAllocationRow" }
+        receipt:
+          type: object
+          description: |
+            `comanda_payment_receipt_items` — per-line receipt detail
+            (`comanda_item_id`, `paid_quantity`, `item_subtotal`,
+            `allocated_tax`, `allocated_service`, `allocated_discount`,
+            `coverage_amount`, `accounting_base`).
+        money_divergence: { type: boolean }
+
+    ComandaCodedError:
+      type: object
+      description: |
+        Typed business error of `/api-comandas`. Item-payment, currency and
+        method errors always carry `code` AND `message_key`
+        (`comanda.error.<code lowercased>`), so the terminal never has to
+        show a raw English string.
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum:
+            - ALLOCATION_PAYLOAD_INVALID
+            - ALLOCATION_ITEMS_REQUIRED
+            - ALLOCATION_ITEM_NOT_IN_COMANDA
+            - ALLOCATION_ITEM_NOT_PAYABLE
+            - ALLOCATION_QUANTITY_INVALID
+            - ALLOCATION_EXCEEDS_ITEM_QUANTITY
+            - ALLOCATION_NO_PAYABLE_ITEMS
+            - ALLOCATION_PAYMENT_NOT_FOUND
+            - ITEMS_AMOUNT_MISMATCH
+            - MONEY_AMOUNT_MISMATCH
+            - TRANSACTION_CURRENCY_REQUIRED
+            - BASE_CURRENCY_MISMATCH
+            - COMANDA_CURRENCY_MISSING
+            - FX_RATE_MISSING
+            - PAYMENT_METHOD_INVALID
+            - ENUM_VALUE_INVALID
+            - COMANDA_NOT_FOUND
+            - COMANDA_CANCELLED
+            - COMANDA_ALREADY_CLOSED
+            - INSUFFICIENT_STOCK
+            - IDEMPOTENCY_KEY_REQUIRED
+            - IDEMPOTENCY_KEY_CONFLICT
+            - DEVICE_REQUIRED
+            - device_id_invalid
+            - device_not_registered
+            - device_check_failed
+            - DEVICE_BLOCKED
+            - TENANT_DEVICE_MISMATCH
+            - TENANT_MISMATCH
+            - FORBIDDEN_TENANT
+            - UPGRADE_REQUIRED
+        message_key:
+          type: string
+          example: comanda.error.allocation_exceeds_item_quantity
+        expected_accounting_base: { $ref: "#/components/schemas/Money" }
+        expected_transaction_amount: { $ref: "#/components/schemas/Money" }
+        expected_cash_tender: { $ref: "#/components/schemas/Money" }
+        client_amount: { $ref: "#/components/schemas/Money" }
+        allocation_preview: { $ref: "#/components/schemas/PaymentQuoteResponse" }
+        requires_reconciliation: { type: boolean }
 
     PlainError:
       type: object
