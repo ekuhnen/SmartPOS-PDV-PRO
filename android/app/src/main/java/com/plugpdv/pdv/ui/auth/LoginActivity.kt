@@ -18,9 +18,9 @@ import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.KillSwitchManager
 import com.plugpdv.pdv.utils.LanguageManager
 import dagger.hilt.android.AndroidEntryPoint
-import com.google.firebase.messaging.FirebaseMessaging
 import android.content.ClipboardManager
 import android.content.ClipData
+import android.os.SystemClock
 import android.util.Log
 import com.plugpdv.pdv.service.DeviceGuardService
 import com.plugpdv.pdv.utils.DeviceIdProvider
@@ -32,6 +32,7 @@ class LoginActivity : BaseActivity() {
     private lateinit var binding: ActivityLoginBinding
     private lateinit var rememberedCredentials: RememberedCredentialsStore
     private val viewModel: AuthViewModel by viewModels()
+    private var loginTapElapsedRealtime: Long = 0L
 
     @Inject
     lateinit var deviceGuardService: DeviceGuardService
@@ -58,17 +59,6 @@ class LoginActivity : BaseActivity() {
             KillSwitchManager.reset()
         }
 
-        // Obtém o FCM Token apenas para fins de registro e log
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (task.isSuccessful) {
-                val token = task.result
-                Log.d("FCM_TOKEN", "Token: $token")
-            } else {
-                val exception = task.exception
-                Log.e("FCM_ERROR", "Falha ao obter token", exception)
-            }
-        }
-
         binding.btnLogin.setOnClickListener {
             val email = binding.etEmail.text.toString()
             val password = binding.etPassword.text.toString()
@@ -78,7 +68,8 @@ class LoginActivity : BaseActivity() {
                 return@setOnClickListener
             }
 
-            viewModel.login(email, password)
+            loginTapElapsedRealtime = SystemClock.elapsedRealtime()
+            viewModel.login(email, password, loginTapElapsedRealtime)
         }
 
         binding.cbRememberCredentials.setOnCheckedChangeListener { _, checked ->
@@ -149,14 +140,18 @@ class LoginActivity : BaseActivity() {
                     if (result.isOpen) {
                         val intent = Intent(this, DirectSaleActivity::class.java).apply {
                             putExtra("ACCESS_TOKEN", result.token)
+                            putExtra("LOGIN_TAP_ELAPSED_REALTIME", loginTapElapsedRealtime)
                         }
+                        Log.d("PERF_LOGIN", "navigation_ms=0 blocking=BLOCKING")
                         startActivity(intent)
                         finish()
                     } else {
                         Toast.makeText(this, R.string.cashier_closed_msg, Toast.LENGTH_LONG).show()
                         val intent = Intent(this, CashierActivity::class.java).apply {
                             putExtra("ACCESS_TOKEN", result.token)
+                            putExtra("LOGIN_TAP_ELAPSED_REALTIME", loginTapElapsedRealtime)
                         }
+                        Log.d("PERF_LOGIN", "navigation_ms=0 blocking=BLOCKING")
                         startActivity(intent)
                         finish()
                     }

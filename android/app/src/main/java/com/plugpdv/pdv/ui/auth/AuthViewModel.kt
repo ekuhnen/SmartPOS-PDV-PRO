@@ -2,6 +2,7 @@ package com.plugpdv.pdv.ui.auth
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -11,6 +12,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.plugpdv.pdv.api.PosApiService
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.models.AuthResponse
+import com.plugpdv.pdv.models.AuthDevice
 import com.plugpdv.pdv.models.ExchangeRequest
 import com.plugpdv.pdv.models.LoginRequest
 import com.plugpdv.pdv.outbox.SaleSyncScheduler
@@ -67,14 +69,20 @@ class AuthViewModel @Inject constructor(
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
 
-    fun login(email: String, password: String) {
+    fun login(email: String, password: String, tapElapsedRealtime: Long = SystemClock.elapsedRealtime()) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 withContext(Dispatchers.IO) {
+                    val authStart = SystemClock.elapsedRealtime()
+                    fun perf(name: String, started: Long, blocking: Boolean) {
+                        Log.d("PERF_LOGIN", "$name=${SystemClock.elapsedRealtime() - started} blocking=$blocking")
+                    }
+                    Log.d("PERF_LOGIN", "tap_to_auth_start_ms=${authStart - tapElapsedRealtime} blocking=BLOCKING")
                     Log.d("AuthViewModel", "Iniciando chamada de login para: $email")
-                    
+                    val authHttpStart = SystemClock.elapsedRealtime()
                     val response = apiService.login(LoginRequest(email, password))
+                    perf("auth_http_ms", authHttpStart, true)
                     val token = response.access_token ?: throw Exception("Token null")
 
                     // ── TENANT GUARD ─────────────────────────────────────────────────────────
@@ -113,14 +121,17 @@ class AuthViewModel @Inject constructor(
                             return@withContext
                         }
                     }
+                    Log.d("PERF_LOGIN", "tenant_guard_ms=${SystemClock.elapsedRealtime() - authStart} blocking=BLOCKING")
                     // ── FIM DO TENANT GUARD ───────────────────────────────────────────────────
                     
                     Log.d("AuthViewModel", "Iniciando registro do dispositivo...")
-                    registerDevice(token)
+                    // Device metadata registration is scheduled after the safe route is known.
 
                     Log.d("AuthViewModel", "Buscando histórico de caixa...")
                     // Check cashier status
+                    val cashierStart = SystemClock.elapsedRealtime()
                     val cashierResponse = apiService.getCashierHistory("Bearer $token", null)
+                    perf("cashier_history_http_ms", cashierStart, true)
                     val sessions = cashierResponse.operacoes ?: cashierResponse.history ?: cashierResponse.data
                     
                     var isOpen = false
@@ -149,11 +160,10 @@ class AuthViewModel @Inject constructor(
 
                     Log.d("AuthViewModel", "Sincronizando taxas e moedas...")
                     // Sync taxes and exchange rates unconditionally
-                    taxRepository.syncTaxes(token)
-                    fetchExchangeRates(token)
+                    // Tax and exchange-rate refresh run after navigation.
 
                     // Requisito 4: Disparar sincronização de vendas pendentes da Outbox pós-login
-                    saleSyncScheduler.scheduleSync(context)
+                    // Outbox scheduling runs after navigation.
 
                     val hasMesa = response.mesa ?: false
                     val hasVendaDireta = response.venda_direta ?: false
@@ -169,7 +179,7 @@ class AuthViewModel @Inject constructor(
                     val currentDeviceId = DeviceIdProvider.get(context)
 
                     // 04A.2.4: Re-avaliar mutações pausadas após login autenticado
-                    if (hasMesa) {
+                    if (false && hasMesa) {
                         // 1. Resumo de autenticação: AUTH_REQUIRED / DIFFERENT_ACTOR
                         try {
                             comandaMutationRepository.resumeAfterAuthenticatedLogin(
@@ -202,7 +212,44 @@ class AuthViewModel @Inject constructor(
                     }
 
                     Log.d("AuthViewModel", "Login finalizado com sucesso para o usuário: $userId")
+                    Log.d("PERF_LOGIN", "success_emit_ms=${SystemClock.elapsedRealtime() - authStart} blocking=BLOCKING")
                     _loginResult.postValue(LoginResult.Success(userId, token, isOpen, sessionId, hasMesa, hasVendaDireta, hasComanda))
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val started = SystemClock.elapsedRealtime()
+                        registerDevice(token)
+                        perf("register_device_http_ms", started, false)
+                    }
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val started = SystemClock.elapsedRealtime()
+                        try {
+                            kotlinx.coroutines.coroutineScope {
+                                val taxes = launch { taxRepository.syncTaxes(token) }
+                                val rates = launch { fetchExchangeRates(token) }
+                                taxes.join()
+                                rates.join()
+                            }
+                        } catch (e: Exception) {
+                            Log.w("AuthViewModel", "Background tax/rate refresh failed: ${e.message}")
+                        }
+                        perf("taxes_sync_and_exchange_rates_ms", started, false)
+                    }
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val started = SystemClock.elapsedRealtime()
+                        saleSyncScheduler.scheduleSync(context)
+                        if (hasMesa) {
+                            val deviceId = DeviceIdProvider.get(context)
+                            runCatching {
+                                comandaMutationRepository.resumeAfterAuthenticatedLogin(ownerId, userId, deviceId)
+                            }.onFailure { Log.w("AuthViewModel", "Failed to resume auth-paused mutations: ${it.message}") }
+                            val deviceAuth = response.device
+                            if (deviceAuth != null && deviceAuth.id == deviceId && deviceAuth.blocked != true) {
+                                runCatching {
+                                    comandaMutationRepository.resumeAfterVerifiedDeviceAuthorization(ownerId, userId, deviceId)
+                                }.onFailure { Log.w("AuthViewModel", "Failed to resume device-paused mutations: ${it.message}") }
+                            }
+                        }
+                        perf("mutation_resume_ms", started, false)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "ERRO NO LOGIN: ${e.message}")
@@ -239,11 +286,13 @@ class AuthViewModel @Inject constructor(
 
     private suspend fun registerDevice(token: String) {
         try {
+            val fcmStart = SystemClock.elapsedRealtime()
             val fcmToken = runCatching {
                 withTimeoutOrNull(2000L) {
                     FirebaseMessaging.getInstance().token.await()
                 }
             }.getOrNull()
+            Log.d("PERF_LOGIN", "fcm_token_ms=${SystemClock.elapsedRealtime() - fcmStart} blocking=BACKGROUND")
 
             val appVersion = try {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName

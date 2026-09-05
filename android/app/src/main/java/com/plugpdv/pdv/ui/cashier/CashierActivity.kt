@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
 import android.text.InputType
 import android.view.View
 import android.widget.*
@@ -28,6 +30,9 @@ class CashierActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityCashierBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        intent.getLongExtra("LOGIN_TAP_ELAPSED_REALTIME", 0L).takeIf { it > 0L }?.let {
+            binding.root.post { Log.d("PERF_LOGIN", "destination_first_frame_ms=${SystemClock.elapsedRealtime() - it} total_tap_to_usable_ms=${SystemClock.elapsedRealtime() - it} blocking=BLOCKING") }
+        }
         token = intent.getStringExtra("ACCESS_TOKEN")
         binding.btnBack.setOnClickListener { finish() }
         binding.btnLogoff.setOnClickListener { confirmLogoff() }
