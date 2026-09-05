@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.DiffUtil
 import com.plugpdv.pdv.R
 import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.utils.CurrencyManager
@@ -18,8 +19,17 @@ class TableOrderItemAdapter(
 ) : RecyclerView.Adapter<TableOrderItemAdapter.ViewHolder>() {
 
     fun setItems(newItems: List<TableItem>) {
+        val oldItems = items
         this.items = newItems
-        notifyDataSetChanged()
+        DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = oldItems.size
+            override fun getNewListSize() = newItems.size
+            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+                oldItems[oldItemPosition].id == newItems[newItemPosition].id &&
+                    oldItems[oldItemPosition].product.id == newItems[newItemPosition].product.id
+            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+                oldItems[oldItemPosition] == newItems[newItemPosition]
+        }).dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {

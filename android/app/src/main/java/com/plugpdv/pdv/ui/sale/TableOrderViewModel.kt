@@ -2,6 +2,7 @@ package com.plugpdv.pdv.ui.sale
 
 import android.content.Context
 import android.util.Log
+import android.os.SystemClock
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -113,7 +114,7 @@ class TableOrderViewModel @Inject constructor(
 
         viewModelScope.launch {
             loadLocalTableAndSnapshot()
-            performSyncTable()
+            performSyncTable(showLoading = false)
         }
     }
 
@@ -123,6 +124,7 @@ class TableOrderViewModel @Inject constructor(
     }
 
     private suspend fun loadLocalTableAndSnapshot() {
+        val localStart = SystemClock.elapsedRealtime()
         val resolvedTable = if (!tableId.isNullOrEmpty()) {
             tableReadRepository.getTableById(tableId!!)
         } else if (tableNumber > 0) {
@@ -196,6 +198,7 @@ class TableOrderViewModel @Inject constructor(
             applySnapshotToTable(resolvedTable, effectiveSnapshot)
             _readProvenance.value = ReadProvenance.LOCAL_CACHED
             _table.value = resolvedTable
+            Log.d("PERF_MESA", "cached_first_frame_ms=${SystemClock.elapsedRealtime() - localStart}")
         }
     }
 
@@ -262,25 +265,25 @@ class TableOrderViewModel @Inject constructor(
         }
     }
 
-    fun syncTable(isNewlyOpened: Boolean = false) {
+    fun syncTable(isNewlyOpened: Boolean = false, showLoading: Boolean = true) {
         viewModelScope.launch {
-            performSyncTable(isNewlyOpened)
+            performSyncTable(isNewlyOpened, showLoading)
         }
     }
 
-    private suspend fun performSyncTable(isNewlyOpened: Boolean = false) {
+    private suspend fun performSyncTable(isNewlyOpened: Boolean = false, showLoading: Boolean = true) {
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
 
         try {
-            _isLoading.value = true
-            if (isNewlyOpened) {
-                kotlinx.coroutines.delay(500)
-            }
+            if (showLoading) _isLoading.value = true
+            val refreshStart = SystemClock.elapsedRealtime()
 
             val cId = currentTable.comandaId
             if (!cId.isNullOrEmpty()) {
+                val detailStart = SystemClock.elapsedRealtime()
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                Log.d("PERF_MESA", "reconciliation_http_ms=${SystemClock.elapsedRealtime() - detailStart}")
                 val snapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
                 if (snapshot != null) {
@@ -297,7 +300,9 @@ class TableOrderViewModel @Inject constructor(
                             }.toMutableList()
                         )
                         val previousAccounting = _accountingSummary.value
+                        val snapshotStart = SystemClock.elapsedRealtime()
                         applySnapshotToTable(candidateTable, snapshot)
+                        Log.d("PERF_MESA", "snapshot_apply_ms=${SystemClock.elapsedRealtime() - snapshotStart}")
                         try {
                             applyPaymentStateOverlay(candidateTable, currentToken, cId)
                             _table.value = candidateTable
@@ -314,6 +319,7 @@ class TableOrderViewModel @Inject constructor(
                 tableReadRepository.refreshTables(currentToken)
                 loadLocalTableAndSnapshot()
             }
+            Log.d("PERF_MESA", "total_authoritative_ms=${SystemClock.elapsedRealtime() - refreshStart}")
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {
@@ -352,7 +358,7 @@ class TableOrderViewModel @Inject constructor(
             Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
             _error.value = localized(R.string.load_table_error, "LOAD_TABLE_ERROR", e.message.orEmpty())
         } finally {
-            _isLoading.value = false
+            if (showLoading) _isLoading.value = false
         }
     }
 
@@ -380,19 +386,28 @@ class TableOrderViewModel @Inject constructor(
             status = "RASCUNHO"
         }
 
+        val tapAt = SystemClock.elapsedRealtime()
+        // Immediate, explicitly non-authoritative pending rendering.
+        val optimistic = currentTable.copy(items = currentTable.items.map { it.copy(product = it.product.copy(), serverIds = it.serverIds?.toMutableList()) }.toMutableList())
+        val existing = optimistic.items.firstOrNull { !it.removed && it.product.id == product.id }
+        if (existing != null) existing.quantity += 1 else optimistic.items.add(TableItem(product = product.copy(), quantity = 1, status = "PENDING"))
+        _table.value = optimistic
+        Log.d("PERF_MESA", "add_visual_ms=${SystemClock.elapsedRealtime() - tapAt}")
+
         viewModelScope.launch {
+            val httpStart = SystemClock.elapsedRealtime()
             try {
-                _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
-                syncTable()
+                Log.d("PERF_MESA", "mutation_http_ms=${SystemClock.elapsedRealtime() - httpStart}")
+                syncTable(showLoading = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
                 _error.value = localized(R.string.offline_action_requires_connection, "OFFLINE_ACTION_REQUIRES_CONNECTION")
+                syncTable(showLoading = false)
             } catch (e: Exception) {
                 _error.value = localized(R.string.add_item_error, "ADD_ITEM_ERROR", e.localizedMessage.orEmpty())
-            } finally {
-                _isLoading.value = false
+                syncTable(showLoading = false)
             }
         }
     }

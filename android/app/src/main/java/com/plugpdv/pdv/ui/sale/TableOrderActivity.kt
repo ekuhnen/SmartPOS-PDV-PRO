@@ -2,6 +2,7 @@ package com.plugpdv.pdv.ui.sale
 
 import android.os.Bundle
 import android.view.View
+import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.viewModels
@@ -229,6 +230,7 @@ class TableOrderActivity : BaseActivity() {
     }
 
     fun updateUI() {
+        val renderStart = android.os.SystemClock.elapsedRealtime()
         val currentTable = table
         val summary = tableOrderViewModel.accountingSummary.value
         if (summary != null) {
@@ -253,15 +255,9 @@ class TableOrderActivity : BaseActivity() {
             binding.tvComandaPaid.text = ""
         }
         currentTable?.items?.let { items ->
-            orderAdapter = TableOrderItemAdapter(items) { item ->
-                if (!item.removed) {
-                    showItemOptions(item)
-                }
-            }
-            binding.rvOrderItems.adapter = orderAdapter
+            orderAdapter.setItems(items)
         }
-        orderAdapter.notifyDataSetChanged()
-        productAdapter.notifyDataSetChanged()
+        Log.d("PERF_MESA", "render_ms=${android.os.SystemClock.elapsedRealtime() - renderStart}")
     }
 
     private fun showItemOptions(item: TableItem) {
