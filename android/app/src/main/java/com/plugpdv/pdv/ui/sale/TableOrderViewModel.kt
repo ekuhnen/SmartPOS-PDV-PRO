@@ -286,17 +286,30 @@ class TableOrderViewModel @Inject constructor(
                 if (snapshot != null) {
                     val decision = ComandaSnapshotAuthorityPolicy.evaluate(snapshot, cId, context)
                     if (decision == SnapshotAuthorityDecision.USABLE) {
-                        applySnapshotToTable(currentTable, snapshot)
+                        // Hydrate a detached candidate so the already-published table
+                        // cannot briefly expose base items before allocation is known.
+                        val candidateTable = currentTable.copy(
+                            items = currentTable.items.map { item ->
+                                item.copy(
+                                    product = item.product.copy(),
+                                    serverIds = item.serverIds?.toMutableList()
+                                )
+                            }.toMutableList()
+                        )
+                        val previousAccounting = _accountingSummary.value
+                        applySnapshotToTable(candidateTable, snapshot)
                         try {
-                            applyPaymentStateOverlay(currentTable, currentToken, cId)
+                            applyPaymentStateOverlay(candidateTable, currentToken, cId)
+                            _table.value = candidateTable
                         } catch (e: Exception) {
                             Log.w("TableOrderViewModel", "Payment allocation overlay unavailable", e)
+                            // Keep the last authoritative combined state intact.
+                            _accountingSummary.value = previousAccounting
                         }
                     }
                 }
                 _readProvenance.value = ReadProvenance.REMOTE_REFRESHED
                 _refreshWarning.value = null
-                _table.value = currentTable
             } else {
                 tableReadRepository.refreshTables(currentToken)
                 loadLocalTableAndSnapshot()
