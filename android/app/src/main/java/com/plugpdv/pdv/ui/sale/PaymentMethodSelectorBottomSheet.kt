@@ -38,6 +38,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
 
     private var baseAmount: BigDecimal = BigDecimal.ZERO
     private var baseCurrency: String = "BRL"
+    private var amountEditable: Boolean = true
     private var onQuoteSelected: ((PaymentType, SelectedPaymentQuote) -> Unit)? = null
 
     enum class PaymentType {
@@ -49,6 +50,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         val amountDbl = arguments?.getDouble(ARG_TOTAL) ?: 0.0
         baseAmount = MoneyDecimal.of(amountDbl)
         baseCurrency = arguments?.getString(ARG_BASE_CURRENCY) ?: CurrencyManager.getInstance().getBaseCurrency()
+        amountEditable = arguments?.getBoolean(ARG_AMOUNT_EDITABLE, true) ?: true
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -63,6 +65,12 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
         val selectedTxCurrency = cm.selectedCurrency
 
         binding.tilAmount.prefixText = "$selectedTxCurrency "
+        // ITEMS amounts come from payment_quote and must not be replaced by
+        // a manually entered full-comanda amount. TOTAL mode keeps the
+        // existing editable behavior.
+        binding.etAmount.isEnabled = amountEditable
+        binding.etAmount.isFocusable = amountEditable
+        binding.etAmount.isFocusableInTouchMode = amountEditable
 
         // Calcula quote determinística inicial a partir do baseAmount
         val quoteResult = cm.convertMoneyExact(
@@ -155,10 +163,12 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
     companion object {
         private const val ARG_TOTAL = "arg_total"
         private const val ARG_BASE_CURRENCY = "arg_base_currency"
+        private const val ARG_AMOUNT_EDITABLE = "arg_amount_editable"
 
         fun newInstance(
             baseTotal: Double,
             baseCurrency: String? = null,
+            amountEditable: Boolean = true,
             onSelected: (PaymentType, SelectedPaymentQuote) -> Unit
         ): PaymentMethodSelectorBottomSheet {
             return PaymentMethodSelectorBottomSheet().apply {
@@ -167,6 +177,7 @@ class PaymentMethodSelectorBottomSheet : BottomSheetDialogFragment() {
                     if (!baseCurrency.isNullOrEmpty()) {
                         putString(ARG_BASE_CURRENCY, baseCurrency)
                     }
+                    putBoolean(ARG_AMOUNT_EDITABLE, amountEditable)
                 }
                 this.onQuoteSelected = onSelected
             }

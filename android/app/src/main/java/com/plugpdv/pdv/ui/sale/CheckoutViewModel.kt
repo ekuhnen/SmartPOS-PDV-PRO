@@ -1120,6 +1120,7 @@ class CheckoutViewModel @Inject constructor(
             ComandaItemAllocation(requireNotNull(it.item.id) { "ITEM_SPLIT_ID_MISSING" }, it.selectedQuantity)
         }
         if (allocations.isEmpty()) throw IllegalStateException("ITEM_SPLIT_SELECTION_REQUIRED")
+        val requestVersion = ++itemQuoteRequestVersion
         val quote = retryIO {
             apiService.quoteComandaItems(
                 "Bearer $authToken",
@@ -1131,7 +1132,12 @@ class CheckoutViewModel @Inject constructor(
                 )
             )
         }
-        withContext(Dispatchers.Main) { applyItemsQuote(quote) }
+        withContext(Dispatchers.Main) {
+            if (requestVersion != itemQuoteRequestVersion) {
+                throw IllegalStateException("PAYMENT_QUOTE_STALE")
+            }
+            applyItemsQuote(quote)
+        }
         return quote
     }
 
@@ -1289,6 +1295,12 @@ class CheckoutViewModel @Inject constructor(
                         isServiceFeeSubmitting = false,
                         serviceFeeError = null
                     )
+                    // A service-fee mutation changes the allocation basis of
+                    // every ITEMS quote.  Keep the operator's selection, but
+                    // discard quotes from the previous comanda revision and
+                    // obtain a fresh authoritative quote before payment is
+                    // enabled again.
+                    invalidateItemsQuoteAfterAuthorityChange()
                 }
                 success = true
             } catch (e: CancellationException) {
@@ -1305,6 +1317,34 @@ class CheckoutViewModel @Inject constructor(
                 if (!success) withContext(Dispatchers.Main) { onFinished?.invoke(false) }
                 else withContext(Dispatchers.Main) { onFinished?.invoke(true) }
             }
+        }
+    }
+
+    private fun invalidateItemsQuoteAfterAuthorityChange() {
+        itemQuoteRequestVersion += 1
+        itemQuoteCache.clear()
+        if (_uiState.value.splitMode != 2) return
+
+        val allocations = itemsToPay.filter { it.selected && it.selectedQuantity > 0 }
+            .mapNotNull { payment ->
+                payment.item.id?.let { id -> ComandaItemAllocation(id, payment.selectedQuantity) }
+            }
+        val requestVersion = itemQuoteRequestVersion
+        _uiState.value = _uiState.value.copy(
+            itemQuote = null,
+            itemQuoteLoading = allocations.isNotEmpty(),
+            itemQuoteError = false,
+            currentToPay = 0.0,
+            finalToPay = 0.0,
+            isPayButtonBlocked = allocations.isNotEmpty(),
+            blockReason = if (allocations.isNotEmpty()) "Atualizando valor..." else null,
+            itemQuoteCacheVersion = _uiState.value.itemQuoteCacheVersion + 1
+        )
+        if (allocations.isNotEmpty()) {
+            // DINHEIRO is the existing read-only prequote context.  The
+            // selected quantity and all financial values still come from the
+            // server response; this does not authorize a payment.
+            requestItemsPaymentQuote(allocations, "DINHEIRO", requestVersion)
         }
     }
 

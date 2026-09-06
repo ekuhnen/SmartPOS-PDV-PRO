@@ -481,12 +481,26 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             Toast.makeText(context, state.blockReason ?: getString(R.string.comanda_financial_data_not_loaded), Toast.LENGTH_SHORT).show()
             return
         }
-        if (state.currentToPay <= 0) {
+        // In ITEMS mode the selected-payment quote is the only authority for
+        // the amount handed to the payment-method screen.  currentToPay may
+        // subsequently be refreshed from the whole comanda balance, so using
+        // it (or finalToPay) here can accidentally charge the remaining
+        // comanda instead of the selected allocation.
+        val amountForPaymentMethod = if (state.splitMode == 2) {
+            state.itemQuote?.accountingTotal
+        } else {
+            state.finalToPay
+        }
+        if (amountForPaymentMethod == null || amountForPaymentMethod <= 0.0) {
             Toast.makeText(context, if (state.splitMode == 2) R.string.select_item_for_payment else R.string.invalid_value, Toast.LENGTH_SHORT).show()
             return
         }
 
-        PaymentMethodSelectorBottomSheet.newInstance(state.finalToPay, viewModel.comandaBaseCurrency) { method, quote ->
+        PaymentMethodSelectorBottomSheet.newInstance(
+            baseTotal = amountForPaymentMethod,
+            baseCurrency = viewModel.comandaBaseCurrency,
+            amountEditable = state.splitMode != 2
+        ) { method, quote ->
             Log.d("TableCheckoutBottomSheet", "Método selecionado: $method, Quote: $quote")
             when (method) {
                 PaymentMethodSelectorBottomSheet.PaymentType.CASH -> {
