@@ -29,11 +29,11 @@ class PayByItemsAdapter(
         holder.binding.tvSelectedQuantity.text = selectedQty.toString()
         holder.binding.btnDecreaseQuantity.isEnabled = selectedQty > 0
         holder.binding.btnIncreaseQuantity.isEnabled = selectedQty < remaining
-        holder.binding.tvItemName.text = holder.itemView.context.getString(
-            R.string.product_with_quantity,
-            tip.item.product.name ?: holder.itemView.context.getString(R.string.unnamed_product),
-            selectedQty
-        )
+        // The dedicated quantity control is the sole quantity authority in
+        // ITEMS mode; repeating it in the product title is redundant and
+        // caused the physical row to read as two quantities.
+        holder.binding.tvItemName.text = tip.item.product.name
+            ?: holder.itemView.context.getString(R.string.unnamed_product)
         val price = tip.item.product.selling_price
         val currency = tip.item.product.price_currency
         holder.binding.tvItemValue.text = format(price, currency, 1)

@@ -127,4 +127,11 @@
     <string name="table_refreshing">Oñembopyahu...</string>
     <string name="table_updating_action">Oñembopyahu...</string>
     <string name="table_refresh_failed">Ndaikatúi oñembopyahu tembiapopy.</string>
+    <string name="service_fee_change_scope">Oñembojoapy comanda tuichakue</string>
+    <string name="service_fee_default">Tasa ñepyrũgua</string>
+    <string name="service_fee_default_with_percent">Tasa ñepyrũgua (%1$s)</string>
+    <string name="percentage">Porcentaje (%)</string>
+    <string name="service_fee_exempt">Oñemboyke (0%)</string>
+    <string name="service_fee_amount_hint">Mboýpa comanda virúpe (%1$s)</string>
+    <string name="service_fee_allocated_label">Tasa de servicio (prorrateo)</string>
 </resources>

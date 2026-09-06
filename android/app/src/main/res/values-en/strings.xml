@@ -208,4 +208,11 @@
     <string name="table_refreshing">Updating...</string>
     <string name="table_updating_action">Updating...</string>
     <string name="table_refresh_failed">Could not update the order.</string>
+    <string name="service_fee_change_scope">Applies to the entire comanda</string>
+    <string name="service_fee_default">Default service fee</string>
+    <string name="service_fee_default_with_percent">Default service fee (%1$s)</string>
+    <string name="percentage">Percentage (%)</string>
+    <string name="service_fee_exempt">Waive (0%)</string>
+    <string name="service_fee_amount_hint">Amount in comanda currency (%1$s)</string>
+    <string name="service_fee_allocated_label">Service fee (allocated)</string>
 </resources>

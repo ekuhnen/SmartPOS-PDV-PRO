@@ -248,7 +248,7 @@
     <string name="comanda_module">Módulo de comanda</string><string name="scan_or_enter_comanda_code">Escaneie o QR Code ou digite o código</string><string name="comanda_code">Código da comanda</string><string name="search_comanda">BUSCAR COMANDA</string><string name="scan_qr_code">ESCANEAR QR CODE</string>
     <string name="search">Buscar</string><string name="cart_items">Itens do carrinho</string><string name="loading">Carregando...</string>
     <string name="payment_method_title">Forma de pagamento</string><string name="amount_to_receive">Valor a receber</string><string name="amount_placeholder">—</string><string name="unit_price_placeholder">Unitário: —</string>
-    <string name="service_fee_change_title">Alterar taxa de serviço</string><string name="service_fee_default">Taxa padrão</string><string name="percentage">Percentual (%%)</string><string name="fixed_value">Valor fixo</string><string name="service_fee_exempt">Isentar (0%%)</string><string name="value_or_percentage">Valor/percentual</string><string name="apply">Aplicar</string>
+    <string name="service_fee_change_title">Alterar taxa de serviço</string><string name="service_fee_change_scope">Aplica à comanda inteira</string><string name="service_fee_default">Taxa padrão</string><string name="service_fee_default_with_percent">Taxa padrão (%1$s)</string><string name="percentage">Percentual (%)</string><string name="fixed_value">Valor fixo</string><string name="service_fee_exempt">Isentar (0%)</string><string name="value_or_percentage">Valor/percentual</string><string name="service_fee_amount_hint">Valor na moeda da comanda (%1$s)</string><string name="service_fee_allocated_label">Taxa de serviço (rateio)</string><string name="apply">Aplicar</string>
     <string name="split">Dividir</string><string name="items">Itens</string><string name="number_of_people">Número de pessoas</string><string name="select_items">Selecione os itens</string><string name="select_item_for_payment">Selecione pelo menos um item para pagamento.</string><string name="finish_payment">Finalizar pagamento</string><string name="table_history">Histórico da mesa</string>
     <string name="payment_undetermined_title">Não conseguimos confirmar este pagamento</string><string name="payment_may_have_been_charged">O cartão pode ter sido cobrado. Consulte antes de tentar novamente.</string><string name="check_again">Consultar de novo</string><string name="register_pending">Registrar como pendente e resolver depois</string><string name="view_payment_receipt">Ver comprovante do app de pagamento</string>
     <string name="history">Histórico</string><string name="print_action">Imprimir</string><string name="update_comanda">ATUALIZAR COMANDA</string>
@@ -355,7 +355,7 @@
     <string name="cash_error_cash_currency_mismatch">A moeda deve ser a mesma da sessão.</string>
     <string name="cash_error_cash_movement_type_invalid">Operação de caixa inválida.</string>
     <string name="cash_closing">Fechando caixa…</string>
-    <string name="cash_tender_label">Efectivo</string>
+    <string name="cash_tender_label">Dinheiro</string>
     <string name="items_quote_loading">Calculando valor autorizado...</string>
     <string name="items_quote_error">No fue posible calcular el valor de los ítems.</string>
     <string name="print_failed_retry">Não foi possível imprimir. Tente novamente.</string>

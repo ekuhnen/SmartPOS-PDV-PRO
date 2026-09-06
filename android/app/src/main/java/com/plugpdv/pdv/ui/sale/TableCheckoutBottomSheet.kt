@@ -398,10 +398,11 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val sfConfig = state.serviceFeeConfig
         val canOverride = sfConfig?.allowOverride == true
         if (canOverride || sfAmount > 0) {
-            val sfRowBinding = addBreakdownRow(getString(R.string.service_fee_label_ui), formatBaseAmount(sfAmount, state.baseCurrency ?: cm.getBaseCurrency()))
+            val feeLabel = if (state.splitMode == 2) R.string.service_fee_allocated_label else R.string.service_fee_label_ui
+            val sfRowBinding = addBreakdownRow(getString(feeLabel), formatBaseAmount(sfAmount, state.baseCurrency ?: cm.getBaseCurrency()))
             if (canOverride) {
                 sfRowBinding.root.setOnClickListener { showServiceFeeOverrideDialog() }
-                sfRowBinding.tvLabel.setText(R.string.service_fee_change)
+                sfRowBinding.tvLabel.setText(if (state.splitMode == 2) R.string.service_fee_allocated_label else R.string.service_fee_change)
                 sfRowBinding.tvLabel.setTextColor(requireContext().getColor(com.google.android.material.R.color.design_default_color_primary))
             }
         }
@@ -470,7 +471,12 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private fun showServiceFeeOverrideDialog() {
         val baseAmount = viewModel.uiState.value.currentToPay
-        ServiceFeeOverrideBottomSheet.newInstance(baseAmount, convertManualValueToBrl = false) { kind, value, done ->
+        ServiceFeeOverrideBottomSheet.newInstance(
+            baseAmount = baseAmount,
+            convertManualValueToBrl = false,
+            comandaCurrency = viewModel.uiState.value.baseCurrency,
+            defaultPercent = viewModel.uiState.value.serviceFeeConfig?.fixedPercent
+        ) { kind, value, done ->
             viewModel.overrideServiceFee(kind, value, done)
         }.show(childFragmentManager, "service_fee_override")
     }

@@ -17,6 +17,8 @@ class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
     private var baseAmount: Double = 0.0
     private var onApply: ((String, Double, (Boolean) -> Unit) -> Unit)? = null
     private var convertManualValueToBrl: Boolean = true
+    private var comandaCurrency: String? = null
+    private var defaultPercent: Double? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -33,9 +35,18 @@ class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
         val btnApply = view.findViewById<Button>(R.id.btnApply)
         val progress = view.findViewById<android.widget.ProgressBar>(R.id.progressApply)
 
+        defaultPercent?.let {
+            rbFixed.text = getString(R.string.service_fee_default_with_percent, formatPercent(it))
+        }
+
         rgFeeKind.setOnCheckedChangeListener { _, checkedId ->
             if (checkedId == R.id.rbManualPercent || checkedId == R.id.rbManualValue) {
                 etManualValue.visibility = View.VISIBLE
+                etManualValue.hint = if (checkedId == R.id.rbManualValue) {
+                    getString(R.string.service_fee_amount_hint, comandaCurrency ?: CurrencyManager.getInstance().selectedCurrency)
+                } else {
+                    getString(R.string.value_or_percentage)
+                }
             } else {
                 etManualValue.visibility = View.GONE
             }
@@ -75,16 +86,23 @@ class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
         return view
     }
 
+    private fun formatPercent(value: Double): String =
+        java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
+
     companion object {
         fun newInstance(
             baseAmount: Double,
             convertManualValueToBrl: Boolean = true,
+            comandaCurrency: String? = null,
+            defaultPercent: Double? = null,
             onApply: (String, Double, (Boolean) -> Unit) -> Unit
         ): ServiceFeeOverrideBottomSheet {
             val fragment = ServiceFeeOverrideBottomSheet()
             fragment.baseAmount = baseAmount
             fragment.onApply = onApply
             fragment.convertManualValueToBrl = convertManualValueToBrl
+            fragment.comandaCurrency = comandaCurrency
+            fragment.defaultPercent = defaultPercent
             return fragment
         }
     }
