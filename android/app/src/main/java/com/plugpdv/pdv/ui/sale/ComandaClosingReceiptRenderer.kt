@@ -3,6 +3,9 @@ package com.plugpdv.pdv.ui.sale
 import android.content.Context
 import com.plugpdv.pdv.R
 import com.plugpdv.pdv.models.ComandaPaymentDto
+import com.plugpdv.pdv.models.ComandaReceiptResponse
+import com.plugpdv.pdv.models.ReceiptAddress
+import com.plugpdv.pdv.models.ReceiptIssuer
 import com.plugpdv.pdv.models.Table
 import com.plugpdv.pdv.utils.CurrencyManager
 import java.math.BigDecimal
@@ -12,7 +15,7 @@ import java.util.Locale
 
 /** Pure presentation of the authoritative closed-comanda snapshot. */
 object ComandaClosingReceiptRenderer {
-    fun render(context: Context, table: Table, state: CheckoutUiState, reprint: Boolean = false): String {
+    fun render(context: Context, table: Table, state: CheckoutUiState, reprint: Boolean = false, receipt: ComandaReceiptResponse? = null): String {
         val cm = CurrencyManager.getInstance()
         val currency = state.baseCurrency ?: cm.selectedCurrency
         val digits = state.baseMinorUnitDigits ?: 0
@@ -25,7 +28,8 @@ object ComandaClosingReceiptRenderer {
         val now = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
         val sb = StringBuilder()
         sb.append("================================\n")
-        sb.append("           PlugPDV\n")
+        appendIssuer(sb, receipt, ::t)
+        if (receipt?.issuer == null && receipt?.empresa == null) sb.append("           PlugPDV\n")
         sb.append("================================\n")
         if (reprint) sb.append(t("REIMPRESSÃO", "REIMPRESIÓN", "REPRINT")).append("\n")
         sb.append(t("FECHAMENTO DE MESA", "CIERRE DE MESA", "TABLE CLOSING")).append("\n")
@@ -60,6 +64,67 @@ object ComandaClosingReceiptRenderer {
         sb.append("================================\n\n\n")
         return sb.toString()
     }
+
+    private fun appendIssuer(
+        sb: StringBuilder,
+        receipt: ComandaReceiptResponse?,
+        t: (String, String, String) -> String
+    ) {
+        val issuer = receipt?.issuer
+        if (issuer != null) {
+            appendIssuerFields(sb, issuer, t)
+            return
+        }
+        // The contract explicitly permits empresa only for legacy receipts.
+        // Preserve that fallback without sourcing identity from Android state.
+        val legacy = receipt?.empresa ?: return
+        val trade = legacy.string("trade_name", "nome_fantasia", "fantasy_name")
+        val legal = legacy.string("legal_name", "razao_social", "name")
+        val document = legacy.string("document_number", "ruc", "document")
+        val primary = trade ?: legal
+        primary?.let { appendWrapped(sb, it) }
+        if (!trade.isNullOrBlank() && !legal.isNullOrBlank() && !trade.equals(legal, true)) appendWrapped(sb, legal)
+        document?.let { sb.append(t("Documento", "Documento", "Document")).append(": ").append(it).append('\n') }
+        legacy.string("phone", "telefone")?.let { sb.append(t("Telefone", "Teléfono", "Phone")).append(": ").append(it).append('\n') }
+        legacy.string("email", "e_mail")?.let { sb.append(t("E-mail", "E-mail", "Email")).append(": ").append(it).append('\n') }
+        legacy.string("address", "endereco", "dirección")?.let { sb.append(it).append('\n') }
+    }
+
+    private fun appendIssuerFields(sb: StringBuilder, issuer: ReceiptIssuer, t: (String, String, String) -> String) {
+        val trade = issuer.tradeName.clean()
+        val legal = issuer.legalName.clean()
+        val primary = trade ?: legal
+        primary?.let { appendWrapped(sb, it) }
+        if (!trade.isNullOrBlank() && !legal.isNullOrBlank() && !trade.equals(legal, true)) appendWrapped(sb, legal)
+        val document = (issuer.documentNumber ?: issuer.ruc).clean()
+        if (document != null) {
+            val label = if (issuer.documentType.equals("RUC", true)) "RUC" else t("Documento", "Documento", "Document")
+            sb.append(label).append(": ").append(document).append('\n')
+        }
+        issuer.phone.clean()?.let { sb.append(t("Telefone", "Teléfono", "Phone")).append(": ").append(it).append('\n') }
+        issuer.email.clean()?.let { sb.append(t("E-mail", "E-mail", "Email")).append(": ").append(it).append('\n') }
+        appendAddress(sb, issuer.address, t)
+    }
+
+    private fun appendAddress(sb: StringBuilder, address: ReceiptAddress?, t: (String, String, String) -> String) {
+        if (address == null) return
+        val first = listOf(address.line1.clean(), address.number.clean(), address.complement.clean())
+            .filterNotNull().joinToString(", ")
+        val second = listOf(address.neighborhood.clean(), address.city.clean(), address.state.clean(), address.country.clean())
+            .filterNotNull().joinToString(" - ")
+        if (first.isNotBlank()) sb.append(first).append('\n')
+        if (second.isNotBlank()) sb.append(second).append('\n')
+    }
+
+    private fun String?.clean(): String? = this?.trim()?.takeIf { it.isNotEmpty() && it != "-" && !it.equals("null", true) }
+
+    private fun appendWrapped(sb: StringBuilder, value: String, width: Int = 32) {
+        value.chunked(width).forEach { sb.append(it).append('\n') }
+    }
+
+    private fun com.google.gson.JsonObject.string(vararg names: String): String? = names.asSequence()
+        .mapNotNull { get(it)?.takeIf { value -> value.isJsonPrimitive }?.asString?.trim() }
+        .firstOrNull { it.isNotEmpty() && it != "-" && !it.equals("null", true) }
 
     private fun appendPayment(sb: StringBuilder, payment: ComandaPaymentDto, cm: CurrencyManager, baseCurrency: String, t: (String, String, String) -> String) {
         val method = when (payment.forma.uppercase()) { "DINHEIRO", "CASH" -> t("DINHEIRO", "EFECTIVO", "CASH"); "PIX", "PIX_TRANSFERENCIA" -> "PIX"; else -> payment.forma }

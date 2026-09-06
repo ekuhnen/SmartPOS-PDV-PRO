@@ -138,6 +138,15 @@ class CheckoutViewModel @Inject constructor(
             it.allocationMode.equals("items", ignoreCase = true)
         }?.allocations.orEmpty()
 
+    /** Receipt identity is a backend snapshot; it is never composed from local profile data. */
+    suspend fun fetchClosingReceipt(): ComandaReceiptResponse? = withContext(Dispatchers.IO) {
+        val cId = table?.comandaId ?: return@withContext null
+        val auth = token ?: return@withContext null
+        runCatching { apiService.getComandaReceipt("Bearer $auth", cId) }
+            .onFailure { Log.w("CheckoutViewModel", "Closing receipt identity unavailable", it) }
+            .getOrNull()
+    }
+
     /** Items and quantities belonging to the current checkout scope. */
     fun currentChargeItems(): List<Pair<TableItem, Int>> {
         return if (_uiState.value.splitMode == 2) {

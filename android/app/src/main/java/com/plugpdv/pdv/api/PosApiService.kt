@@ -109,6 +109,12 @@ interface PosApiService {
     ): ComandaPaymentStateResponse?
 
     @GET("api-comandas")
+    suspend fun getComandaReceipt(
+        @Header("Authorization") token: String,
+        @Query("recibo") comandaId: String
+    ): ComandaReceiptResponse
+
+    @GET("api-comandas")
     suspend fun getComandasList(
         @Header("Authorization") token: String,
         @Query("status") status: String? = null

@@ -2,6 +2,7 @@ package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
 import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 
 data class ComandaDetailResponse(
     val id: String,
@@ -27,6 +28,36 @@ data class ComandaDetailResponse(
     @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false,
     @SerializedName(value = "itens", alternate = ["items"]) val itens: List<MesaItemDto> = emptyList(),
     @SerializedName(value = "pagamentos", alternate = ["payments"]) val pagamentos: List<ComandaPaymentDto> = emptyList()
+)
+
+/** Canonical read-only identity returned by GET api-comandas?recibo=... . */
+data class ComandaReceiptResponse(
+    @SerializedName("issuer") val issuer: ReceiptIssuer? = null,
+    @SerializedName("issuer_source") val issuerSource: String? = null,
+    @SerializedName("empresa") val empresa: JsonObject? = null,
+    @SerializedName("customer") val customer: JsonElement? = null,
+    @SerializedName("customer_source") val customerSource: String? = null
+)
+
+data class ReceiptIssuer(
+    @SerializedName("legal_name") val legalName: String? = null,
+    @SerializedName("trade_name") val tradeName: String? = null,
+    @SerializedName("document_type") val documentType: String? = null,
+    @SerializedName("document_number") val documentNumber: String? = null,
+    @SerializedName("ruc") val ruc: String? = null,
+    @SerializedName("phone") val phone: String? = null,
+    @SerializedName("email") val email: String? = null,
+    @SerializedName("address") val address: ReceiptAddress? = null
+)
+
+data class ReceiptAddress(
+    @SerializedName("line1") val line1: String? = null,
+    @SerializedName("number") val number: String? = null,
+    @SerializedName("complement") val complement: String? = null,
+    @SerializedName("neighborhood") val neighborhood: String? = null,
+    @SerializedName("city") val city: String? = null,
+    @SerializedName("state") val state: String? = null,
+    @SerializedName("country") val country: String? = null
 )
 
 /** Descriptive tax metadata; tax_amount remains the monetary authority. */

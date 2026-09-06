@@ -615,10 +615,15 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val key = "CLOSING_RECEIPT_PRINTED_${currentTable.comandaId.orEmpty()}"
         val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         if (!reprint && prefs.getBoolean(key, false)) return
-        val content = ComandaClosingReceiptRenderer.render(ctx, currentTable, state, reprint)
-        runCatching { PrinterHelper.printReceipt(ctx, content) }
-            .onSuccess { if (!reprint) prefs.edit().putBoolean(key, true).apply() }
-            .onFailure { Toast.makeText(ctx, getString(R.string.print_failed_retry), Toast.LENGTH_SHORT).show() }
+        lifecycleScope.launch {
+            // Issuer identity is a finalized receipt snapshot from the
+            // backend; local profile/preferences are never used here.
+            val receipt = viewModel.fetchClosingReceipt()
+            val content = ComandaClosingReceiptRenderer.render(ctx, currentTable, state, reprint, receipt)
+            runCatching { PrinterHelper.printReceipt(ctx, content) }
+                .onSuccess { if (!reprint) prefs.edit().putBoolean(key, true).apply() }
+                .onFailure { Toast.makeText(ctx, getString(R.string.print_failed_retry), Toast.LENGTH_SHORT).show() }
+        }
     }
 
     private fun paidDecimal(state: CheckoutUiState, digits: Int): Double =
