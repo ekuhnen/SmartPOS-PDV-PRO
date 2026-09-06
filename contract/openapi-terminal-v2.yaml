@@ -27,7 +27,7 @@ openapi: 3.0.3
 
 info:
   title: PlugPDV Terminal API — Cash Session + Pay-by-Items (deployed contract)
-  version: "2.3.1-04L3"
+  version: "2.3.3-04N1"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -499,12 +499,35 @@ paths:
   /api-comandas:
     post:
       operationId: comandaTerminalActions
-      summary: Item-payment preview (`payment_quote`) and ITEMS checkout commit (`checkout_commit`)
+      summary: Item-payment preview (`payment_quote`), ITEMS checkout commit (`checkout_commit`), customer identity (`set_customer`) and service fee (`set_service_fee`)
       description: |
         Action-based endpoint (`{ "action": "...", ... }` in the POST body).
-        Only the two actions required by pay-by-items (PILOT-STAB-04H) are
-        documented here, exactly as deployed in
-        `supabase/functions/api-comandas/index.ts`.
+        Only the actions required by pay-by-items (PILOT-STAB-04H), comanda
+        identity (04M1) and the service fee (04N) are documented here, exactly
+        as deployed in `supabase/functions/api-comandas/index.ts`.
+
+        ## Service fee authority (normative — PILOT-STAB-04N)
+        `action: "set_service_fee"` is the ONLY way to write the comanda
+        service fee. The DATABASE
+        (`public.set_comanda_service_fee`) is the authority:
+
+        ```text
+        percentage base = comandas.total_bruto - comandas.total_descontos
+                          (merchandise minus discount, BEFORE tax)
+        service_fee     = round_money(base * percentage / 100, comanda currency)   -- mode "percentage"
+        service_fee     = round_money(amount, comanda currency)                    -- mode "amount"
+        total_liquido   = total_bruto - total_descontos + tax_amount + service_fee
+        ```
+
+        The terminal NEVER computes the authoritative fee or the total: it
+        sends the intent and reads `service_fee`, `tax_amount` and
+        `total_liquido` already computed. There is **no implicit FX** for the
+        service fee: `mode: "amount"` is expressed in `comandas.currency`, and
+        a declared `currency` different from it is refused (422
+        `SERVICE_FEE_CURRENCY_MISMATCH`) instead of being converted.
+        Setting `percentage: 0` or `amount: 0` REMOVES the fee.
+        One logical mutation = one `versao` bump.
+
 
         ## Money authority (normative)
         The terminal is NEVER the monetary authority. The selected items are
@@ -548,6 +571,16 @@ paths:
             otherwise). MUST NOT be used for `payment_quote`, which is a pure
             read with no financial effect. Uniqueness scope is
             (device, key) in `public.terminal_operations`.
+            OPTIONAL for `set_service_fee`: protection is enabled only when
+            BOTH `Idempotency-Key` and `X-Device-Id` are present. In that case
+            the request fingerprint is `{action, comanda_id, mode, percentage,
+            amount}` and a replay of the same key returns the STORED body with
+            header `X-Idempotent-Replay: true`; the same key with a different
+            fingerprint is refused by the database
+            (`IDEMPOTENCY_KEY_REUSED`, 409), and a retry while the first call
+            is still running returns `OPERATION_IN_PROGRESS` (409). Without the
+            pair, the mutation runs unprotected (legacy-compatible) — the CAS
+            field `expected_comanda_version` is then the only guard.
         - name: X-Device-Id
           in: header
           required: false
@@ -565,6 +598,8 @@ paths:
               oneOf:
                 - $ref: "#/components/schemas/PaymentQuoteRequest"
                 - $ref: "#/components/schemas/ItemsCheckoutCommitRequest"
+                - $ref: "#/components/schemas/SetComandaCustomerRequest"
+                - $ref: "#/components/schemas/SetComandaServiceFeeRequest"
               discriminator:
                 propertyName: action
             examples:
@@ -584,13 +619,48 @@ paths:
                   items: [{ comanda_item_id: 8f1c…, quantity: 1 }]
                   forma: DINHEIRO
                   moeda: PYG
+              set_service_fee_percentage:
+                summary: 10% service fee (percentage mode) with CAS
+                value:
+                  action: set_service_fee
+                  comanda_id: 4332681a-15f8-4a71-9603-3586a975b20c
+                  mode: percentage
+                  percentage: 10
+                  expected_comanda_version: 7
+              set_service_fee_amount:
+                summary: Fixed amount in the comanda currency (no FX)
+                value:
+                  action: set_service_fee
+                  comanda_id: 4332681a-15f8-4a71-9603-3586a975b20c
+                  mode: amount
+                  amount: 5000
+                  currency: PYG
+              set_service_fee_zero:
+                summary: Remove the service fee
+                value:
+                  action: set_service_fee
+                  comanda_id: 4332681a-15f8-4a71-9603-3586a975b20c
+                  mode: percentage
+                  percentage: 0
       responses:
         "200":
           description: |
-            `payment_quote` result — authoritative, read-only, no mutation.
+            `payment_quote` result — authoritative, read-only, no mutation —
+            or `set_customer` result (identity only, no money effect), or
+            `set_service_fee` result (authoritative fee and totals).
+          headers:
+            X-Idempotent-Replay:
+              schema: { type: string, enum: ["true"] }
+              description: |
+                Present only when `set_service_fee` was replayed from a stored
+                operation (same `Idempotency-Key` + `X-Device-Id`).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PaymentQuoteResponse" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PaymentQuoteResponse"
+                  - $ref: "#/components/schemas/SetComandaCustomerResponse"
+                  - $ref: "#/components/schemas/SetComandaServiceFeeResponse"
         "201":
           description: |
             `checkout_commit` first execution (`outcome: "new"`). A replay of
@@ -607,12 +677,18 @@ paths:
           description: |
             `ALLOCATION_PAYLOAD_INVALID`, `ALLOCATION_ITEMS_REQUIRED`,
             `ALLOCATION_ITEM_NOT_IN_COMANDA`, `ALLOCATION_QUANTITY_INVALID`,
-            `IDEMPOTENCY_KEY_REQUIRED`, `DEVICE_REQUIRED`, `device_id_invalid`.
+            `IDEMPOTENCY_KEY_REQUIRED`, `DEVICE_REQUIRED`, `device_id_invalid`,
+            `SERVICE_FEE_MODE_INVALID` (`mode` outside
+            `percentage`/`amount` — `set_service_fee`), and a plain
+            `{"error":"comanda_id is required"}` when `comanda_id` is missing.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
         "403":
-          description: "`device_not_registered`, `DEVICE_BLOCKED`, `TENANT_DEVICE_MISMATCH`, `FORBIDDEN_TENANT`."
+          description: |
+            `device_not_registered`, `DEVICE_BLOCKED`, `TENANT_DEVICE_MISMATCH`,
+            `FORBIDDEN_TENANT`, `CUSTOMER_TENANT_MISMATCH` (customer of another
+            company — `set_customer`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
@@ -627,8 +703,19 @@ paths:
             `ALLOCATION_ITEM_NOT_PAYABLE` (cancelled item),
             `ALLOCATION_NO_PAYABLE_ITEMS`, `COMANDA_CANCELLED`,
             `COMANDA_ALREADY_CLOSED` (outcome `reconciliation`),
+            `COMANDA_FINALIZED` (identity is immutable after closure —
+            `set_customer`),
             `IDEMPOTENCY_KEY_CONFLICT` (same key, different `request_hash`),
-            `INSUFFICIENT_STOCK`.
+            `INSUFFICIENT_STOCK`,
+            `COMANDA_NOT_EDITABLE` (status outside
+            ABERTA/EM_CONSUMO/AGUARDANDO_PAGAMENTO — body carries
+            `status_atual`), `STALE_COMANDA_REVISION` (body carries `current`),
+            `SERVICE_FEE_LOCKED_BY_ALLOCATION` (a CONFIRMADO payment already
+            has allocated items and the fee value would change — repeating the
+            SAME value is convergent and accepted),
+            `SERVICE_FEE_BELOW_SETTLED` (new total would fall below the amount
+            already settled), `IDEMPOTENCY_KEY_REUSED`,
+            `OPERATION_IN_PROGRESS`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
@@ -640,7 +727,11 @@ paths:
             `allocation_preview`), `MONEY_AMOUNT_MISMATCH`,
             `TRANSACTION_CURRENCY_REQUIRED`, `BASE_CURRENCY_MISMATCH`,
             `COMANDA_CURRENCY_MISSING`, `FX_RATE_MISSING`,
-            `PAYMENT_METHOD_INVALID`, `ENUM_VALUE_INVALID`.
+            `PAYMENT_METHOD_INVALID`, `ENUM_VALUE_INVALID`,
+            `SERVICE_FEE_PERCENT_INVALID` (not a number, negative, or > 100),
+            `SERVICE_FEE_AMOUNT_INVALID` (not a number or negative),
+            `SERVICE_FEE_CURRENCY_MISMATCH` (declared currency ≠
+            `comandas.currency`; body carries `expected`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
@@ -648,6 +739,68 @@ paths:
         "426": { $ref: "#/components/responses/UpgradeRequired" }
         "503":
           description: "`device_check_failed` — device registry unavailable (never used for a malformed id)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+    get:
+      operationId: comandaReceipt
+      summary: Receipt read (`?recibo=<comanda_id>`) with issuer and customer fiscal identity
+      description: |
+        Pure read of `supabase/functions/api-comandas/index.ts`. Additive in
+        PILOT-STAB-04M1: the existing `empresa` object is preserved
+        byte-for-byte; `issuer`, `issuer_source`, `customer`, `customer_source`
+        and `customer_id` are NEW fields.
+
+        ## Identity authority (normative)
+        Identity comes from the DATABASE only
+        (`public.comanda_receipt_identity`). The terminal never composes the
+        issuer or the customer from local state, and never edits either on a
+        finalized comanda.
+
+        * `issuer` = the company of the comanda owner
+          (`public.build_issuer_identity`). `document_type` is `RUC` when a RUC
+          exists, otherwise `DOCUMENT`.
+        * `customer` = the linked master customer
+          (`public.build_customer_identity`, `source: customer_master`) or a
+          free-text name (`source: free_text`). A comanda without a customer is
+          valid: `customer: null`, `customer_source: "none"`.
+        * `*_source: "snapshot"` — identity was FROZEN at closure/cancellation
+          and never changes when master data changes afterwards.
+        * `*_source: "live"` — comanda still open, identity resolved live.
+        * `issuer_source: "live_legacy_fallback"` — pre-04M1 historical row
+          with no snapshot. It is resolved live and LABELLED as such; the
+          historical row is never mutated by a read.
+
+        ## Comanda detail read (additive — PILOT-STAB-04N1)
+        `GET /api-comandas?id=<comanda_id>` (comanda detail, same function)
+        now also exposes `service_fee_mode` and `service_fee_percent` next to
+        the authoritative totals it already returned: `subtotal`,
+        `total_descontos`, `tax_amount`, `tax_snapshot`, `service_fee`,
+        `total_liquido`, `total_pago_base`, `saldo_base` and `versao`. Purely
+        additive: no existing field name, type or value changed, so the
+        deployed Android build keeps working untouched. The totals are read as
+        given — the terminal never re-sums them.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: recibo
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Comanda id whose receipt is requested.
+      responses:
+        "200":
+          description: Receipt payload (money fields unchanged by this stage).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaReceiptResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "`FORBIDDEN_TENANT`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "404":
+          description: "`COMANDA_NOT_FOUND`."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
@@ -689,6 +842,220 @@ components:
           schema: { $ref: "#/components/schemas/PlainError" }
 
   schemas:
+    FiscalAddress:
+      type: object
+      description: Address as frozen/resolved by the database. All fields nullable.
+      properties:
+        line1: { type: string, nullable: true }
+        number: { type: string, nullable: true }
+        complement: { type: string, nullable: true }
+        neighborhood: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        zip_code: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+    ReceiptIssuer:
+      type: object
+      description: |
+        Company that issues the receipt (`public.build_issuer_identity`).
+        Read-only for the terminal.
+      required: [id, document_type, document_number]
+      properties:
+        id: { type: string, format: uuid }
+        legal_name: { type: string, nullable: true }
+        trade_name: { type: string, nullable: true }
+        document_type: { type: string, enum: [RUC, DOCUMENT] }
+        document_number: { type: string, nullable: true }
+        ruc: { type: string, nullable: true }
+        legacy_document_number: { type: string, nullable: true }
+        state_registration: { type: string, nullable: true }
+        fiscal_regime: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        address: { $ref: "#/components/schemas/FiscalAddress" }
+        frozen_at: { type: string, format: date-time, nullable: true }
+    ReceiptCustomer:
+      type: object
+      description: |
+        Customer of the comanda (`public.build_customer_identity`). `null` when
+        the comanda has no customer — that is a valid receipt.
+      required: [name, source]
+      properties:
+        id: { type: string, format: uuid, nullable: true }
+        name: { type: string, nullable: true }
+        legal_name: { type: string, nullable: true }
+        trade_name: { type: string, nullable: true }
+        customer_type: { type: string, nullable: true }
+        document_type: { type: string, enum: [RUC, DOCUMENT], nullable: true }
+        document_number: { type: string, nullable: true }
+        ruc: { type: string, nullable: true }
+        legacy_document: { type: string, nullable: true }
+        state_registration: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        address: { $ref: "#/components/schemas/FiscalAddress" }
+        source: { type: string, enum: [customer_master, free_text] }
+        frozen_at: { type: string, format: date-time, nullable: true }
+    ComandaReceiptResponse:
+      type: object
+      description: |
+        Receipt payload. Only the identity fields are specified here; every
+        pre-04M1 field (including `empresa`, `itens`, `pagamentos`,
+        `itens_payment_state` and all money fields) is unchanged and still
+        returned.
+      properties:
+        issuer: { $ref: "#/components/schemas/ReceiptIssuer" }
+        issuer_source:
+          type: string
+          enum: [snapshot, live, live_legacy_fallback]
+        customer:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/ReceiptCustomer" }]
+        customer_source:
+          type: string
+          enum: [snapshot, live, live_legacy_fallback, none]
+        customer_id: { type: string, format: uuid, nullable: true }
+      additionalProperties: true
+    SetComandaCustomerRequest:
+      type: object
+      description: |
+        `action: "set_customer"` — links (or unlinks) the customer of an OPEN
+        comanda. Identity-only: it never touches money and never bumps a
+        financial total. A finalized comanda is immutable → 409
+        `COMANDA_FINALIZED`. A customer of another company → 403
+        `CUSTOMER_TENANT_MISMATCH`. `customer_name` is free text, truncated to
+        200 characters, used when there is no master customer.
+      required: [action, comanda_id]
+      properties:
+        action: { type: string, enum: [set_customer] }
+        comanda_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, nullable: true }
+        customer_name: { type: string, nullable: true, maxLength: 200 }
+    SetComandaCustomerResponse:
+      type: object
+      required: [ok, comanda_id]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        comanda_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, nullable: true }
+        customer_name: { type: string, nullable: true }
+        customer:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/ReceiptCustomer" }]
+        customer_source:
+          type: string
+          enum: [customer_master, free_text, none]
+        versao: { type: integer }
+
+    # ---------------- 04N1. SERVICE FEE ----------------
+    SetComandaServiceFeeRequest:
+      type: object
+      description: |
+        `action: "set_service_fee"` — writes (or removes) the service fee of an
+        OPEN comanda. The database is the authority: it computes
+        `service_fee` and `total_liquido`; the terminal only declares the
+        intent.
+
+        * `mode: "percentage"` — `percentage` (0…100) applied to
+          `total_bruto - total_descontos`, BEFORE tax.
+        * `mode: "amount"` — fixed `amount` in `comandas.currency`. No FX.
+        * `percentage: 0` / `amount: 0` — removes the fee.
+
+        When `mode` is omitted it is INFERRED as `percentage` if `percentage`
+        is present, otherwise `amount`. Accepted aliases (part of the public
+        terminal contract, kept for the deployed Android build): `modo` for
+        `mode`, `percentual` for `percentage`, `valor` for `amount`, `moeda`
+        for `currency`, `expected_version` for `expected_comanda_version`.
+      required: [action, comanda_id]
+      properties:
+        action: { type: string, enum: [set_service_fee] }
+        comanda_id: { type: string, format: uuid }
+        mode:
+          type: string
+          enum: [percentage, amount]
+          description: Alias `modo`. Inferred when absent (see description).
+        percentage:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 100
+          description: 'Alias `percentual`. Only for `mode: "percentage"`.'
+        amount:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: |
+            Alias `valor`. Only for `mode: "amount"`, expressed in
+            `comandas.currency` (decimal major units, never minor units).
+        currency:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/Currency" }]
+          description: |
+            Alias `moeda`. Optional assertion: when present it MUST equal
+            `comandas.currency`, otherwise 422
+            `SERVICE_FEE_CURRENCY_MISMATCH`. Never triggers a conversion.
+        expected_comanda_version:
+          type: integer
+          nullable: true
+          description: |
+            Alias `expected_version`. Compare-and-set against
+            `comandas.versao`; mismatch → 409 `STALE_COMANDA_REVISION`. Omit to
+            skip the check. This is the ONLY concurrency model — there is no
+            parallel/locking protocol on the wire.
+    SetComandaServiceFeeResponse:
+      type: object
+      description: |
+        Authoritative money state of the comanda AFTER the mutation. Every
+        amount is in `currency` (= `comandas.currency`). The terminal displays
+        these values as received and never re-adds or re-rounds them.
+      required:
+        [ok, comanda_id, currency, service_fee, total_liquido, versao]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        comanda_id: { type: string, format: uuid }
+        currency: { $ref: "#/components/schemas/Currency" }
+        service_fee_mode:
+          type: string
+          nullable: true
+          enum: [percentage, amount, null]
+        service_fee_percent:
+          type: number
+          nullable: true
+          description: Percentage stored for receipt transparency (`amount` mode → null).
+        service_fee_percent_base:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`total_bruto - total_descontos` — the base the percentage was applied to."
+        subtotal:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`comandas.total_bruto` (merchandise, gross)."
+        total_descontos: { $ref: "#/components/schemas/Money" }
+        tax_amount:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: Frozen sale tax; never recomputed by this action.
+        tax_snapshot:
+          type: array
+          nullable: true
+          description: Frozen tax lines (`name`, `percentage`, `amount`).
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              percentage: { type: number }
+              amount: { $ref: "#/components/schemas/Money" }
+            additionalProperties: true
+        service_fee: { $ref: "#/components/schemas/Money" }
+        total_liquido:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`subtotal - total_descontos + tax_amount + service_fee`."
+        total_pago_base: { $ref: "#/components/schemas/Money" }
+        saldo_base:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          description: "`total_liquido - total_pago_base`."
+        versao:
+          type: integer
+          description: New revision token; one logical mutation = one bump.
     Currency:
       type: string
       pattern: "^[A-Z]{3}$"
@@ -1362,6 +1729,19 @@ components:
             - TENANT_MISMATCH
             - FORBIDDEN_TENANT
             - UPGRADE_REQUIRED
+            - SERVICE_FEE_MODE_INVALID
+            - SERVICE_FEE_PERCENT_INVALID
+            - SERVICE_FEE_AMOUNT_INVALID
+            - SERVICE_FEE_CURRENCY_MISMATCH
+            - SERVICE_FEE_LOCKED_BY_ALLOCATION
+            - SERVICE_FEE_BELOW_SETTLED
+            - SERVICE_FEE_FAILED
+            - COMANDA_NOT_EDITABLE
+            - COMANDA_FINALIZED
+            - STALE_COMANDA_REVISION
+            - IDEMPOTENCY_KEY_REUSED
+            - OPERATION_IN_PROGRESS
+            - OWNER_COMANDA_REQUIRED
         message_key:
           type: string
           example: comanda.error.allocation_exceeds_item_quantity
