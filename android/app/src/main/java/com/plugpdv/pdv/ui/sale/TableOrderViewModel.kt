@@ -150,6 +150,7 @@ class TableOrderViewModel @Inject constructor(
             Log.d("PERF_MESA", "cache_miss_reason=NO_TABLE")
             return
         }
+        Log.d("PERF_MESA", "local_mesa_read_ms=${SystemClock.elapsedRealtime() - localStart}")
 
         _table.value = resolvedTable
 
@@ -216,7 +217,9 @@ class TableOrderViewModel @Inject constructor(
         }
 
         if (effectiveSnapshot != null) {
+            val productResolutionStart = SystemClock.elapsedRealtime()
             applySnapshotToTable(resolvedTable, effectiveSnapshot)
+            Log.d("PERF_MESA", "local_product_resolution_ms=${SystemClock.elapsedRealtime() - productResolutionStart}")
             _readProvenance.value = ReadProvenance.LOCAL_CACHED
             _table.value = resolvedTable
             Log.d("PERF_MESA", "cached_first_frame_ms=${SystemClock.elapsedRealtime() - localStart}")

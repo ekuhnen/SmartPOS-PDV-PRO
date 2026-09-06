@@ -9,6 +9,7 @@ import com.plugpdv.pdv.repository.CatalogRepository
 import com.plugpdv.pdv.utils.retryIO
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
 @HiltViewModel
@@ -40,10 +41,21 @@ class SaleViewModel @Inject constructor(
 
     init {
         allProducts.observeForever { products ->
-            products?.let {
-                val categoryList = it.mapNotNull { p -> p.category }.distinct()
-                _categories.value = categoryList
-                applyFilter()
+            products?.let { cachedProducts ->
+                // Catalog rows can be large; never make Mesa's first frame wait for
+                // category/filter derivation on the main thread.
+                viewModelScope.launch(Dispatchers.Default) {
+                    val categoryList = cachedProducts.mapNotNull { p -> p.category }.distinct()
+                    val query = _searchQuery.value?.lowercase()?.trim() ?: ""
+                    val category = _selectedCategory.value ?: ""
+                    val filtered = cachedProducts.filter { p ->
+                        val pName = p.name?.lowercase() ?: ""
+                        val matchesSearch = pName.contains(query) || (p.sku?.lowercase()?.contains(query) == true)
+                        matchesSearch && (category.isEmpty() || category == "Todos" || category == p.category)
+                    }
+                    _categories.postValue(categoryList)
+                    _filteredProducts.postValue(filtered)
+                }
             }
         }
     }
@@ -70,14 +82,15 @@ class SaleViewModel @Inject constructor(
         val all = allProducts.value ?: return
         val query = _searchQuery.value?.lowercase()?.trim() ?: ""
         val category = _selectedCategory.value ?: ""
-
-        val filtered = all.filter { p ->
-            val pName = p.name?.lowercase() ?: ""
-            val matchesSearch = pName.contains(query) || (p.sku?.lowercase()?.contains(query) == true)
-            val matchesCategory = category.isEmpty() || category == "Todos" || category == p.category
-            matchesSearch && matchesCategory
+        viewModelScope.launch(Dispatchers.Default) {
+            val filtered = all.filter { p ->
+                val pName = p.name?.lowercase() ?: ""
+                val matchesSearch = pName.contains(query) || (p.sku?.lowercase()?.contains(query) == true)
+                val matchesCategory = category.isEmpty() || category == "Todos" || category == p.category
+                matchesSearch && matchesCategory
+            }
+            _filteredProducts.postValue(filtered)
         }
-        _filteredProducts.value = filtered
     }
 
     fun addToCart(product: Product) {

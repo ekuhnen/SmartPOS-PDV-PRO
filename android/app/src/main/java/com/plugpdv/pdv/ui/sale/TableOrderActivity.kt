@@ -35,6 +35,7 @@ class TableOrderActivity : BaseActivity() {
     private var token: String? = null
     private var mesaOpenedAtElapsed = 0L
     private var firstVisibleMetricLogged = false
+    private var firstVisibleMetricArmed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -281,8 +282,10 @@ class TableOrderActivity : BaseActivity() {
         }
         currentTable?.items?.let { items ->
             orderAdapter.setItems(items)
+            Log.d("PERF_MESA", "adapter_submit_ms=${android.os.SystemClock.elapsedRealtime() - renderStart}")
             updateMesaLoadingState()
-            if (items.isNotEmpty() && !firstVisibleMetricLogged) {
+            if (items.isNotEmpty() && !firstVisibleMetricLogged && !firstVisibleMetricArmed) {
+                firstVisibleMetricArmed = true
                 binding.rvOrderItems.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                     override fun onPreDraw(): Boolean {
                         if (binding.rvOrderItems.childCount > 0) {
