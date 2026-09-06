@@ -3,6 +3,8 @@ package com.plugpdv.pdv.ui.sale
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.os.SystemClock
+import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -19,17 +21,30 @@ class TableOrderItemAdapter(
 ) : RecyclerView.Adapter<TableOrderItemAdapter.ViewHolder>() {
 
     fun setItems(newItems: List<TableItem>) {
+        val submitStarted = SystemClock.elapsedRealtime()
         val oldItems = items
-        this.items = newItems
+        // Table.items is mutable and may be changed by reconciliation. Keep an
+        // immutable adapter-owned snapshot so DiffUtil cannot observe mutations
+        // after submission.
+        val submittedItems = newItems.toList()
+        this.items = submittedItems
         DiffUtil.calculateDiff(object : DiffUtil.Callback() {
             override fun getOldListSize() = oldItems.size
-            override fun getNewListSize() = newItems.size
+            override fun getNewListSize() = submittedItems.size
             override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
-                oldItems[oldItemPosition].id == newItems[newItemPosition].id &&
-                    oldItems[oldItemPosition].product.id == newItems[newItemPosition].product.id
+                oldItems[oldItemPosition].id == submittedItems[newItemPosition].id &&
+                    oldItems[oldItemPosition].product.id == submittedItems[newItemPosition].product.id
             override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
-                oldItems[oldItemPosition] == newItems[newItemPosition]
+                oldItems[oldItemPosition] == submittedItems[newItemPosition]
         }).dispatchUpdatesTo(this)
+        Log.d("PERF_MESA", "adapter_submit_call_ms=${SystemClock.elapsedRealtime() - submitStarted}")
+        Log.d("PERF_MESA", "adapter_commit_ms=${SystemClock.elapsedRealtime() - submitStarted}")
+        Log.d("PERF_MESA", "adapter_item_count_at_commit=$itemCount")
+        Log.d("PERF_MESA", "adapter_current_list_size_at_commit=${items.size}")
+        Log.d("PERF_MESA", "submit_list_identity=${System.identityHashCode(submittedItems)}")
+        Log.d("PERF_MESA", "current_list_identity=${System.identityHashCode(items)}")
+        Log.d("PERF_MESA", "submit_list_size=${submittedItems.size}")
+        Log.d("PERF_MESA", "current_list_size=${items.size}")
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {

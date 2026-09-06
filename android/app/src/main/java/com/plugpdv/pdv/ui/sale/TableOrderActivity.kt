@@ -194,6 +194,7 @@ class TableOrderActivity : BaseActivity() {
         }
         binding.rvOrderItems.layoutManager = LinearLayoutManager(this)
         binding.rvOrderItems.adapter = orderAdapter
+        Log.d("PERF_MESA", "order_adapter_setup_identity=${System.identityHashCode(orderAdapter)} attached=${binding.rvOrderItems.adapter === orderAdapter}")
     }
 
     private fun observeViewModels() {
@@ -309,6 +310,7 @@ class TableOrderActivity : BaseActivity() {
                 Log.d("PERF_MESA", "recycler_visibility=${if (binding.rvOrderItems.visibility == View.VISIBLE) "VISIBLE" else if (binding.rvOrderItems.visibility == View.INVISIBLE) "INVISIBLE" else "GONE"}")
                 Log.d("PERF_MESA", "recycler_height=${binding.rvOrderItems.height}")
                 Log.d("PERF_MESA", "recycler_child_count=${binding.rvOrderItems.childCount}")
+                Log.d("PERF_MESA", "order_adapter_submit_identity=${System.identityHashCode(orderAdapter)} attached=${binding.rvOrderItems.adapter === orderAdapter}")
             }
             updateMesaLoadingState()
             if (items.isNotEmpty() && !firstVisibleMetricLogged && !firstVisibleMetricArmed) {
@@ -319,6 +321,11 @@ class TableOrderActivity : BaseActivity() {
                             if (!firstChildMetricLogged && binding.rvOrderItems.visibility == View.VISIBLE && binding.rvOrderItems.height > 0) {
                                 firstChildMetricLogged = true
                                 Log.d("PERF_MESA", "first_child_attached_ms=${android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed}")
+                                Log.d("PERF_MESA", "order_adapter_first_child_identity=${System.identityHashCode(orderAdapter)} attached=${binding.rvOrderItems.adapter === orderAdapter}")
+                                Log.d("PERF_MESA", "layout_suppressed=${binding.rvOrderItems.isLayoutSuppressed}")
+                                Log.d("PERF_MESA", "computing_layout=${binding.rvOrderItems.isComputingLayout}")
+                                Log.d("PERF_MESA", "layout_manager_present=${binding.rvOrderItems.layoutManager != null}")
+                                Log.d("PERF_MESA", "attached_adapter_matches=${binding.rvOrderItems.adapter === orderAdapter}")
                             }
                             if (!recyclerLayoutMetricLogged && binding.rvOrderItems.childCount > 0 && binding.rvOrderItems.height > 0) {
                                 recyclerLayoutMetricLogged = true
