@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PlugPDV</string>
+    <string name="service_fee_mode_invalid">Pe tasa reko ndoikói.</string>
+    <string name="service_fee_percent_invalid">Pe tasa porcentaje ndoikói.</string>
+    <string name="service_fee_amount_invalid">Pe tasa repykue ndoikói.</string>
+    <string name="service_fee_currency_mismatch">Pe viru tasa rehegua ndojokupytýi.</string>
+    <string name="comanda_not_editable">Ko comanda ndaikatúi oñemoambue.</string>
+    <string name="stale_comanda_revision">Pe comanda oñemoambue. Embopyahu ha ehecha jey.</string>
+    <string name="service_fee_locked_by_allocation">Ndaikatúi oñemoambue tasa ojejapo rire pago ítem rehe.</string>
+    <string name="service_fee_below_settled">Pe total pyahu ndaikatúi michĩve pe ojejepagámavagui.</string>
+    <string name="service_fee_update_error">Ndaikatúi oñembopyahu tasa.</string>
     <string name="login_title">EIKÉMA APAPYTERE-PE</string>
     <string name="email">Ñanduti veve</string>
     <string name="password">Ñe\'ẽñemí</string>

@@ -1,6 +1,7 @@
 package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
+import com.google.gson.JsonElement
 import java.math.BigDecimal
 
 data class CommandCheckoutCommitRequest(
@@ -120,4 +121,22 @@ data class ComandaCheckoutCommitResponse(
     @SerializedName("remaining_balance") val remainingBalance: Double = 0.0,
     @SerializedName("closed") val closed: Boolean = false,
     @SerializedName("requires_reconciliation") val requiresReconciliation: Boolean = false
+)
+
+data class SetComandaServiceFeeResponse(
+    val ok: Boolean = false,
+    @SerializedName("comanda_id") val comandaId: String? = null,
+    val currency: String? = null,
+    @SerializedName("service_fee_mode") val serviceFeeMode: String? = null,
+    @SerializedName("service_fee_percent") val serviceFeePercent: Double? = null,
+    @SerializedName("service_fee_percent_base") val serviceFeePercentBase: Double? = null,
+    val subtotal: Double? = null,
+    @SerializedName("total_descontos") val totalDescontos: Double? = null,
+    @SerializedName("tax_amount") val taxAmount: Double? = null,
+    @SerializedName("tax_snapshot") val taxSnapshot: JsonElement? = null,
+    @SerializedName("service_fee") val serviceFee: Double = 0.0,
+    @SerializedName("total_liquido") val totalLiquido: Double? = null,
+    @SerializedName("total_pago_base") val totalPagoBase: Double? = null,
+    @SerializedName("saldo_base") val saldoBase: Double? = null,
+    val versao: Long? = null
 )

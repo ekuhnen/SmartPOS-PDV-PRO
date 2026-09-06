@@ -296,8 +296,9 @@ class CheckoutActivity : BaseActivity() {
 
     private fun showServiceFeeOverrideDialog() {
         // Simple implementation: show a BottomSheet to select fee kind and value
-        ServiceFeeOverrideBottomSheet.newInstance(viewModel.baseTotal.value ?: 0.0) { kind, value ->
+        ServiceFeeOverrideBottomSheet.newInstance(viewModel.baseTotal.value ?: 0.0) { kind, value, done ->
             viewModel.overrideServiceFee(kind, value)
+            done(true)
         }.show(supportFragmentManager, "service_fee_override")
     }
 

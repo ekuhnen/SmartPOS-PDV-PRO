@@ -7,6 +7,7 @@ import com.plugpdv.pdv.database.ComandaSnapshotDao
 import com.plugpdv.pdv.database.ComandaSnapshotEntity
 import com.plugpdv.pdv.models.ComandaDetailResponse
 import com.plugpdv.pdv.models.Table
+import com.plugpdv.pdv.models.SetComandaServiceFeeResponse
 import com.plugpdv.pdv.utils.MoneyDecimal
 import com.plugpdv.pdv.utils.TenantBindingStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -49,6 +50,10 @@ class ComandaSnapshotRepository(
         }
 
         val existing = comandaSnapshotDao.getByServerComandaId(tenantId, detail.id)
+        if (existing?.serverRevision != null && detail.versao != null && detail.versao < existing.serverRevision) {
+            Log.w(TAG, "Ignoring stale comanda snapshot revision ${detail.versao}; current=${existing.serverRevision}")
+            return existing
+        }
         val localComandaId = existing?.localComandaId ?: UUID.randomUUID().toString()
 
         val tableId = detail.mesaId ?: table?.id ?: existing?.tableId
@@ -57,7 +62,7 @@ class ComandaSnapshotRepository(
 
         val hasLocalPendingState = existing?.syncStatus in listOf("PENDING_MUTATIONS", "CONFLICT")
 
-        val serverRevision: Long? = null
+        val serverRevision: Long? = detail.versao
         val localRevision: Long = existing?.localRevision ?: 0L
         val serverUpdatedAt: Long? = null
         val cachedAt = System.currentTimeMillis()
@@ -323,5 +328,36 @@ class ComandaSnapshotRepository(
 
     suspend fun getAllForTenant(tenantId: String): List<ComandaSnapshotEntity> {
         return comandaSnapshotDao.getAllForTenant(tenantId)
+    }
+
+    /** Applies only the authoritative financial fields returned by set_service_fee. */
+    suspend fun applyServiceFeeAuthority(
+        comandaId: String,
+        response: SetComandaServiceFeeResponse
+    ): ComandaSnapshotEntity? {
+        val tenantId = TenantBindingStore.getActiveTenantId(context) ?: return null
+        val existing = comandaSnapshotDao.getByServerComandaId(tenantId, comandaId) ?: return null
+        val currency = response.currency?.uppercase() ?: existing.baseCurrency ?: return null
+        val digits = existing.baseMinorUnitDigits ?: MoneyDecimal.getDecimals(currency)
+        val total = response.totalLiquido?.let { toMinorUnitsWithFrozenScale(BigDecimal.valueOf(it), digits) }
+            ?: existing.totalBaseMinor
+        val paid = response.totalPagoBase?.let { toMinorUnitsWithFrozenScale(BigDecimal.valueOf(it), digits) }
+            ?: existing.paidBaseMinor
+        val balance = response.saldoBase?.let { toMinorUnitsWithFrozenScale(BigDecimal.valueOf(it), digits) }
+            ?: existing.balanceBaseMinor
+        val updated = existing.copy(
+            baseCurrency = currency,
+            baseMinorUnitDigits = digits,
+            totalBaseMinor = total,
+            paidBaseMinor = paid,
+            balanceBaseMinor = balance,
+            serverRevision = response.versao ?: existing.serverRevision,
+            syncStatus = "SYNCED",
+            requiresReconciliation = false,
+            reconciliationReason = null,
+            cachedAt = System.currentTimeMillis()
+        )
+        comandaSnapshotDao.upsert(updated)
+        return updated
     }
 }

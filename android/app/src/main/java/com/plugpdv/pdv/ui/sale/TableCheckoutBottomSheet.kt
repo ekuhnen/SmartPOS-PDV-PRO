@@ -42,6 +42,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private var pendingCheckoutOperationId: String? = null
     private var latestState: CheckoutUiState? = null
+    private var lastServiceFeeError: String? = null
 
     private val paymentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
@@ -172,6 +173,10 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     private fun updateUI(state: CheckoutUiState) {
         val b = binding ?: return
         latestState = state
+        if (!state.serviceFeeError.isNullOrBlank() && state.serviceFeeError != lastServiceFeeError) {
+            lastServiceFeeError = state.serviceFeeError
+            Toast.makeText(context, state.serviceFeeError, Toast.LENGTH_LONG).show()
+        }
         if (state.paymentSuccess && !state.isPendingSync && !state.isAwaitingProvider && !state.isLoading) {
             pendingCheckoutOperationId = null
         }
@@ -465,8 +470,8 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
     private fun showServiceFeeOverrideDialog() {
         val baseAmount = viewModel.uiState.value.currentToPay
-        ServiceFeeOverrideBottomSheet.newInstance(baseAmount) { kind, value ->
-            viewModel.overrideServiceFee(kind, value)
+        ServiceFeeOverrideBottomSheet.newInstance(baseAmount, convertManualValueToBrl = false) { kind, value, done ->
+            viewModel.overrideServiceFee(kind, value, done)
         }.show(childFragmentManager, "service_fee_override")
     }
 

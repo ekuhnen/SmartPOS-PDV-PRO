@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PlugPDV</string>
+    <string name="service_fee_mode_invalid">Modo de taxa de serviço inválido.</string>
+    <string name="service_fee_percent_invalid">Percentual de taxa de serviço inválido.</string>
+    <string name="service_fee_amount_invalid">Valor de taxa de serviço inválido.</string>
+    <string name="service_fee_currency_mismatch">A moeda da taxa deve ser a moeda da comanda.</string>
+    <string name="comanda_not_editable">Esta comanda não pode mais ser editada.</string>
+    <string name="stale_comanda_revision">A comanda foi alterada. Atualize e revise antes de tentar novamente.</string>
+    <string name="service_fee_locked_by_allocation">A taxa não pode ser alterada após um pagamento por itens.</string>
+    <string name="service_fee_below_settled">O novo total não pode ser menor que o valor já pago.</string>
+    <string name="service_fee_update_error">Não foi possível atualizar a taxa de serviço.</string>
     <string name="login_title">ENTRAR NO SISTEMA</string>
     <string name="email">E-mail</string>
     <string name="password">Senha</string>

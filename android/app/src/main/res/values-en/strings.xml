@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PlugPDV</string>
+    <string name="service_fee_mode_invalid">Invalid service-fee mode.</string>
+    <string name="service_fee_percent_invalid">Invalid service-fee percentage.</string>
+    <string name="service_fee_amount_invalid">Invalid service-fee amount.</string>
+    <string name="service_fee_currency_mismatch">The fee currency must match the comanda currency.</string>
+    <string name="comanda_not_editable">This comanda can no longer be edited.</string>
+    <string name="stale_comanda_revision">The comanda changed. Refresh and review before trying again.</string>
+    <string name="service_fee_locked_by_allocation">The fee cannot change after an item payment is confirmed.</string>
+    <string name="service_fee_below_settled">The new total cannot be lower than the amount already paid.</string>
+    <string name="service_fee_update_error">Could not update the service fee.</string>
     <string name="login_title">LOGIN TO SYSTEM</string>
     <string name="email">E-mail</string>
     <string name="password">Password</string>

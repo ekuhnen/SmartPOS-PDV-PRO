@@ -1,6 +1,7 @@
 package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
+import java.math.BigDecimal
 
 data class CommandActionRequest(
     var action: String = "",
@@ -28,6 +29,13 @@ data class CommandActionRequest(
     @SerializedName("valor") var amount: Double? = null,
     @SerializedName("moeda") var currency: String? = null,
     @SerializedName("referencia_externa") var externalRef: String? = null,
+
+    // Authoritative comanda service-fee mutation (04N1)
+    var mode: String? = null,
+    var percentage: BigDecimal? = null,
+    @SerializedName("amount") var serviceFeeAmount: BigDecimal? = null,
+    @SerializedName("currency") var serviceFeeCurrency: String? = null,
+    @SerializedName("expected_comanda_version") var comandaVersion: Long? = null,
     
     // Transfer fields
     @SerializedName("mesa_destino_id") var destinationTableId: String? = null

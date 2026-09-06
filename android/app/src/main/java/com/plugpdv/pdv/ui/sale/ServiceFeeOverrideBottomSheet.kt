@@ -15,7 +15,8 @@ import com.plugpdv.pdv.utils.CurrencyManager
 class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
 
     private var baseAmount: Double = 0.0
-    private var onApply: ((String, Double) -> Unit)? = null
+    private var onApply: ((String, Double, (Boolean) -> Unit) -> Unit)? = null
+    private var convertManualValueToBrl: Boolean = true
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -30,6 +31,7 @@ class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
         val rbWaived = view.findViewById<RadioButton>(R.id.rbWaived)
         val etManualValue = view.findViewById<EditText>(R.id.etManualValue)
         val btnApply = view.findViewById<Button>(R.id.btnApply)
+        val progress = view.findViewById<android.widget.ProgressBar>(R.id.progressApply)
 
         rgFeeKind.setOnCheckedChangeListener { _, checkedId ->
             if (checkedId == R.id.rbManualPercent || checkedId == R.id.rbManualValue) {
@@ -53,24 +55,36 @@ class ServiceFeeOverrideBottomSheet : BottomSheetDialogFragment() {
             // O ViewModel e o Carrinho trabalham apenas com BRL base.
             // Precisamos converter o valor digitado (que está na moeda local do checkout, ex: Gs) de volta para BRL,
             // MAS APENAS se o valor digitado for financeiro. Se for porcentagem, mantemos o número puro.
-            val value = if (kind == "manual_value") {
+            val value = if (kind == "manual_value" && convertManualValueToBrl) {
                 CurrencyManager.getInstance().convertToBrl(localValue)
             } else {
                 localValue
             }
-            
-            onApply?.invoke(kind, value)
-            dismiss()
+
+            btnApply.isEnabled = false
+            progress.visibility = View.VISIBLE
+            onApply?.invoke(kind, value) { success ->
+                if (success) dismiss()
+                else {
+                    btnApply.isEnabled = true
+                    progress.visibility = View.GONE
+                }
+            }
         }
 
         return view
     }
 
     companion object {
-        fun newInstance(baseAmount: Double, onApply: (String, Double) -> Unit): ServiceFeeOverrideBottomSheet {
+        fun newInstance(
+            baseAmount: Double,
+            convertManualValueToBrl: Boolean = true,
+            onApply: (String, Double, (Boolean) -> Unit) -> Unit
+        ): ServiceFeeOverrideBottomSheet {
             val fragment = ServiceFeeOverrideBottomSheet()
             fragment.baseAmount = baseAmount
             fragment.onApply = onApply
+            fragment.convertManualValueToBrl = convertManualValueToBrl
             return fragment
         }
     }

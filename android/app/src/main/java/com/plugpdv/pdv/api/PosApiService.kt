@@ -76,6 +76,13 @@ interface PosApiService {
     ): Response<Map<String, Any>>
 
     @POST("api-comandas")
+    suspend fun setComandaServiceFee(
+        @Header("Authorization") token: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
+        @Body request: CommandActionRequest
+    ): Response<SetComandaServiceFeeResponse>
+
+    @POST("api-comandas")
     suspend fun commitComandaCheckout(
         @Header("Authorization") token: String,
         @Header("Idempotency-Key") idempotencyKey: String,

@@ -429,6 +429,22 @@ class OutboxSyncManager @Inject constructor(
                         SingleOperationResult.RETRY
                     }
                 }
+                "COMANDA_SERVICE_FEE" -> {
+                    val request = gson.fromJson(op.payloadJson, CommandActionRequest::class.java)
+                    val response = apiService.setComandaServiceFee("Bearer $token", op.idempotencyKey, request)
+                    if (response.isSuccessful && response.body()?.ok == true) {
+                        SingleOperationResult.SYNCED
+                    } else if (response.code() in 400..422 && response.code() != 409) {
+                        val body = response.errorBody()?.string().orEmpty()
+                        val code = runCatching {
+                            gson.fromJson(body, com.google.gson.JsonObject::class.java)?.get("code")?.asString
+                        }.getOrNull() ?: "HTTP_${response.code()}"
+                        outboxDao.markAsFailedWithKey(op.id, code, code, false)
+                        SingleOperationResult.FAILED_PERMANENT
+                    } else {
+                        SingleOperationResult.RETRY
+                    }
+                }
                 "COMANDA_CHECKOUT_COMMIT" -> {
                     val request = gson.fromJson(op.payloadJson, com.plugpdv.pdv.models.CommandCheckoutCommitRequest::class.java)
 

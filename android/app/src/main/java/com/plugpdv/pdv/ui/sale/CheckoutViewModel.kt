@@ -52,6 +52,9 @@ data class CheckoutUiState(
     val authoritativeTaxAmount: Double? = null,
     val authoritativeTaxSnapshot: TaxSnapshotDto? = null,
     val authoritativeServiceFee: Double? = null,
+    val authoritativeServiceFeeMode: String? = null,
+    val authoritativeServiceFeePercent: Double? = null,
+    val authoritativeComandaVersion: Long? = null,
     val authoritativeTotal: Double? = null,
     val refreshWarning: String? = null,
     val isLoading: Boolean = false,
@@ -84,6 +87,8 @@ data class CheckoutUiState(
     val serviceFeeAmount: Double = 0.0,
     val serviceFeeKind: String? = null,
     val serviceFeeManualValue: Double = 0.0,
+    val isServiceFeeSubmitting: Boolean = false,
+    val serviceFeeError: String? = null,
     val paymentsHistory: List<ComandaPaymentDto> = emptyList()
 )
 
@@ -551,12 +556,20 @@ class CheckoutViewModel @Inject constructor(
     ) {
         try {
             val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+            val currentVersion = _uiState.value.authoritativeComandaVersion
+            if (currentVersion != null && detail.versao != null && detail.versao < currentVersion) {
+                Log.w("CheckoutViewModel", "Ignoring stale comanda detail revision ${detail.versao}; current=$currentVersion")
+                return
+            }
             _uiState.value = _uiState.value.copy(
                 authoritativeSubtotal = detail.subtotal,
                 authoritativeTaxAmount = detail.taxAmount,
                 authoritativeTaxSnapshot = TaxSnapshotNormalizer.first(detail.taxSnapshot),
                 authoritativeServiceFee = detail.serviceFee,
-                authoritativeTotal = detail.total
+                authoritativeServiceFeeMode = detail.serviceFeeMode,
+                authoritativeServiceFeePercent = detail.serviceFeePercent,
+                authoritativeComandaVersion = detail.versao,
+                authoritativeTotal = detail.totalLiquido ?: detail.total
             )
             val cachedSnapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
@@ -1149,12 +1162,150 @@ class CheckoutViewModel @Inject constructor(
         calculateFinalAmount()
     }
 
-    fun overrideServiceFee(kind: String, value: Double = 0.0) {
+    fun overrideServiceFee(kind: String, value: Double = 0.0, onFinished: ((Boolean) -> Unit)? = null) {
+        val currentTable = table
+        val comandaId = currentTable?.comandaId
+        if (!comandaId.isNullOrBlank() && token != null) {
+            setAuthoritativeServiceFee(comandaId, kind, value, onFinished)
+            return
+        }
         _uiState.value = _uiState.value.copy(
             serviceFeeKind = kind,
             serviceFeeManualValue = value
         )
         calculateFinalAmount()
+        onFinished?.invoke(true)
+    }
+
+    private fun serviceFeeMessage(code: String?): String = when (code) {
+        "SERVICE_FEE_MODE_INVALID" -> context.getString(R.string.service_fee_mode_invalid)
+        "SERVICE_FEE_PERCENT_INVALID" -> context.getString(R.string.service_fee_percent_invalid)
+        "SERVICE_FEE_AMOUNT_INVALID" -> context.getString(R.string.service_fee_amount_invalid)
+        "SERVICE_FEE_CURRENCY_MISMATCH", "COMANDA_CURRENCY_MISSING" -> context.getString(R.string.service_fee_currency_mismatch)
+        "COMANDA_NOT_EDITABLE", "COMANDA_NOT_FOUND", "TENANT_MISMATCH" -> context.getString(R.string.comanda_not_editable)
+        "STALE_COMANDA_REVISION" -> context.getString(R.string.stale_comanda_revision)
+        "SERVICE_FEE_LOCKED_BY_ALLOCATION" -> context.getString(R.string.service_fee_locked_by_allocation)
+        "SERVICE_FEE_BELOW_SETTLED" -> context.getString(R.string.service_fee_below_settled)
+        else -> context.getString(R.string.service_fee_update_error)
+    }
+
+    private suspend fun responseErrorCode(response: retrofit2.Response<*>): String? {
+        return runCatching {
+            val body = response.errorBody()?.string() ?: return@runCatching null
+            Gson().fromJson(body, Map::class.java)["code"]?.toString()
+                ?: Gson().fromJson(body, Map::class.java)["message_key"]?.toString()
+        }.getOrNull()
+    }
+
+    private fun setAuthoritativeServiceFee(
+        comandaId: String,
+        kind: String,
+        value: Double,
+        onFinished: ((Boolean) -> Unit)? = null
+    ) {
+        if (_uiState.value.isServiceFeeSubmitting) return
+        val authToken = token ?: return
+        val currency = (_uiState.value.baseCurrency ?: comandaBaseCurrency)?.uppercase()
+        val expectedVersion = _uiState.value.authoritativeComandaVersion
+        if (currency.isNullOrBlank() || expectedVersion == null) {
+            _uiState.value = _uiState.value.copy(serviceFeeError = context.getString(R.string.comanda_financial_data_not_loaded))
+            onFinished?.invoke(false)
+            return
+        }
+
+        val mode = if (kind == "manual_value") "amount" else "percentage"
+        val request = CommandActionRequest(
+            action = "set_service_fee",
+            comandaId = comandaId,
+            mode = mode,
+            comandaVersion = expectedVersion
+        ).apply {
+            when (kind) {
+                "manual_percent" -> {
+                    percentage = BigDecimal.valueOf(value)
+                }
+                "manual_value" -> {
+                    serviceFeeAmount = BigDecimal(MoneyDecimal.toProtocolAmount(BigDecimal.valueOf(value), currency))
+                    this.serviceFeeCurrency = currency
+                }
+                "waived" -> {
+                    percentage = BigDecimal.ZERO
+                }
+                else -> {
+                    // The existing "fixed/default" option is the configured
+                    // restaurant percentage; the server remains the authority.
+                    percentage = BigDecimal.valueOf(_uiState.value.serviceFeeConfig?.fixedPercent ?: 0.0)
+                }
+            }
+        }
+        val key = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val payload = Gson().toJson(request)
+        _uiState.value = _uiState.value.copy(isServiceFeeSubmitting = true, serviceFeeError = null)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            var success = false
+            try {
+                // Persist the exact logical mutation before the first network attempt.
+                outboxDao.insert(OutboxOperationEntity(
+                    id = key,
+                    operationType = "COMANDA_SERVICE_FEE",
+                    targetGroupKey = comandaId,
+                    payloadJson = payload,
+                    createdAt = now,
+                    idempotencyKey = key,
+                    status = "PROCESSING"
+                ))
+                val response = retryIO { apiService.setComandaServiceFee("Bearer $authToken", key, request) }
+                if (!response.isSuccessful || response.body()?.ok != true) {
+                    val code = responseErrorCode(response) ?: "SERVICE_FEE_UPDATE_FAILED"
+                    outboxDao.markAsFailedWithKey(key, code, code, false)
+                    if (code == "STALE_COMANDA_REVISION") {
+                        withContext(Dispatchers.Main) { fetchComandaPayments() }
+                    }
+                    throw IllegalStateException(code)
+                }
+                val authority = requireNotNull(response.body())
+                comandaSnapshotRepository.applyServiceFeeAuthority(comandaId, authority)
+                outboxDao.markAsSynced(key)
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(
+                        authoritativeServiceFee = authority.serviceFee,
+                        authoritativeServiceFeeMode = authority.serviceFeeMode,
+                        authoritativeServiceFeePercent = authority.serviceFeePercent,
+                        authoritativeSubtotal = authority.subtotal,
+                        authoritativeTaxAmount = authority.taxAmount,
+                        authoritativeTaxSnapshot = TaxSnapshotNormalizer.first(authority.taxSnapshot),
+                        authoritativeTotal = authority.totalLiquido,
+                        totalBaseMinor = authority.totalLiquido?.let { MoneyDecimal.toMinorUnits(BigDecimal.valueOf(it), currency) },
+                        paidBaseMinor = authority.totalPagoBase?.let { MoneyDecimal.toMinorUnits(BigDecimal.valueOf(it), currency) },
+                        balanceBaseMinor = authority.saldoBase?.let { MoneyDecimal.toMinorUnits(BigDecimal.valueOf(it), currency) },
+                        currentToPay = authority.saldoBase ?: _uiState.value.currentToPay,
+                        finalToPay = authority.saldoBase ?: _uiState.value.finalToPay,
+                        authoritativeComandaVersion = authority.versao,
+                        serviceFeeAmount = authority.serviceFee,
+                        serviceFeeKind = authority.serviceFeeMode,
+                        serviceFeeManualValue = authority.serviceFeePercent ?: authority.serviceFee,
+                        isServiceFeeSubmitting = false,
+                        serviceFeeError = null
+                    )
+                }
+                success = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val code = e.message
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(
+                        isServiceFeeSubmitting = false,
+                        serviceFeeError = serviceFeeMessage(code)
+                    )
+                }
+            } finally {
+                if (!success) withContext(Dispatchers.Main) { onFinished?.invoke(false) }
+                else withContext(Dispatchers.Main) { onFinished?.invoke(true) }
+            }
+        }
     }
 
     fun acknowledgePaymentSuccess() {

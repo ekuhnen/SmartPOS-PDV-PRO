@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PlugPDV</string>
+    <string name="service_fee_mode_invalid">Modo de cargo por servicio inválido.</string>
+    <string name="service_fee_percent_invalid">Porcentaje de cargo por servicio inválido.</string>
+    <string name="service_fee_amount_invalid">Importe de cargo por servicio inválido.</string>
+    <string name="service_fee_currency_mismatch">La moneda del cargo debe coincidir con la comanda.</string>
+    <string name="comanda_not_editable">Esta comanda ya no se puede editar.</string>
+    <string name="stale_comanda_revision">La comanda cambió. Actualice y revise antes de intentar de nuevo.</string>
+    <string name="service_fee_locked_by_allocation">El cargo no puede cambiarse después de un pago por ítems.</string>
+    <string name="service_fee_below_settled">El nuevo total no puede ser menor que lo ya pagado.</string>
+    <string name="service_fee_update_error">No se pudo actualizar el cargo por servicio.</string>
     <string name="login_title">INGRESAR AL SISTEMA</string>
     <string name="email">Correo electrónico</string>
     <string name="password">Contraseña</string>
