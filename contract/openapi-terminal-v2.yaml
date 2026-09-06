@@ -27,7 +27,7 @@ openapi: 3.0.3
 
 info:
   title: PlugPDV Terminal API — Cash Session + Pay-by-Items (deployed contract)
-  version: "2.3.0-04L1"
+  version: "2.3.1-04L3"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -231,6 +231,18 @@ paths:
           name: X-Device-Label
           required: false
           schema: { type: string }
+        - in: header
+          name: X-Terminal-Id
+          required: false
+          schema: { type: string }
+          description: |
+            PILOT-STAB-04L3. Optional cash-terminal scope for the authoritative
+            cashier read, with the SAME semantics as
+            `GET /api-caixa?current_session=1[&terminal_id=]`. When absent, no
+            terminal filter is applied and the open session of the tenant is
+            returned. `X-Device-Id` is NOT used as a terminal filter: a session
+            opened on another device of the same tenant is still reported open.
+
       requestBody:
         required: true
         content:
@@ -1430,11 +1442,16 @@ components:
         available:
           type: boolean
           description: |
-            Whether the authoritative read succeeded. A read failure is never
-            represented as an open drawer: the bootstrap failure path returns
-            503 `LOGIN_BOOTSTRAP_FAILED` instead of a 200, so a 200 with
-            `available: false` still means "not open" and the terminal must
-            re-read `/api-caixa?current_session=1` before operating cash.
+            PILOT-STAB-04L3. `true` if and only if the authoritative
+            cash-session read actually succeeded (`cashier_available` of
+            `terminal_login_bootstrap`). It is NOT hardcoded. A read failure is
+            never represented as an open drawer, and "could not determine" is
+            never reported as closed: the bootstrap failure path returns 503
+            `LOGIN_BOOTSTRAP_FAILED` instead of a 200. On a 200 with
+            `available: false`, cash state is UNKNOWN — `is_open` is `false`
+            only as a fail-closed placeholder and the terminal MUST re-read
+            `/api-caixa?current_session=1` before operating cash.
+
 
     AuthLoginResponse:
       type: object
