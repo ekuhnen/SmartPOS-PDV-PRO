@@ -187,11 +187,19 @@
                 android:id="@+id/btnUpdateTable"
                 android:layout_width="wrap_content"
                 android:layout_height="52dp"
-            android:text="@string/update_table"
+                android:text="@string/update_table"
                 app:cornerRadius="8dp"
                 app:backgroundTint="@color/brand_orange"
                 android:textSize="11sp"
                 android:paddingHorizontal="16dp" />
+            <ProgressBar
+                android:id="@+id/progressUpdateTable"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:indeterminate="true"
+                android:visibility="gone"
+                android:contentDescription="@string/table_updating_action" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 

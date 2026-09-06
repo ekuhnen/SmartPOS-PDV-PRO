@@ -352,5 +352,6 @@
     <string name="print_failed_retry">Não foi possível imprimir. Tente novamente.</string>
     <string name="table_loading">Carregando comanda...</string>
     <string name="table_refreshing">Atualizando...</string>
+    <string name="table_updating_action">Atualizando...</string>
     <string name="table_refresh_failed">Não foi possível atualizar a comanda.</string>
 </resources>

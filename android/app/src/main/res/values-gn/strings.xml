@@ -116,5 +116,6 @@
     <string name="print_failed_retry">Ndaikatúi oñeimprime. Eha’ãjey.</string>
     <string name="table_loading">Oñemyanyhẽ tembiapopy...</string>
     <string name="table_refreshing">Oñembopyahu...</string>
+    <string name="table_updating_action">Oñembopyahu...</string>
     <string name="table_refresh_failed">Ndaikatúi oñembopyahu tembiapopy.</string>
 </resources>

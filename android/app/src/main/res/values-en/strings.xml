@@ -197,5 +197,6 @@
     <string name="print_failed_retry">Could not print. Try again.</string>
     <string name="table_loading">Loading order...</string>
     <string name="table_refreshing">Updating...</string>
+    <string name="table_updating_action">Updating...</string>
     <string name="table_refresh_failed">Could not update the order.</string>
 </resources>

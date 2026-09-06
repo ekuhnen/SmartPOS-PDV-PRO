@@ -66,6 +66,10 @@ class TableOrderViewModel @Inject constructor(
     private val _isLoading = MutableLiveData<Boolean>(false)
     val isLoading: LiveData<Boolean> = _isLoading
 
+    /** State for the explicit "Atualizar mesa" action, independent of background refresh. */
+    private val _isSubmittingTableUpdate = MutableLiveData(false)
+    val isSubmittingTableUpdate: LiveData<Boolean> = _isSubmittingTableUpdate
+
     private val _isRefreshing = MutableLiveData<Boolean>(false)
     val isRefreshing: LiveData<Boolean> = _isRefreshing
 
@@ -513,6 +517,10 @@ class TableOrderViewModel @Inject constructor(
     }
 
     fun enviarCozinha(onSuccess: () -> Unit) {
+        // The action is guarded here as well as in the UI so duplicate taps cannot
+        // create concurrent submissions for the same table.
+        if (_isSubmittingTableUpdate.value == true) return
+
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
         val cId = currentTable.comandaId
@@ -527,12 +535,15 @@ class TableOrderViewModel @Inject constructor(
             return
         }
 
+        _isSubmittingTableUpdate.value = true
+
         val request = CommandActionRequest().apply {
             action = "enviar_cozinha"
             comandaId = cId
         }
 
         viewModelScope.launch {
+            var completed = false
             try {
                 _isLoading.value = true
                 retryIO { apiService.manageComanda("Bearer $currentToken", request) }
@@ -542,7 +553,7 @@ class TableOrderViewModel @Inject constructor(
                 } catch (e: Exception) {
                     Log.w("TableOrderViewModel", "Failed to cache snapshot after enviarCozinha: ${e.message}")
                 }
-                onSuccess()
+                completed = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
@@ -551,7 +562,11 @@ class TableOrderViewModel @Inject constructor(
                 _error.value = localized(R.string.send_kitchen_error, "SEND_KITCHEN_ERROR", e.localizedMessage.orEmpty())
             } finally {
                 _isLoading.value = false
+                _isSubmittingTableUpdate.value = false
             }
+            // Release the action state before navigation so recreation cannot inherit
+            // a stale submitting flag.
+            if (completed) onSuccess()
         }
     }
 }

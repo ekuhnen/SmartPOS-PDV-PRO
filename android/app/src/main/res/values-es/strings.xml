@@ -295,5 +295,6 @@
     <string name="print_failed_retry">No se pudo imprimir. Inténtelo de nuevo.</string>
     <string name="table_loading">Cargando comanda...</string>
     <string name="table_refreshing">Actualizando...</string>
+    <string name="table_updating_action">Actualizando...</string>
     <string name="table_refresh_failed">No se pudo actualizar la comanda.</string>
 </resources>

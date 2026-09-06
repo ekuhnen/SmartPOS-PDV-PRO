@@ -220,6 +220,13 @@ class TableOrderActivity : BaseActivity() {
         }
 
         tableOrderViewModel.isLoading.observe(this) { loading -> updateLoading(loading) }
+        tableOrderViewModel.isSubmittingTableUpdate.observe(this) { submitting ->
+            binding.btnUpdateTable.isEnabled = !submitting
+            binding.btnUpdateTable.text = getString(
+                if (submitting) R.string.table_updating_action else R.string.update_table
+            )
+            binding.progressUpdateTable.visibility = if (submitting) View.VISIBLE else View.GONE
+        }
         tableOrderViewModel.isRefreshing.observe(this) { updateMesaLoadingState() }
         tableOrderViewModel.readProvenance.observe(this) { updateMesaLoadingState() }
         tableOrderViewModel.error.observe(this) { error ->
