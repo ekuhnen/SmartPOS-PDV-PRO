@@ -128,7 +128,8 @@ class AuthViewModel @Inject constructor(
                     // Device metadata registration is scheduled after the safe route is known.
 
                     Log.d("AuthViewModel", "Buscando histórico de caixa...")
-                    // Check cashier status
+                    /* Legacy history inference removed from login critical path.
+                    // Legacy history inference intentionally disabled; auth cashier is authoritative.
                     val cashierStart = SystemClock.elapsedRealtime()
                     val cashierResponse = apiService.getCashierHistory("Bearer $token", null)
                     perf("cashier_history_http_ms", cashierStart, true)
@@ -157,6 +158,13 @@ class AuthViewModel @Inject constructor(
                         }
                     }
                     Log.d("AuthViewModel", "Status do caixa: ${if(isOpen) "ABERTO" else "FECHADO"} - SessionId: $sessionId")
+                    */
+                    val cashierStart = SystemClock.elapsedRealtime()
+                    val cashierState = resolveCashierState(token, response.cashier)
+                    val isOpen = cashierState.first
+                    val sessionId = cashierState.second
+                    Log.d("PERF_LOGIN", "cashier_source=${if (response.cashier?.available == true) "AUTH_RESPONSE" else "CURRENT_SESSION_FALLBACK"}")
+                    perf("cashier_authority_ms", cashierStart, true)
 
                     Log.d("AuthViewModel", "Sincronizando taxas e moedas...")
                     // Sync taxes and exchange rates unconditionally
@@ -273,6 +281,18 @@ class AuthViewModel @Inject constructor(
                 _isLoading.postValue(false)
             }
         }
+    }
+
+    private suspend fun resolveCashierState(
+        token: String,
+        authCashier: com.plugpdv.pdv.models.AuthCashier?
+    ): Pair<Boolean, String?> {
+        if (authCashier?.available == true) {
+            return (authCashier.isOpen == true) to authCashier.sessionId
+        }
+        val fallback = apiService.getCurrentCashSession("Bearer $token", "1", null)
+        val session = fallback.session
+        return (session != null) to session?.sessionId
     }
 
     private suspend fun fetchExchangeRates(token: String) {

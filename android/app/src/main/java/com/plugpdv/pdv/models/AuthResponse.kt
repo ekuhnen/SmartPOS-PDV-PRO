@@ -9,6 +9,13 @@ data class AuthDevice(
     val blocked: Boolean? = null
 )
 
+data class AuthCashier(
+    @SerializedName("is_open") val isOpen: Boolean? = null,
+    @SerializedName("session_id") val sessionId: String? = null,
+    val session: CashSessionSnapshot? = null,
+    val available: Boolean? = null
+)
+
 data class AuthResponse(
     val access_token: String? = null,
     val token_type: String? = null,
@@ -24,5 +31,6 @@ data class AuthResponse(
      */
     @SerializedName("owner_id")
     val ownerId: String? = null,
-    val device: AuthDevice? = null
+    val device: AuthDevice? = null,
+    val cashier: AuthCashier? = null
 )
