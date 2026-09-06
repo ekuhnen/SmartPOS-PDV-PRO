@@ -66,6 +66,9 @@ class TableOrderViewModel @Inject constructor(
     private val _isLoading = MutableLiveData<Boolean>(false)
     val isLoading: LiveData<Boolean> = _isLoading
 
+    private val _isRefreshing = MutableLiveData<Boolean>(false)
+    val isRefreshing: LiveData<Boolean> = _isRefreshing
+
     private val _refreshWarning = MutableLiveData<String?>()
     val refreshWarning: LiveData<String?> = _refreshWarning
 
@@ -299,6 +302,7 @@ class TableOrderViewModel @Inject constructor(
         val refreshGeneration = mutationGeneration
 
         try {
+            _isRefreshing.value = true
             if (showLoading) _isLoading.value = true
             val refreshStart = SystemClock.elapsedRealtime()
 
@@ -387,6 +391,7 @@ class TableOrderViewModel @Inject constructor(
             Log.e("TableOrderViewModel", "Sync failed: ${e.message}", e)
             _error.value = localized(R.string.load_table_error, "LOAD_TABLE_ERROR", e.message.orEmpty())
         } finally {
+            _isRefreshing.value = false
             if (showLoading) _isLoading.value = false
         }
     }

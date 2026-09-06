@@ -2,6 +2,7 @@ package com.plugpdv.pdv.ui.sale
 
 import android.os.Bundle
 import android.view.View
+import android.view.ViewTreeObserver
 import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
@@ -32,11 +33,17 @@ class TableOrderActivity : BaseActivity() {
     
     private var table: Table? = null
     private var token: String? = null
+    private var mesaOpenedAtElapsed = 0L
+    private var firstVisibleMetricLogged = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityTableOrderBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        mesaOpenedAtElapsed = android.os.SystemClock.elapsedRealtime()
+        binding.tvMesaLoadingState.visibility = View.VISIBLE
+        binding.tvMesaLoadingState.text = getString(R.string.table_loading)
+        Log.d("PERF_MESA", "initial_loading_visible_ms=0")
 
         val tableId = intent.getStringExtra("TABLE_ID")
         val tableNumber = intent.getIntExtra("TABLE_NUMBER", 0)
@@ -206,11 +213,14 @@ class TableOrderActivity : BaseActivity() {
         }
 
         tableOrderViewModel.isLoading.observe(this) { loading -> updateLoading(loading) }
+        tableOrderViewModel.isRefreshing.observe(this) { updateMesaLoadingState() }
+        tableOrderViewModel.readProvenance.observe(this) { updateMesaLoadingState() }
         tableOrderViewModel.error.observe(this) { error ->
             error?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
         }
         tableOrderViewModel.refreshWarning.observe(this) { warning ->
             warning?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
+            updateMesaLoadingState()
         }
         tableOrderViewModel.accountingSummary.observe(this) { _ ->
             updateUI()
@@ -226,7 +236,22 @@ class TableOrderActivity : BaseActivity() {
     }
 
     private fun updateLoading(loading: Boolean?) {
-        binding.loadingLayout.loadingOverlay.visibility = if (loading == true) View.VISIBLE else View.GONE
+        // Mesa opening and simple mutations never use a full-screen blocker.
+        binding.loadingLayout.loadingOverlay.visibility = View.GONE
+        updateMesaLoadingState()
+    }
+
+    private fun updateMesaLoadingState() {
+        val hasItems = table?.items?.isNotEmpty() == true
+        val refreshing = tableOrderViewModel.isRefreshing.value == true
+        val warning = tableOrderViewModel.refreshWarning.value
+        binding.tvMesaLoadingState.visibility = if (!hasItems || refreshing || warning != null) View.VISIBLE else View.GONE
+        binding.tvMesaLoadingState.text = when {
+            warning != null && !hasItems -> getString(R.string.table_refresh_failed)
+            refreshing && hasItems -> getString(R.string.table_refreshing)
+            warning != null -> getString(R.string.table_refresh_failed)
+            else -> getString(R.string.table_loading)
+        }
     }
 
     fun updateUI() {
@@ -256,6 +281,21 @@ class TableOrderActivity : BaseActivity() {
         }
         currentTable?.items?.let { items ->
             orderAdapter.setItems(items)
+            updateMesaLoadingState()
+            if (items.isNotEmpty() && !firstVisibleMetricLogged) {
+                binding.rvOrderItems.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        if (binding.rvOrderItems.childCount > 0) {
+                            firstVisibleMetricLogged = true
+                            val elapsed = android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed
+                            Log.d("PERF_MESA", "first_item_visible_ms=$elapsed")
+                            Log.d("PERF_MESA", "first_visible_item_count=${binding.rvOrderItems.childCount}")
+                            binding.rvOrderItems.viewTreeObserver.removeOnPreDrawListener(this)
+                        }
+                        return true
+                    }
+                })
+            }
         }
         Log.d("PERF_MESA", "render_ms=${android.os.SystemClock.elapsedRealtime() - renderStart}")
     }

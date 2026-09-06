@@ -195,4 +195,7 @@
     <string name="items_quote_loading">Calculating authorized amount...</string>
     <string name="items_quote_error">Could not calculate the item amount.</string>
     <string name="print_failed_retry">Could not print. Try again.</string>
+    <string name="table_loading">Loading order...</string>
+    <string name="table_refreshing">Updating...</string>
+    <string name="table_refresh_failed">Could not update the order.</string>
 </resources>

@@ -114,4 +114,7 @@
     <string name="items_quote_loading">Oñemboheko pe hepy autorizado...</string>
     <string name="items_quote_error">Ndaikatúi oñemboheko pe hepy.</string>
     <string name="print_failed_retry">Ndaikatúi oñeimprime. Eha’ãjey.</string>
+    <string name="table_loading">Oñemyanyhẽ tembiapopy...</string>
+    <string name="table_refreshing">Oñembopyahu...</string>
+    <string name="table_refresh_failed">Ndaikatúi oñembopyahu tembiapopy.</string>
 </resources>
