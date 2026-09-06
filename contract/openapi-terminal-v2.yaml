@@ -27,7 +27,7 @@ openapi: 3.0.3
 
 info:
   title: PlugPDV Terminal API — Cash Session + Pay-by-Items (deployed contract)
-  version: "2.2.0-04H1"
+  version: "2.3.0-04L1"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -182,6 +182,114 @@ x-items-payment-idempotency: |
   different body → 409 `IDEMPOTENCY_KEY_CONFLICT`.
 
 paths:
+  # =================================================================
+  # PILOT-STAB-04L1 — AUTH LOGIN CASHIER CONTRACT (documentation only)
+  # Describes `supabase/functions/auth-login/index.ts` AS DEPLOYED.
+  # Nothing here is new behaviour; no field is invented.
+  # =================================================================
+  /auth-login:
+    post:
+      operationId: terminalAuthLogin
+      summary: Terminal login — session, tenant, operation modes, device and authoritative cashier state
+      security: []
+      description: |
+        Single deployed login call for the terminal. The success payload is only
+        produced AFTER, in this order:
+
+        1. credential authentication (`signInWithPassword`);
+        2. tenant/owner resolution (real owner, or `owner_user_id` of a sub-user);
+        3. user active/block validation (`user_denied` → 401);
+        4. device ownership/block validation (`device_owner_mismatch`,
+           `DEVICE_BLOCKED` → 403);
+        5. authoritative cashier-session read (`public.caixa_current_session`
+           via `public.terminal_login_bootstrap`).
+
+        Steps 2–5 are ONE database round trip (`terminal_login_bootstrap`,
+        read-only). A failure of that read is 503 `LOGIN_BOOTSTRAP_FAILED` —
+        never a 200. Non-authoritative telemetry (`last_seen_at`,
+        `app_version`, `user_agent`) runs after the response.
+
+        Only `POST` is accepted (`405 { "error": "Method not allowed" }`).
+      parameters:
+        - in: header
+          name: X-Device-Id
+          required: false
+          schema: { type: string }
+          description: |
+            Terminal device id. When present the device is validated and
+            auto-registered on first login; when absent, `device` is `null`.
+        - in: header
+          name: X-App-Version
+          required: false
+          schema: { type: string }
+        - in: header
+          name: X-Platform
+          required: false
+          schema: { type: string, enum: [android, ios, web] }
+          description: Anything else is stored as `web`.
+        - in: header
+          name: X-Device-Label
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthLoginRequest" }
+      responses:
+        "200":
+          description: Authenticated. Response headers include `X-Request-Id` and `Server-Timing`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthLoginResponse" }
+        "400":
+          description: '`{ "error": "email and password are required", "reason": "MISSING_FIELDS" }`.'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthLoginError" }
+        "401":
+          description: |
+            `{ "error": "Invalid email or password", "reason": <REASON> }` — the
+            message is deliberately identical for every reason.
+            `reason` ∈ `INVALID_CREDENTIALS`, `EMAIL_NOT_CONFIRMED`,
+            `USER_BANNED` (credential layer), `USER_INACTIVE`, `USER_BLOCKED`
+            (sub-user denied by the tenant).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthLoginError" }
+        "403":
+          description: |
+            Device refused, fail-closed: `device_owner_mismatch` (device belongs
+            to another tenant) or `DEVICE_BLOCKED`. Both carry the same value in
+            `error` and `code`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthLoginDeviceError" }
+        "405":
+          description: '`{ "error": "Method not allowed" }`.'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlainError" }
+        "429":
+          description: '`{ "error": "Too many login attempts. Try again in 1 minute." }` — 10 requests/minute per IP.'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlainError" }
+        "503":
+          description: |
+            `{ "error": "Internal server error", "code": "LOGIN_BOOTSTRAP_FAILED" }`
+            — the authoritative bootstrap read (tenant, modes, device, cashier)
+            failed. The terminal MUST treat this as "not logged in" and retry;
+            it is never a partial success.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "500":
+          description: '`{ "error": "Internal server error" }`.'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlainError" }
+
   /api-caixa:
     get:
       operationId: cashHistoryOrCashPosition
@@ -1252,6 +1360,136 @@ components:
         allocation_preview: { $ref: "#/components/schemas/PaymentQuoteResponse" }
         requires_reconciliation: { type: boolean }
 
+    # ---------------- 04L1. AUTH LOGIN ----------------
+    AuthLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          description: Trimmed and lower-cased by the server before authentication.
+        password: { type: string, format: password }
+
+    AuthLoginUser:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, nullable: true }
+        full_name: { type: string, nullable: true, description: From `user_metadata.full_name`. }
+
+    AuthLoginOperationModes:
+      type: object
+      description: Operation modes enabled for this operator/company. Defaults to `true` when unset.
+      properties:
+        mesa: { type: boolean }
+        venda_direta: { type: boolean }
+        comanda: { type: boolean }
+
+    AuthLoginDevice:
+      type: object
+      nullable: true
+      description: |
+        `null` when no `X-Device-Id` header was sent (or auto-registration
+        failed). Present devices are always owned by `owner_id` and not blocked —
+        otherwise the request would have been refused with 403.
+      properties:
+        id: { type: string }
+        api_version: { type: integer, nullable: true }
+        blocked: { type: boolean }
+
+    AuthLoginCashier:
+      type: object
+      description: |
+        Authoritative cashier state at login time. Derived from the existing
+        `public.caixa_current_session` authority (via
+        `public.terminal_login_bootstrap`) — NEVER inferred from the history of
+        `caixa_operacoes`. This block exists solely to remove the second login
+        round trip; it adds no cash business rule. Cash semantics (session
+        identity, currency immutability, no FX, rounding) stay defined by
+        `/api-caixa` in this same contract and MUST NOT be duplicated here.
+      required: [is_open, session_id, session, available]
+      properties:
+        is_open:
+          type: boolean
+          description: |
+            `true` if and only if an authoritative open session exists.
+            No session / closed drawer → `false`.
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Id of the authoritative open session (the `ABERTURA` row).
+            `null` whenever `is_open` is `false`.
+        session:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/SessionSnapshot" }]
+          description: |
+            The authoritative current-session object, identical in shape to
+            `GET /api-caixa?current_session=1` → `session`. `null` when closed.
+        available:
+          type: boolean
+          description: |
+            Whether the authoritative read succeeded. A read failure is never
+            represented as an open drawer: the bootstrap failure path returns
+            503 `LOGIN_BOOTSTRAP_FAILED` instead of a 200, so a 200 with
+            `available: false` still means "not open" and the terminal must
+            re-read `/api-caixa?current_session=1` before operating cash.
+
+    AuthLoginResponse:
+      type: object
+      description: Deployed success payload of `POST /auth-login`.
+      required:
+        [access_token, refresh_token, expires_in, token_type, user, owner_id,
+         operation_modes, device, mesa, venda_direta, comanda, cashier, request_id]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        token_type: { type: string, enum: [Bearer] }
+        user: { $ref: "#/components/schemas/AuthLoginUser" }
+        owner_id:
+          type: string
+          format: uuid
+          description: |
+            Canonical tenant id: the real owner, or the `owner_user_id` of the
+            company when the authenticated account is a sub-user. All terminal
+            data is scoped by this id.
+        operation_modes: { $ref: "#/components/schemas/AuthLoginOperationModes" }
+        device: { $ref: "#/components/schemas/AuthLoginDevice" }
+        mesa: { type: boolean, description: Convenience mirror of `operation_modes.mesa`. }
+        venda_direta: { type: boolean, description: Convenience mirror of `operation_modes.venda_direta`. }
+        comanda: { type: boolean, description: Convenience mirror of `operation_modes.comanda`. }
+        cashier: { $ref: "#/components/schemas/AuthLoginCashier" }
+        request_id:
+          type: string
+          format: uuid
+          description: Same value as the `X-Request-Id` response header; use it in support tickets.
+
+    AuthLoginError:
+      type: object
+      description: Login refusal with a machine-readable `reason` (no `code`).
+      required: [error, reason]
+      properties:
+        error: { type: string }
+        reason:
+          type: string
+          enum:
+            - MISSING_FIELDS
+            - INVALID_CREDENTIALS
+            - EMAIL_NOT_CONFIRMED
+            - USER_BANNED
+            - USER_INACTIVE
+            - USER_BLOCKED
+
+    AuthLoginDeviceError:
+      type: object
+      description: Device refusal — `error` and `code` carry the same value.
+      required: [error, code]
+      properties:
+        error: { type: string, enum: [device_owner_mismatch, DEVICE_BLOCKED] }
+        code: { type: string, enum: [device_owner_mismatch, DEVICE_BLOCKED] }
+
     PlainError:
       type: object
       description: Untyped error — `error` only, NO `code`, NO `message_key` (CONTRACT_DEBT-4).
@@ -1271,6 +1509,7 @@ components:
             - COUNTED_CURRENCY_INVALID
             - COUNTED_AMOUNT_INVALID
             - CASH_SESSION_NOT_FOUND
+            - LOGIN_BOOTSTRAP_FAILED
             - FORBIDDEN_TENANT
             - UPGRADE_REQUIRED
 
