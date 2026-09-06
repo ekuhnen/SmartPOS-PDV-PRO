@@ -36,6 +36,11 @@ class TableOrderActivity : BaseActivity() {
     private var mesaOpenedAtElapsed = 0L
     private var firstVisibleMetricLogged = false
     private var firstVisibleMetricArmed = false
+    private var cachedAdapterMetricLogged = false
+    private var listVisibleMetricLogged = false
+    private var loadingGoneMetricLogged = false
+    private var firstChildMetricLogged = false
+    private var recyclerLayoutMetricLogged = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -253,6 +258,21 @@ class TableOrderActivity : BaseActivity() {
             warning != null -> getString(R.string.table_refresh_failed)
             else -> getString(R.string.table_loading)
         }
+        if (hasItems) {
+            binding.rvOrderItems.visibility = View.VISIBLE
+            val elapsed = android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed
+            if (!listVisibleMetricLogged && binding.rvOrderItems.visibility == View.VISIBLE) {
+                listVisibleMetricLogged = true
+                Log.d("PERF_MESA", "list_visibility_visible_ms=$elapsed")
+                Log.d("PERF_MESA", "recycler_visibility=VISIBLE")
+                Log.d("PERF_MESA", "recycler_height=${binding.rvOrderItems.height}")
+                Log.d("PERF_MESA", "recycler_child_count=${binding.rvOrderItems.childCount}")
+            }
+            if (!loadingGoneMetricLogged) {
+                loadingGoneMetricLogged = true
+                Log.d("PERF_MESA", "loading_visibility_gone_ms=$elapsed")
+            }
+        }
     }
 
     fun updateUI() {
@@ -283,12 +303,27 @@ class TableOrderActivity : BaseActivity() {
         currentTable?.items?.let { items ->
             orderAdapter.setItems(items)
             Log.d("PERF_MESA", "adapter_submit_ms=${android.os.SystemClock.elapsedRealtime() - renderStart}")
+            if (items.isNotEmpty() && !cachedAdapterMetricLogged) {
+                cachedAdapterMetricLogged = true
+                Log.d("PERF_MESA", "cached_adapter_nonempty_ms=${android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed}")
+                Log.d("PERF_MESA", "recycler_visibility=${if (binding.rvOrderItems.visibility == View.VISIBLE) "VISIBLE" else if (binding.rvOrderItems.visibility == View.INVISIBLE) "INVISIBLE" else "GONE"}")
+                Log.d("PERF_MESA", "recycler_height=${binding.rvOrderItems.height}")
+                Log.d("PERF_MESA", "recycler_child_count=${binding.rvOrderItems.childCount}")
+            }
             updateMesaLoadingState()
             if (items.isNotEmpty() && !firstVisibleMetricLogged && !firstVisibleMetricArmed) {
                 firstVisibleMetricArmed = true
                 binding.rvOrderItems.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                     override fun onPreDraw(): Boolean {
-                        if (binding.rvOrderItems.childCount > 0) {
+                        if (binding.rvOrderItems.childCount > 0 && binding.rvOrderItems.visibility == View.VISIBLE && binding.rvOrderItems.height > 0) {
+                            if (!firstChildMetricLogged && binding.rvOrderItems.visibility == View.VISIBLE && binding.rvOrderItems.height > 0) {
+                                firstChildMetricLogged = true
+                                Log.d("PERF_MESA", "first_child_attached_ms=${android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed}")
+                            }
+                            if (!recyclerLayoutMetricLogged && binding.rvOrderItems.childCount > 0 && binding.rvOrderItems.height > 0) {
+                                recyclerLayoutMetricLogged = true
+                                Log.d("PERF_MESA", "recycler_layout_nonempty_ms=${android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed}")
+                            }
                             firstVisibleMetricLogged = true
                             val elapsed = android.os.SystemClock.elapsedRealtime() - mesaOpenedAtElapsed
                             Log.d("PERF_MESA", "first_item_visible_ms=$elapsed")
