@@ -132,7 +132,8 @@ interface PosApiService {
     @GET("api-comandas")
     suspend fun getComandasList(
         @Header("Authorization") token: String,
-        @Query("status") status: String? = null
+        @Query("status") status: String? = null,
+        @Query("mesa_id") mesaId: String? = null
     ): ComandasListResponse
 
     @GET("api-taxes")

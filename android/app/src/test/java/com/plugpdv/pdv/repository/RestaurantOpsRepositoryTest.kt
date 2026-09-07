@@ -51,6 +51,7 @@ class RestaurantOpsRepositoryTest {
     }
 
     @Test fun searchIsDiscoveryOnlyAndPreservesDuplicateNames() = runBlocking {
+        whenever(api.getComandasList(any(), anyOrNull(), eq("none"))).thenReturn(ComandasListResponse(total = 0, comandas = emptyList()))
         whenever(api.searchRestaurantOps(any(), any(), any(), any())).thenReturn(
             RestaurantOpsSearchResponse(result_count = 2, results = listOf(
                 RestaurantOpsSearchHit("a", "AAA11111", "Evandro", "Evandro", "ABERTA", mesa_id = "m1", mesa_numero = 20),
@@ -60,5 +61,26 @@ class RestaurantOpsRepositoryTest {
         val results = repository.search("token", "Evandro").getOrThrow()
         assertEquals(2, results.size)
         assertEquals(listOf("AAA11111", "BBB22222"), results.map { it.controlCode })
+    }
+
+    @Test fun standaloneNameSearchIncludesNullMesaOpenComanda() = runBlocking {
+        whenever(api.getComandasList(any(), anyOrNull(), eq("none"))).thenReturn(
+            ComandasListResponse(total = 1, comandas = listOf(
+                ComandasListResponse.ComandaListItem("standalone-id", null, "EM_CONSUMO", null, "Evandro", null)
+            ))
+        )
+        whenever(api.searchRestaurantOps(any(), any(), any(), any())).thenReturn(RestaurantOpsSearchResponse())
+        val result = repository.search("token", " evandro ").getOrThrow()
+        assertEquals(listOf("standalone-id"), result.map { it.comandaId })
+        assertNull(result.single().physicalMesaId)
+    }
+
+    @Test fun incompleteStandaloneListFailsClosed() = runBlocking {
+        whenever(api.getComandasList(any(), anyOrNull(), eq("none"))).thenReturn(
+            ComandasListResponse(total = 2, comandas = listOf(
+                ComandasListResponse.ComandaListItem("one", null, "ABERTA", null, "Evandro", null)
+            ))
+        )
+        assertTrue(repository.search("token", "Evandro").isFailure)
     }
 }

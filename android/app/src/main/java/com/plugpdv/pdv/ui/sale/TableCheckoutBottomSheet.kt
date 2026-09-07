@@ -75,7 +75,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         val sectorId = arguments?.getString("SECTOR_ID")
         token = arguments?.getString("TOKEN")
         
-        if (token == null || (tableId.isNullOrEmpty() && tableNumber <= 0)) {
+        if (token == null || (tableId.isNullOrEmpty() && tableNumber <= 0 && selectedComandaId.isNullOrEmpty())) {
             dismiss()
             return
         }

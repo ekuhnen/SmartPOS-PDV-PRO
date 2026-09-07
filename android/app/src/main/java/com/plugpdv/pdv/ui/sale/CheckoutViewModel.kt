@@ -196,26 +196,20 @@ class CheckoutViewModel @Inject constructor(
             // 1. Resolve table from Room if not already set
             var currentTable = this@CheckoutViewModel.table
             if (currentTable == null) {
-                currentTable = if (!tableId.isNullOrEmpty()) {
-                    tableReadRepository.getTableById(tableId)
-                } else if (tableNumber > 0) {
-                    tableReadRepository.getTableByNumber(tableNumber, sectorId)
+                if (!selectedComandaId.isNullOrBlank()) {
+                    // Standalone comanda: in-memory operational context only; canonical identity is the comanda ID.
+                    currentTable = Table(id = null, number = 0, comandaId = selectedComandaId, status = Table.Status.OCCUPIED)
+                    this@CheckoutViewModel.table = currentTable
                 } else {
-                    null
+                    _uiState.value = _uiState.value.copy(
+                        moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
+                        isPayButtonBlocked = true,
+                        blockReason = "Mesa não encontrada no banco de dados.",
+                        error = "Mesa não encontrada."
+                    )
+                    return@launch
                 }
-                this@CheckoutViewModel.table = currentTable
             }
-
-            if (currentTable == null) {
-                _uiState.value = _uiState.value.copy(
-                    moneyAuthorityState = MoneyAuthorityState.LOAD_ERROR,
-                    isPayButtonBlocked = true,
-                    blockReason = "Mesa não encontrada no banco de dados.",
-                    error = "Mesa não encontrada."
-                )
-                return@launch
-            }
-
             // 2. Evaluate durable blockers from Room
             val durableBlock = checkDurablePaymentBlockers(currentTable)
 
