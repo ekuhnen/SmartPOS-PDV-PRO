@@ -21,6 +21,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.plugpdv.pdv.realtime.RestaurantReadSessionGuard
+import com.plugpdv.pdv.repository.RestaurantOpsRepository
+import com.plugpdv.pdv.models.ComandaDiscoveryItem
 
 internal data class CommandItemMoney(val price: Double?, val currency: String?)
 
@@ -36,7 +38,8 @@ internal object CommandItemMoneyMapper {
 class CommandViewModel @Inject constructor(
     private val apiService: PosApiService,
     private val catalogDao: com.plugpdv.pdv.database.CatalogDao,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val restaurantOpsRepository: RestaurantOpsRepository
 ) : ViewModel() {
     private val readMutex = Mutex()
 
@@ -64,9 +67,29 @@ class CommandViewModel @Inject constructor(
 
     private val _openFinished = MutableLiveData<String?>(null)
     val openFinished: LiveData<String?> = _openFinished
+    private val _searchResults = MutableLiveData<List<ComandaDiscoveryItem>?>(null)
+    val searchResults: LiveData<List<ComandaDiscoveryItem>?> = _searchResults
 
     fun clearNotFound() {
         _notFound.value = null
+    }
+
+    fun clearSearchResults() { _searchResults.value = null }
+
+    fun searchOperational(token: String, query: String) {
+        val normalized = query.trim()
+        if (normalized.matches(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"))) {
+            fetchComanda(token, normalized)
+            return
+        }
+        viewModelScope.launch {
+            _isLoading.value = true
+            restaurantOpsRepository.search(token, normalized).fold(
+                onSuccess = { _searchResults.value = it },
+                onFailure = { _error.value = localized(R.string.load_comanda_error, "LOAD_COMANDA_ERROR") }
+            )
+            _isLoading.value = false
+        }
     }
 
     fun fetchComanda(token: String, code: String) {
@@ -135,21 +158,25 @@ class CommandViewModel @Inject constructor(
                         
                         // 1. Try to search in the active comandas list first
                         val comandasList = retryIO { apiService.getComandasList("Bearer $token") }
-                        val foundComanda = comandasList.comandas.find {
-                            it.numero == codeInt || it.nomeCliente?.equals(code, ignoreCase = true) == true || it.id.equals(code, ignoreCase = true)
-                        }
-                        if (foundComanda != null) {
-                            fetchComanda(token, foundComanda.id)
+                        val numericMatches = codeInt?.let { n -> comandasList.comandas.filter { it.numero == n } }.orEmpty()
+                        val nameMatches = comandasList.comandas.filter { it.nomeCliente?.equals(code, ignoreCase = true) == true }
+                        val idMatches = comandasList.comandas.filter { it.id.equals(code, ignoreCase = true) }
+                        val matches = (numericMatches + nameMatches + idMatches).distinctBy { it.id }
+                        if (matches.size == 1) {
+                            fetchComanda(token, matches.single().id)
                             return@withLock
                         }
 
                         // 2. Fallback to searching inside tables/mesas list
                         val mesasResponse = retryIO { apiService.getMesas("Bearer $token") }
-                        val foundMesa = mesasResponse.setores.orEmpty().flatMap { it.mesas.orEmpty() }.find { 
-                            it.numero == codeInt || it.nome_cliente?.equals(code, ignoreCase = true) == true || it.comanda_id?.equals(code, ignoreCase = true) == true
+                        val mesaMatches = mesasResponse.setores.orEmpty().flatMap { it.mesas.orEmpty() }.filter { mesa ->
+                            (codeInt != null && mesa.numero == codeInt) ||
+                                mesa.nome_cliente?.equals(code, ignoreCase = true) == true ||
+                                mesa.comanda_id?.equals(code, ignoreCase = true) == true
                         }
-                        if (foundMesa != null && !foundMesa.comanda_id.isNullOrEmpty()) {
-                            fetchComanda(token, foundMesa.comanda_id)
+                        val mesaComandaIds = mesaMatches.mapNotNull { it.comanda_id }.distinct()
+                        if (mesaComandaIds.size == 1) {
+                            fetchComanda(token, mesaComandaIds.single())
                             return@withLock
                         }
                     } catch (e2: Exception) {

@@ -14,9 +14,14 @@ import com.journeyapps.barcodescanner.ScanOptions
 import com.plugpdv.pdv.databinding.FragmentComandaBinding
 import com.plugpdv.pdv.R
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import androidx.lifecycle.lifecycleScope
+import com.plugpdv.pdv.repository.RestaurantOpsRepository
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class ComandaFragment : Fragment() {
+    @Inject lateinit var restaurantOpsRepository: RestaurantOpsRepository
     private var _binding: FragmentComandaBinding? = null
     private val binding get() = _binding!!
     private var token: String? = null
@@ -61,6 +66,24 @@ class ComandaFragment : Fragment() {
             }
         }
 
+        viewModel.searchResults.observe(viewLifecycleOwner) { results ->
+            results ?: return@observe
+            viewModel.clearSearchResults()
+            if (results.firstOrNull()?.searchResultCount?.let { it > results.size } == true) {
+                Toast.makeText(requireContext(), R.string.mesa_comandas_refresh_failed, Toast.LENGTH_LONG).show()
+                return@observe
+            }
+            if (binding.etCommandCode.text.toString().trim().toIntOrNull() != null && results.any { it.physicalMesaId != null }) {
+                expandMesaSearch(results)
+                return@observe
+            }
+            when (results.size) {
+                0 -> showOpenConfirmation(binding.etCommandCode.text.toString().trim())
+                1 -> openDiscovery(results.single())
+                else -> ComandaSelectorDialog.show(requireContext(), null, results) { openDiscovery(it) }
+            }
+        }
+
         viewModel.error.observe(viewLifecycleOwner) { error ->
             error?.let { Toast.makeText(requireContext(), it, Toast.LENGTH_SHORT).show() }
         }
@@ -94,7 +117,7 @@ class ComandaFragment : Fragment() {
             return
         }
         binding.tilCode.error = null
-        token?.let { viewModel.fetchComanda(it, code) }
+        token?.let { viewModel.searchOperational(it, code) }
     }
 
     private fun openCommand(code: String) {
@@ -103,6 +126,46 @@ class ComandaFragment : Fragment() {
             putExtra("ACCESS_TOKEN", token)
         }
         startActivity(intent)
+    }
+
+    private fun openDiscovery(item: com.plugpdv.pdv.models.ComandaDiscoveryItem) {
+        val mesaId = item.physicalMesaId
+        val auth = token
+        if (mesaId != null && auth != null) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                restaurantOpsRepository.discoverComandasForMesa(auth, mesaId).fold(
+                    onSuccess = { discovery ->
+                        if (discovery.comandas.any { it.comandaId == item.comandaId }) openDiscoveryDirect(item)
+                        else Toast.makeText(requireContext(), R.string.comanda_not_open, Toast.LENGTH_LONG).show()
+                    },
+                    onFailure = { Toast.makeText(requireContext(), R.string.mesa_comandas_refresh_failed, Toast.LENGTH_LONG).show() }
+                )
+            }
+        } else openDiscoveryDirect(item)
+    }
+
+    private fun openDiscoveryDirect(item: com.plugpdv.pdv.models.ComandaDiscoveryItem) {
+        startActivity(Intent(requireActivity(), CommandOrderActivity::class.java).apply {
+            putExtra("COMMAND_CODE", item.comandaId)
+            putExtra("PHYSICAL_TABLE_ID", item.physicalMesaId)
+            putExtra("PHYSICAL_TABLE_NUMBER", item.mesaNumero ?: 0)
+            putExtra("PHYSICAL_SECTOR_ID", item.setor)
+            putExtra("ACCESS_TOKEN", token)
+        })
+    }
+
+    private fun expandMesaSearch(results: List<com.plugpdv.pdv.models.ComandaDiscoveryItem>) {
+        val auth = token ?: return
+        val mesaIds = results.mapNotNull { it.physicalMesaId }.distinct()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val expanded = mesaIds.flatMap { id -> restaurantOpsRepository.discoverComandasForMesa(auth, id).getOrNull()?.comandas.orEmpty() }
+                .distinctBy { it.comandaId }
+            when (expanded.size) {
+                0 -> showOpenConfirmation(binding.etCommandCode.text.toString().trim())
+                1 -> openDiscovery(expanded.single())
+                else -> ComandaSelectorDialog.show(requireContext(), null, expanded) { openDiscovery(it) }
+            }
+        }
     }
 
     private fun showOpenConfirmation(code: String) {

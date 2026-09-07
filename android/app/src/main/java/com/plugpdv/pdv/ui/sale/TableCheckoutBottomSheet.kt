@@ -70,6 +70,7 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         super.onCreate(savedInstanceState)
         pendingCheckoutOperationId = savedInstanceState?.getString("PENDING_CHECKOUT_OPERATION_ID")
         val tableId = arguments?.getString("TABLE_ID")
+        val selectedComandaId = arguments?.getString("COMANDA_ID")
         tableNumber = arguments?.getInt("TABLE_NUMBER") ?: 0
         val sectorId = arguments?.getString("SECTOR_ID")
         token = arguments?.getString("TOKEN")
@@ -87,7 +88,8 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
             token = token!!,
             sessionId = prefs.getString(Constants.SESSION_ID, null),
             opId = prefs.getString(Constants.OPERATOR_ID, null),
-            opName = prefs.getString(Constants.OPERATOR_NAME, null)
+            opName = prefs.getString(Constants.OPERATOR_NAME, null),
+            selectedComandaId = selectedComandaId
         )
     }
 
@@ -691,12 +693,14 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }
 
         @JvmStatic
-        fun newInstance(tableId: String?, tableNumber: Int, token: String): TableCheckoutBottomSheet {
+        fun newInstance(tableId: String?, tableNumber: Int, token: String, comandaId: String? = null, sectorId: String? = null): TableCheckoutBottomSheet {
             return TableCheckoutBottomSheet().apply {
                 arguments = Bundle().apply {
                     putString("TABLE_ID", tableId)
                     putInt("TABLE_NUMBER", tableNumber)
                     putString("TOKEN", token)
+                    putString("COMANDA_ID", comandaId)
+                    putString("SECTOR_ID", sectorId)
                 }
             }
         }

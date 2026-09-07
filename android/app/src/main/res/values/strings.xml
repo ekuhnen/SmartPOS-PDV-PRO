@@ -363,4 +363,10 @@
     <string name="table_refreshing">Atualizando...</string>
     <string name="table_updating_action">Atualizando...</string>
     <string name="table_refresh_failed">Não foi possível atualizar a comanda.</string>
+    <string name="open_comandas">Comandas abertas</string>
+    <string name="select_comanda">Selecionar comanda</string>
+    <string name="comanda_not_open">Comanda não está mais aberta</string>
+    <string name="mesa_comandas_refresh_failed">Não foi possível atualizar as comandas desta mesa</string>
+    <string name="try_again">Tentar novamente</string>
+    <string name="mesa_multiple_comandas_transfer_blocked">Esta mesa possui várias comandas. Selecione uma comanda para continuar.</string>
 </resources>

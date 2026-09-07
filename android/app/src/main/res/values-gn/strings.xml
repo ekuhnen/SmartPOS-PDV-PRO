@@ -134,4 +134,10 @@
     <string name="service_fee_exempt">Oñemboyke (0%)</string>
     <string name="service_fee_amount_hint">Mboýpa comanda virúpe (%1$s)</string>
     <string name="service_fee_allocated_label">Tasa de servicio (prorrateo)</string>
+    <string name="open_comandas">Comandas oĩva</string>
+    <string name="select_comanda">Eiporavo comanda</string>
+    <string name="comanda_not_open">Comanda ndohovéima ojepe</string>
+    <string name="mesa_comandas_refresh_failed">Ndaikatúi oñembopyahu ko mesa comanda</string>
+    <string name="try_again">Eha jey</string>
+    <string name="mesa_multiple_comandas_transfer_blocked">Ko mesa oguereko heta comanda. Eiporavo peteĩ comanda.</string>
 </resources>

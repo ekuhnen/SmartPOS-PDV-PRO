@@ -25,10 +25,12 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.plugpdv.pdv.realtime.RestaurantFreshness
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.plugpdv.pdv.repository.RestaurantOpsRepository
 
 @AndroidEntryPoint
 class MesaFragment : Fragment() {
     @Inject lateinit var restaurantFreshness: RestaurantFreshness
+    @Inject lateinit var restaurantOpsRepository: RestaurantOpsRepository
     private var _binding: FragmentMesaBinding? = null
     private val binding get() = _binding!!
     
@@ -62,7 +64,7 @@ class MesaFragment : Fragment() {
             if (table.status == Table.Status.AVAILABLE) {
                 showOpenTableDialog(table)
             } else {
-                openTableOrder(table)
+                discoverAndOpen(table)
             }
         }, { table ->
             showTransferDialog(table)
@@ -202,8 +204,15 @@ class MesaFragment : Fragment() {
             .setTitle(R.string.select_destination)
             .setItems(tableNumbers) { _, which ->
                 val destination = availableTables[which]
-                token?.let { 
-                    viewModel.transferTable(it, originTable, destination)
+                val auth = token ?: return@setItems
+                viewLifecycleOwner.lifecycleScope.launch {
+                    restaurantOpsRepository.discoverComandasForMesa(auth, originTable.id.orEmpty()).fold(
+                        onSuccess = { discovery ->
+                            if (discovery.comandas.size == 1) viewModel.transferTable(auth, originTable, destination)
+                            else Toast.makeText(requireContext(), R.string.mesa_multiple_comandas_transfer_blocked, Toast.LENGTH_LONG).show()
+                        },
+                        onFailure = { Toast.makeText(requireContext(), R.string.mesa_comandas_refresh_failed, Toast.LENGTH_LONG).show() }
+                    )
                 }
             }
             .setNegativeButton(R.string.cancel, null)
@@ -218,6 +227,47 @@ class MesaFragment : Fragment() {
             putExtra("ACCESS_TOKEN", token)
         }
         startActivity(intent)
+    }
+
+    private fun discoverAndOpen(table: Table) {
+        val auth = token ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            restaurantOpsRepository.discoverComandasForMesa(auth, table.id.orEmpty()).fold(
+                onSuccess = { discovery ->
+                    when (discovery.comandas.size) {
+                        0 -> { viewModel.fetchTables(auth); Toast.makeText(requireContext(), R.string.comanda_not_open, Toast.LENGTH_LONG).show() }
+                        1 -> openComanda(discovery.comandas.single(), table, false)
+                        else -> ComandaSelectorDialog.show(requireContext(), "Mesa ${discovery.mesaNumero}", discovery.comandas) { openComanda(it, table, true) }
+                    }
+                },
+                onFailure = { Toast.makeText(requireContext(), R.string.mesa_comandas_refresh_failed, Toast.LENGTH_LONG).show() }
+            )
+        }
+    }
+
+    private fun openComanda(item: com.plugpdv.pdv.models.ComandaDiscoveryItem, table: Table, revalidate: Boolean) {
+        val auth = token
+        if (revalidate && auth != null) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                restaurantOpsRepository.discoverComandasForMesa(auth, table.id.orEmpty()).fold(
+                    onSuccess = { discovery ->
+                        if (discovery.comandas.any { it.comandaId == item.comandaId }) openComandaDirect(item, table)
+                        else { viewModel.fetchTables(auth); Toast.makeText(requireContext(), R.string.comanda_not_open, Toast.LENGTH_LONG).show() }
+                    },
+                    onFailure = { Toast.makeText(requireContext(), R.string.mesa_comandas_refresh_failed, Toast.LENGTH_LONG).show() }
+                )
+            }
+        } else openComandaDirect(item, table)
+    }
+
+    private fun openComandaDirect(item: com.plugpdv.pdv.models.ComandaDiscoveryItem, table: Table) {
+        startActivity(Intent(requireActivity(), CommandOrderActivity::class.java).apply {
+            putExtra("COMMAND_CODE", item.comandaId)
+            putExtra("PHYSICAL_TABLE_ID", item.physicalMesaId ?: table.id)
+            putExtra("PHYSICAL_TABLE_NUMBER", item.mesaNumero ?: table.number)
+            putExtra("PHYSICAL_SECTOR_ID", item.setor ?: table.sectorId)
+            putExtra("ACCESS_TOKEN", token)
+        })
     }
 
     override fun onResume() {

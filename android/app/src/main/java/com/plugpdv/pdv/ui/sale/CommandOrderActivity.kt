@@ -108,20 +108,13 @@ class CommandOrderActivity : BaseActivity() {
         return when (item.itemId) {
             R.id.action_close_account -> {
                 val currentComanda = commandViewModel.comanda.value
-                val currentItems = commandViewModel.items.value ?: emptyList()
                 if (currentComanda != null && token != null && commandCode != null) {
-                    val fakeTableId = commandCode.hashCode()
-                    val fakeTable = com.plugpdv.pdv.models.Table(
-                        id = currentComanda.id,
-                        number = fakeTableId,
-                        comandaId = currentComanda.id,
-                        customerName = "",
-                        total = currentComanda.total,
-                        items = currentItems.toMutableList(),
-                        status = com.plugpdv.pdv.models.Table.Status.OCCUPIED
-                    )
-                    com.plugpdv.pdv.utils.TableManager.updateTable(fakeTable)
-                    com.plugpdv.pdv.ui.sale.TableCheckoutBottomSheet.newInstance(fakeTable.id, fakeTableId, token!!).show(supportFragmentManager, "checkout")
+                    val physicalTableId = intent.getStringExtra("PHYSICAL_TABLE_ID") ?: currentComanda.mesaId
+                    val physicalTableNumber = intent.getIntExtra("PHYSICAL_TABLE_NUMBER", currentComanda.numero ?: 0)
+                    val physicalSector = intent.getStringExtra("PHYSICAL_SECTOR_ID")
+                    com.plugpdv.pdv.ui.sale.TableCheckoutBottomSheet.newInstance(
+                        physicalTableId, physicalTableNumber, token!!, currentComanda.id, physicalSector
+                    ).show(supportFragmentManager, "checkout")
                 } else {
                     Toast.makeText(this, R.string.wait_for_loading, Toast.LENGTH_SHORT).show()
                 }

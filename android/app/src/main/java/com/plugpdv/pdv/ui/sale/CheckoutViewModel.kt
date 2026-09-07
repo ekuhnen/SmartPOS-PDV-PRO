@@ -120,6 +120,9 @@ class CheckoutViewModel @Inject constructor(
     private var sessionId: String? = null
     private var operatorId: String? = null
     private var operatorName: String? = null
+    private var selectedComandaId: String? = null
+
+    private fun effectiveComandaId(current: Table? = table): String? = selectedComandaId ?: current?.comandaId
 
     var comandaBaseCurrency: String? = null
     var moneyAuthorityLoaded: Boolean = false
@@ -140,7 +143,7 @@ class CheckoutViewModel @Inject constructor(
 
     /** Receipt identity is a backend snapshot; it is never composed from local profile data. */
     suspend fun fetchClosingReceipt(): ComandaReceiptResponse? = withContext(Dispatchers.IO) {
-        val cId = table?.comandaId ?: return@withContext null
+        val cId = effectiveComandaId() ?: return@withContext null
         val auth = token ?: return@withContext null
         runCatching { apiService.getComandaReceipt("Bearer $auth", cId) }
             .onFailure { Log.w("CheckoutViewModel", "Closing receipt identity unavailable", it) }
@@ -172,11 +175,13 @@ class CheckoutViewModel @Inject constructor(
         sessionId: String?,
         opId: String?,
         opName: String?
+        , selectedComandaId: String? = null
     ) {
         this.token = token
         this.sessionId = sessionId
         this.operatorId = opId
         this.operatorName = opName
+        this.selectedComandaId = selectedComandaId
 
         val serviceFeeConfig = ServiceFeeManager.getConfig(context)
         _uiState.value = _uiState.value.copy(
@@ -216,7 +221,7 @@ class CheckoutViewModel @Inject constructor(
 
             // 3. Load & evaluate local snapshot
             val localSnapshot = loadLocalSnapshot(currentTable)
-            val cId = currentTable.comandaId.orEmpty()
+            val cId = effectiveComandaId(currentTable).orEmpty()
             val localAuthorityDecision = if (localSnapshot != null && cId.isNotEmpty()) {
                 ComandaSnapshotAuthorityPolicy.evaluate(localSnapshot, cId, context)
             } else {
@@ -233,7 +238,7 @@ class CheckoutViewModel @Inject constructor(
         // Listen for checkout sync events
         viewModelScope.launch {
             outboxSyncManager.checkoutResultEvents.collect { event ->
-                val cId = table?.comandaId
+                val cId = effectiveComandaId()
                 if (cId != null && event.comandaId == cId) {
                     if (event.terminalFailure) {
                         _uiState.value = _uiState.value.copy(
@@ -302,7 +307,7 @@ class CheckoutViewModel @Inject constructor(
     }
 
     suspend fun checkDurablePaymentBlockers(currentTable: Table): DurableBlockerResult = withContext(Dispatchers.IO) {
-        val cId = currentTable.comandaId ?: return@withContext DurableBlockerResult()
+        val cId = effectiveComandaId(currentTable) ?: return@withContext DurableBlockerResult()
 
         val recentOps = outboxDao.getRecentOperationsForGroup(cId)
             .filter { it.operationType == "COMANDA_CHECKOUT_COMMIT" }
@@ -380,7 +385,7 @@ class CheckoutViewModel @Inject constructor(
     }
 
     private suspend fun loadLocalSnapshot(currentTable: Table): ComandaSnapshotEntity? = withContext(Dispatchers.IO) {
-        val cId = currentTable.comandaId ?: return@withContext null
+        val cId = effectiveComandaId(currentTable) ?: return@withContext null
         val tenantId = TenantBindingStore.getActiveTenantId(context) ?: return@withContext null
         comandaSnapshotRepository.getByServerComandaId(tenantId, cId)
     }
@@ -534,7 +539,7 @@ class CheckoutViewModel @Inject constructor(
     fun fetchComandaPayments(onRefreshed: (() -> Unit)? = null) {
         val currentTable = table ?: return
         val currentToken = token ?: return
-        val cId = currentTable.comandaId ?: return
+        val cId = effectiveComandaId(currentTable) ?: return
         viewModelScope.launch {
             val durableBlock = checkDurablePaymentBlockers(currentTable)
             val localSnapshot = loadLocalSnapshot(currentTable)
@@ -951,7 +956,7 @@ class CheckoutViewModel @Inject constructor(
     private fun prequotePayableItems(items: List<TableItem>) {
         val currentTable = table ?: return
         val authToken = token ?: return
-        val cId = currentTable.comandaId ?: return
+        val cId = effectiveComandaId(currentTable) ?: return
         items.filter { it.id != null && it.quantity > it.paidQuantity }.forEach { item ->
             val id = requireNotNull(item.id)
             if (itemQuoteCache.containsKey(quoteKey(id, 1))) return@forEach
@@ -972,7 +977,7 @@ class CheckoutViewModel @Inject constructor(
     private fun loadItemsPaymentState() {
         val currentTable = table ?: return
         val currentToken = token ?: return
-        val cId = currentTable.comandaId ?: return
+        val cId = effectiveComandaId(currentTable) ?: return
         val hadReadyOverlay = _uiState.value.itemPaymentStateReady
         itemsPaymentStateLoaded = hadReadyOverlay
         _uiState.value = _uiState.value.copy(itemPaymentStateRefreshing = true, itemPaymentStateError = false)
@@ -1079,7 +1084,7 @@ class CheckoutViewModel @Inject constructor(
     ) {
         val currentTable = table ?: return
         val authToken = token ?: return
-        val comandaId = currentTable.comandaId ?: return
+        val comandaId = effectiveComandaId(currentTable) ?: return
         val currency = CurrencyManager.getInstance().selectedCurrency
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1134,7 +1139,7 @@ class CheckoutViewModel @Inject constructor(
             apiService.quoteComandaItems(
                 "Bearer $authToken",
                 PaymentQuoteRequest(
-                    comandaId = requireNotNull(currentTable.comandaId),
+                    comandaId = requireNotNull(effectiveComandaId(currentTable)),
                     items = allocations,
                     forma = method.apiValue,
                     moeda = CurrencyManager.getInstance().selectedCurrency
@@ -1179,7 +1184,7 @@ class CheckoutViewModel @Inject constructor(
 
     fun overrideServiceFee(kind: String, value: Double = 0.0, onFinished: ((Boolean) -> Unit)? = null) {
         val currentTable = table
-        val comandaId = currentTable?.comandaId
+        val comandaId = effectiveComandaId(currentTable)
         if (!comandaId.isNullOrBlank() && token != null) {
             setAuthoritativeServiceFee(comandaId, kind, value, onFinished)
             return
@@ -1468,7 +1473,7 @@ class CheckoutViewModel @Inject constructor(
         val sfKind2 = if (manualAmount != null || suppliedQuote != null) null else (_uiState.value.serviceFeeKind ?: if (sfAmount2 > 0) "fixed" else null)
 
         return CommandCheckoutCommitRequest(
-            comandaId = currentTable.comandaId ?: "",
+            comandaId = effectiveComandaId(currentTable) ?: "",
             mesaId = currentTable.id,
             forma = method.apiValue,
             valor = quote.transactionAmount,

@@ -68,6 +68,21 @@ interface PosApiService {
     @GET("api-mesas")
     suspend fun getMesas(@Header("Authorization") token: String): RestaurantResponse
 
+    @GET("api-restaurant-ops")
+    suspend fun getRestaurantOpsTables(
+        @Header("Authorization") token: String,
+        @Query("view") view: String = "tables",
+        @Query("mesa_id") mesaId: String? = null
+    ): RestaurantOpsTablesResponse
+
+    @GET("api-restaurant-ops")
+    suspend fun searchRestaurantOps(
+        @Header("Authorization") token: String,
+        @Query("view") view: String = "search",
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 100
+    ): RestaurantOpsSearchResponse
+
     @POST("api-comandas")
     suspend fun manageComanda(
         @Header("Authorization") token: String,
