@@ -18,9 +18,16 @@ import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.CurrencyManager
 import dagger.hilt.android.AndroidEntryPoint
 import java.math.BigDecimal
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.plugpdv.pdv.realtime.RestaurantFreshness
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class TableOrderActivity : BaseActivity() {
+    @Inject lateinit var restaurantFreshness: RestaurantFreshness
     private lateinit var binding: ActivityTableOrderBinding
     private val saleViewModel: SaleViewModel by viewModels()
     private val tableOrderViewModel: TableOrderViewModel by viewModels()
@@ -80,6 +87,13 @@ class TableOrderActivity : BaseActivity() {
 
         saleViewModel.loadCatalog(token!!)
         tableOrderViewModel.init(tableId, tableNumber, sectorId, token!!)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                restaurantFreshness.whileVisible { authToken ->
+                    tableOrderViewModel.refreshRestaurantRead(authToken)
+                }
+            }
+        }
 
         binding.btnUpdateTable.setOnClickListener {
             table?.calculateTotal()

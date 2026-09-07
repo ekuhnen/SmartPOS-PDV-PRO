@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.map
 import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.plugpdv.pdv.realtime.RestaurantReadSessionGuard
 
 @Singleton
 class TableReadRepository @Inject constructor(
@@ -25,6 +28,7 @@ class TableReadRepository @Inject constructor(
     private val catalogDao: CatalogDao,
     private val comandaSnapshotDao: ComandaSnapshotDao? = null
 ) {
+    private val refreshMutex = Mutex()
 
     companion object {
         private const val TAG = "TableReadRepository"
@@ -126,8 +130,17 @@ class TableReadRepository @Inject constructor(
      * On network/parsing failure or invalid topology, existing Room tables are preserved untouched.
      */
     suspend fun refreshTables(token: String): Result<Unit> {
+        val sessionGuard = RestaurantReadSessionGuard(context, token)
+        return refreshMutex.withLock {
+            sessionGuard.check()
+            readCanonicalTables(token, sessionGuard)
+        }
+    }
+
+    private suspend fun readCanonicalTables(token: String, sessionGuard: RestaurantReadSessionGuard): Result<Unit> {
         return try {
             val response = retryIO { apiService.getMesas("Bearer $token") }
+            sessionGuard.check()
             val setores = response.setores
             if (setores == null) {
                 Log.w(TAG, "getMesas returned null setores; preserving existing Room cache")
@@ -216,6 +229,7 @@ class TableReadRepository @Inject constructor(
                 return Result.failure(IllegalStateException("Invalid topology: all table IDs were invalid"))
             }
 
+            sessionGuard.check()
             tableDao.replaceAll(entities)
             Result.success(Unit)
         } catch (e: kotlinx.coroutines.CancellationException) {

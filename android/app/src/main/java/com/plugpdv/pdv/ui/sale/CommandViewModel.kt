@@ -17,6 +17,10 @@ import android.content.Context
 import com.plugpdv.pdv.utils.ComandaItemHydrator
 import com.plugpdv.pdv.utils.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.plugpdv.pdv.realtime.RestaurantReadSessionGuard
 
 internal data class CommandItemMoney(val price: Double?, val currency: String?)
 
@@ -34,6 +38,11 @@ class CommandViewModel @Inject constructor(
     private val catalogDao: com.plugpdv.pdv.database.CatalogDao,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    private val readMutex = Mutex()
+
+    suspend fun refreshRestaurantRead(token: String, code: String) {
+        readComanda(token, _comanda.value?.id ?: code, allowLookup = false)
+    }
 
     private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
         runCatching { context.getString(resource, *args) }.getOrDefault(fallbackCode)
@@ -61,13 +70,20 @@ class CommandViewModel @Inject constructor(
     }
 
     fun fetchComanda(token: String, code: String) {
-        viewModelScope.launch {
+        viewModelScope.launch { readComanda(token, code) }
+    }
+
+    private suspend fun readComanda(token: String, code: String, allowLookup: Boolean = true) {
+        readMutex.withLock {
+            val sessionGuard = RestaurantReadSessionGuard(context, token)
             try {
+                sessionGuard.check()
                 _isLoading.value = true
                 _error.value = null
                 _notFound.value = null
                 
                 val response = retryIO { apiService.getComandaDetail("Bearer $token", code) }
+                sessionGuard.check()
                 _comanda.value = response
                 
                 // Map DTO items to TableItem for reuse in UI
@@ -106,11 +122,14 @@ class CommandViewModel @Inject constructor(
                         observation = obs
                     })
                 }
+                sessionGuard.check()
                 _items.value = uiItems
                 
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("CommandViewModel", "Failed to fetch comanda", e)
-                if (e is retrofit2.HttpException && e.code() == 404) {
+                if (allowLookup && e is retrofit2.HttpException && e.code() == 404) {
                     try {
                         val codeInt = code.toIntOrNull()
                         
@@ -121,7 +140,7 @@ class CommandViewModel @Inject constructor(
                         }
                         if (foundComanda != null) {
                             fetchComanda(token, foundComanda.id)
-                            return@launch
+                            return@withLock
                         }
 
                         // 2. Fallback to searching inside tables/mesas list
@@ -131,7 +150,7 @@ class CommandViewModel @Inject constructor(
                         }
                         if (foundMesa != null && !foundMesa.comanda_id.isNullOrEmpty()) {
                             fetchComanda(token, foundMesa.comanda_id)
-                            return@launch
+                            return@withLock
                         }
                     } catch (e2: Exception) {
                         Log.e("CommandViewModel", "Fallback search failed", e2)

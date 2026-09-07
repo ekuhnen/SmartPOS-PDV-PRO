@@ -10,7 +10,7 @@ import android.content.Context
  * enquanto protege contra vazamento de dados caso ocorra troca de tenant.
  */
 object TenantBindingStore {
-    private const val PREFS_NAME = "tenant_binding_prefs"
+    internal const val PREFS_NAME = "tenant_binding_prefs"
     private const val KEY_ACTIVE_TENANT_ID = "active_tenant_id"
     private const val KEY_LAST_BOUND_AT = "last_bound_at"
 

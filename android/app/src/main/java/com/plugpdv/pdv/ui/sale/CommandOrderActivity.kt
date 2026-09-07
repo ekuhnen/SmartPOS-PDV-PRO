@@ -14,9 +14,16 @@ import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.CurrencyManager
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.plugpdv.pdv.realtime.RestaurantFreshness
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class CommandOrderActivity : BaseActivity() {
+    @Inject lateinit var restaurantFreshness: RestaurantFreshness
     private lateinit var binding: ActivityCommandOrderBinding
     private val saleViewModel: SaleViewModel by viewModels()
     private val commandViewModel: CommandViewModel by viewModels()
@@ -58,6 +65,13 @@ class CommandOrderActivity : BaseActivity() {
         }
 
         binding.btnAction.setText(R.string.update_comanda)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                restaurantFreshness.whileVisible { authToken ->
+                    commandViewModel.refreshRestaurantRead(authToken, commandCode!!)
+                }
+            }
+        }
         binding.btnAction.setOnClickListener {
             finish()
         }

@@ -19,9 +19,16 @@ import com.plugpdv.pdv.databinding.FragmentMesaBinding
 import com.plugpdv.pdv.models.Table
 import androidx.recyclerview.widget.LinearLayoutManager
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.plugpdv.pdv.realtime.RestaurantFreshness
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MesaFragment : Fragment() {
+    @Inject lateinit var restaurantFreshness: RestaurantFreshness
     private var _binding: FragmentMesaBinding? = null
     private val binding get() = _binding!!
     
@@ -42,6 +49,11 @@ class MesaFragment : Fragment() {
         
         setupRecyclerViews()
         observeViewModel()
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                restaurantFreshness.whileVisible()
+            }
+        }
     }
 
     private fun setupRecyclerViews() {

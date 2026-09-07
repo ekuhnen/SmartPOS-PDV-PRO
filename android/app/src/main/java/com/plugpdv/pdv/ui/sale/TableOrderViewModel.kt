@@ -28,6 +28,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import retrofit2.HttpException
 import javax.inject.Inject
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.plugpdv.pdv.realtime.RestaurantReadSessionGuard
 
 enum class ReadProvenance {
     INITIAL,
@@ -51,6 +54,15 @@ class TableOrderViewModel @Inject constructor(
     private val tableReadRepository: TableReadRepository,
     private val comandaSnapshotRepository: ComandaSnapshotRepository
 ) : ViewModel() {
+    private val readMutex = Mutex()
+
+    /** Uses exactly the existing canonical detail/cache/allocation read path. */
+    suspend fun refreshRestaurantRead(authToken: String) {
+        readMutex.withLock {
+            token = authToken
+            readCanonicalTable(showLoading = false)
+        }
+    }
 
     private fun localized(@androidx.annotation.StringRes resource: Int, fallbackCode: String, vararg args: Any): String =
         runCatching { context.getString(resource, *args) }.getOrDefault(fallbackCode)
@@ -300,6 +312,10 @@ class TableOrderViewModel @Inject constructor(
     }
 
     private suspend fun performSyncTable(isNewlyOpened: Boolean = false, showLoading: Boolean = true) {
+        readMutex.withLock { readCanonicalTable(isNewlyOpened, showLoading) }
+    }
+
+    private suspend fun readCanonicalTable(isNewlyOpened: Boolean = false, showLoading: Boolean = true) {
         if (mutationQueue.isNotEmpty() || mutationWorker?.isActive == true) {
             Log.d("PERF_MESA", "reconciliation_skipped_stale=true queue_depth=${mutationQueue.size}")
             return
@@ -307,8 +323,10 @@ class TableOrderViewModel @Inject constructor(
         val currentTable = _table.value ?: return
         val currentToken = token ?: return
         val refreshGeneration = mutationGeneration
+        val sessionGuard = RestaurantReadSessionGuard(context, currentToken)
 
         try {
+            sessionGuard.check()
             _isRefreshing.value = true
             if (showLoading) _isLoading.value = true
             val refreshStart = SystemClock.elapsedRealtime()
@@ -317,6 +335,7 @@ class TableOrderViewModel @Inject constructor(
             if (!cId.isNullOrEmpty()) {
                 val detailStart = SystemClock.elapsedRealtime()
                 val detail = retryIO { apiService.getComandaDetail("Bearer $currentToken", cId) }
+                sessionGuard.check()
                 Log.d("PERF_MESA", "reconciliation_http_ms=${SystemClock.elapsedRealtime() - detailStart}")
                 val snapshot = comandaSnapshotRepository.cacheRemoteDetail(detail, currentTable)
 
@@ -340,12 +359,15 @@ class TableOrderViewModel @Inject constructor(
                         Log.d("PERF_MESA", "snapshot_apply_ms=${SystemClock.elapsedRealtime() - snapshotStart}")
                         try {
                             applyPaymentStateOverlay(candidateTable, currentToken, cId)
+                            sessionGuard.check()
                             if (mutationQueue.isEmpty() && mutationGeneration == refreshGeneration) {
                                 _table.value = candidateTable
                                 Log.d("PERF_MESA", "remote_diff_count=${kotlin.math.abs(candidateTable.items.size - previousItemCount)}")
                             } else {
                                 Log.d("PERF_MESA", "reconciliation_skipped_stale=true")
                             }
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.w("TableOrderViewModel", "Payment allocation overlay unavailable", e)
                             // Keep the last authoritative combined state intact.

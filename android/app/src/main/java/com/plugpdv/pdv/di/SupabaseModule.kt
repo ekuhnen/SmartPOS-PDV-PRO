@@ -13,6 +13,7 @@ import io.github.jan.supabase.gotrue.Auth
 import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.logging.LogLevel
 import io.ktor.client.engine.okhttp.OkHttp
 import javax.inject.Singleton
 
@@ -31,6 +32,8 @@ object SupabaseModule {
             supabaseUrl = SUPABASE_URL,
             supabaseKey = SUPABASE_ANON_KEY
         ) {
+            // SDK debug join logs contain access_token. Never enable payload logging in the APK.
+            defaultLogLevel = LogLevel.ERROR
             install(Postgrest)
             install(Realtime)
             install(Functions)
