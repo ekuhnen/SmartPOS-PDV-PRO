@@ -11,6 +11,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.plugpdv.pdv.R
@@ -127,6 +128,13 @@ object PrinterHelper {
             timeZone = java.util.TimeZone.getTimeZone("UTC")
         }.format(issuedAt)
         val cm = CurrencyManager.getInstance()
+        val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        val merchantName = sequenceOf("MERCHANT_NAME", "STORE_NAME", "TRADE_NAME")
+            .mapNotNull { prefs.getString(it, null)?.trim()?.takeIf(String::isNotEmpty) }
+            .firstOrNull() ?: ctx.applicationInfo.loadLabel(ctx.packageManager).toString()
+        val terminalName = sequenceOf("TERMINAL_LABEL", "TERMINAL_NAME", "DEVICE_NAME")
+            .mapNotNull { prefs.getString(it, null)?.trim()?.takeIf(String::isNotEmpty) }
+            .firstOrNull() ?: Build.MODEL
 
         if (printer != null) {
             try {
@@ -141,44 +149,50 @@ object PrinterHelper {
 
                     for (i in 1..totalItemQty) {
                         val ticketQty = 1
-                        val ticketSubtotal = unitPrice * ticketQty
 
                         // --- Cabeçalho ---
                         printer.setAlignment(1)
                         printer.setBold(true)
                         printer.setFontSize(22f)
-                        printer.printText("PlugPDV\n")
+                        printer.printText("$merchantName\n")
                         printer.setFontSize(18f)
                         printer.setBold(false)
                         printer.printText("${ctx.getString(R.string.print_pickup_ticket)}\n")
+                        printer.printText("${ctx.getString(R.string.print_present_at_counter)}\n")
                         printer.setAlignment(0)
                         printer.printText("${ctx.getString(R.string.print_date_label)} $dateStr\n")
+                        printer.printText("${ctx.getString(R.string.print_terminal_label)} $terminalName\n")
                         if (!operatorName.isNullOrBlank()) {
                             printer.printText("${ctx.getString(R.string.print_operator_label)} $operatorName\n")
                         }
+                        val pickupCode = DirectSalePickupCode.forTicket(saleId, productId, i)
+                        printer.printText("${ctx.getString(R.string.print_transaction_label)} $saleId\n")
+                        printer.printText("${ctx.getString(R.string.print_pickup_code_label)} $pickupCode\n")
+                        printer.printText("--------------------------------\n")
 
                         // --- Detalhes do Item ---
                         printer.setAlignment(1)
                         printer.setBold(true)
                         printer.sendRaw(byteArrayOf(0x1D, 0x42, 1)) // Inverte para fundo preto
                         printer.setFontSize(24f)
-                        printer.printText(" $productName \n")
+                        wrapThermalText(productName).forEach { line -> printer.printText(" $line \n") }
                         printer.setFontSize(18f)
                         printer.sendRaw(byteArrayOf(0x1D, 0x42, 0)) // Volta para fundo branco
                         printer.setBold(false)
                         
                         printer.setAlignment(0)
                         val copyStr = ctx.getString(R.string.print_copy_via, i, totalItemQty)
-                        val txUnitPrice = cm.fromBrl(unitPrice, currency)
+                        val productCurrency = item.product.price_currency?.takeIf { it.isNotBlank() }
+                        val txUnitPrice = if (productCurrency.equals(currency, ignoreCase = true)) unitPrice else cm.fromBrl(unitPrice, currency)
                         val unitFormatted = cm.formatExplicit(txUnitPrice, currency)
-                        val subtotalFormatted = cm.formatExplicit(cm.convert(ticketSubtotal), currency)
-                        printer.printText("${ctx.getString(R.string.print_qty_label)} $ticketQty ($copyStr)  ${ctx.getString(R.string.print_unit_price_label)} $unitFormatted\n")
+                        val subtotalFormatted = cm.formatExplicit(txUnitPrice * ticketQty, currency)
+                        printer.printText("${ctx.getString(R.string.print_qty_label)} $ticketQty  ${ctx.getString(R.string.print_unit_price_label)} $unitFormatted\n")
                         printer.printText("${ctx.getString(R.string.print_subtotal_label)} $subtotalFormatted\n")
+                        printer.printText("$copyStr\n")
 
                         // --- QR Code Detalhado ---
                         // Preserve explicit product money. Legacy products without a currency
                         // reuse the already prepared numeric ticket price; the codec does no FX.
-                        val productCurrency = item.product.price_currency?.takeIf { it.isNotBlank() }
                         val qrUnitPrice = if (productCurrency.equals(currency, ignoreCase = true)) {
                             unitPrice
                         } else {
@@ -210,13 +224,16 @@ object PrinterHelper {
 
                         // --- Rodapé do Item ---
                         printer.setAlignment(0)
+                        printer.printText("${ctx.getString(R.string.print_pickup_code_label)} $pickupCode\n")
+                        printer.printText("${ctx.getString(R.string.print_transaction_label)} $saleId\n")
+                        printer.printText("--------------------------------\n")
                         printer.setBold(true)
                         printer.printText("${ctx.getString(R.string.print_total_purchase_label)} ${cm.formatExplicit(total, currency)}\n")
                         printer.setBold(false)
                         printer.printText("${ctx.getString(R.string.print_payment_method_label)} ${localizedPaymentMethod(ctx, paymentMethod)}\n")
                         
                         printer.setAlignment(1)
-                        printer.printText("${ctx.getString(R.string.print_present_at_counter)}\n")
+                        printer.printText(ctx.getString(R.string.print_thank_you) + "\n")
                         
                         // Espaço para corte entre os tickets
                         printer.lineFeed(2)
@@ -237,6 +254,19 @@ object PrinterHelper {
     /**
      * Imprime relatório de auditoria completo (online/offline, saldos por mesa, pagamento, moeda)
      */
+    private fun wrapThermalText(value: String, width: Int = 32): List<String> {
+        if (value.length <= width) return listOf(value)
+        val lines = mutableListOf<String>()
+        var remaining = value.trim()
+        while (remaining.length > width) {
+            val cut = remaining.lastIndexOf(' ', width).takeIf { it > 0 } ?: width
+            lines += remaining.substring(0, cut).trimEnd()
+            remaining = remaining.substring(cut).trimStart()
+        }
+        if (remaining.isNotEmpty()) lines += remaining
+        return lines
+    }
+
     @JvmStatic
     fun printAuditReport(
         context: Context,

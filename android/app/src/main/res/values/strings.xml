@@ -114,6 +114,8 @@
     <string name="print_pickup_ticket">CUPOM DE RETIRADA</string>
     <string name="print_date_label">DATA:</string>
     <string name="print_operator_label">OPERADOR:</string>
+    <string name="print_terminal_label">PDV:</string>
+    <string name="print_pickup_code_label">CÓDIGO:</string>
     <string name="print_qty_label">QTD:</string>
     <string name="print_copy_via">Via %1$d/%2$d</string>
     <string name="print_unit_price_label">UNIT:</string>

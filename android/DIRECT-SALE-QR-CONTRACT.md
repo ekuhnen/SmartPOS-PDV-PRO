@@ -105,3 +105,13 @@ operator/date and pickup instructions. Existing legacy human-price conversions a
 outside this QR-only patch. PDV1 does not add any implicit conversion.
 
 PHYSICAL_VALIDATION: NOT_RUN_BY_CODEX.
+
+## Human-readable pickup reference
+
+Each redeemable unit also prints an informational manual pickup reference
+above and below the QR in the form `XXXX-XXXX`. It is derived from the first
+8 uppercase hexadecimal characters of SHA-256 over the UTF-8 string
+`PDV1|<sale_id>|<product_id>|<copy>`, formatted as `XXXX-XXXX`.
+The copy number is 1-based and makes each unit distinct. This reference is
+for visual support when scanning is unavailable; it is not authentication,
+payment authority, or a replacement for the canonical `sale_id`.
