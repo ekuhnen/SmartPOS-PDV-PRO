@@ -18,6 +18,7 @@ import com.google.gson.Gson
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.CurrencyManager
+import com.plugpdv.pdv.utils.DirectPaymentReconciliationStore
 import com.plugpdv.pdv.utils.PaymentResultStore
 import com.plugpdv.pdv.utils.OutboxSyncManager
 import com.plugpdv.pdv.outbox.SaleSyncScheduler
@@ -238,7 +239,7 @@ class PaymentHandlerActivity : BaseActivity() {
                         isRetriable = false
                     )
                 }
-                appNotFoundResult(e.message ?: "Erro desconhecido")
+                appNotFoundResult(e.message ?: "Erro desconhecido", existingAttempt.reference)
             }
         }
     }
@@ -336,12 +337,13 @@ class PaymentHandlerActivity : BaseActivity() {
                         isRetriable = false
                     )
                 }
-                appNotFoundResult(e.message ?: "Erro desconhecido")
+                appNotFoundResult(e.message ?: "Erro desconhecido", requestId)
             }
         }
     }
 
-    private fun appNotFoundResult(errorDetail: String = "") {
+    private fun appNotFoundResult(errorDetail: String = "", requestId: String? = null) {
+        PaymentResultStore.setResult(PaymentResultStore.PaymentResult("FAILED_TO_START", null, null, errorDetail, requestId))
         val msg = "Aplicativo de pagamento não encontrado. $errorDetail"
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         val result = Intent().apply {
@@ -368,8 +370,6 @@ class PaymentHandlerActivity : BaseActivity() {
             val existingAttempt = withContext(Dispatchers.IO) {
                 if (!requestId.isNullOrEmpty()) {
                     paymentAttemptDao.getByReference(requestId)
-                } else if (tableNum != null) {
-                    paymentAttemptDao.getLatestPendingForTable(tableNum.toIntOrNull() ?: -1)
                 } else null
             }
 
@@ -386,6 +386,23 @@ class PaymentHandlerActivity : BaseActivity() {
             }
 
             // REGRA DE PRECEDÊNCIA: APPROVED nunca regride para PENDING/UNKNOWN/REJECTED/CANCELLED
+            val terminalAttempt = existingAttempt
+            if (isApproved && terminalAttempt != null && terminalAttempt.status in setOf(PaymentAttemptEntity.STATUS_CANCELLED, PaymentAttemptEntity.STATUS_REJECTED)) {
+                withContext(Dispatchers.IO) {
+                    paymentAttemptDao.update(terminalAttempt.copy(
+                        status = PaymentAttemptEntity.STATUS_UNKNOWN,
+                        completedAt = System.currentTimeMillis(),
+                        paymentAppPaymentId = paymentId ?: existingAttempt.paymentAppPaymentId,
+                        rawCallbackUri = uri.toString(),
+                        statusMessage = "LATE_APPROVED_AFTER_${terminalAttempt.status}"
+                    ))
+                }
+                DirectPaymentReconciliationStore.setMarker(this@PaymentHandlerActivity, "LATE_APPROVED_AFTER_TERMINAL", paymentId, method)
+                PaymentResultStore.setResult(PaymentResultStore.PaymentResult("UNKNOWN", paymentId, method, "LATE_APPROVED_AFTER_TERMINAL", requestId))
+                deliverFailedResult("UNKNOWN", "LATE_APPROVED_AFTER_TERMINAL", tableNum, tableId)
+                return@launch
+            }
+
             if (existingAttempt?.status == "APPROVED" && !isApproved) {
                 Log.w(TAG, "Tentativa K=$requestId já está APPROVED. Ignorando regressão para $normalizedStatus.")
                 deliverApprovedResult(
@@ -479,9 +496,34 @@ class PaymentHandlerActivity : BaseActivity() {
                     ),
                     tableNum = tableNum
                 )
-            } else {
-                // Cancelado ou recusado explicitamente pelo app de pagamento
+            } else if ((isCancelled || isRejected) && existingAttempt != null && !requestId.isNullOrEmpty()) {
+                // Explicit terminal result is retryable only when correlated to a durable attempt.
+                PaymentResultStore.setResult(
+                    PaymentResultStore.PaymentResult(
+                        status = normalizedStatus,
+                        paymentId = paymentId,
+                        method = method,
+                        message = message,
+                        requestId = existingAttempt?.reference ?: requestId
+                    )
+                )
                 deliverFailedResult(rawStatus, message, tableNum, tableId)
+            } else {
+                // A terminal-looking callback without correlation is still UNKNOWN.
+                showUndeterminedPaymentDialog(
+                    attempt = existingAttempt ?: PaymentAttemptEntity(
+                        reference = requestId ?: "UNKNOWN",
+                        idempotencyKey = requestId ?: "UNKNOWN",
+                        nonce = "",
+                        amount = 0L,
+                        currency = CurrencyManager.getInstance().selectedCurrency,
+                        status = "UNKNOWN",
+                        startedAt = System.currentTimeMillis(),
+                        tableNumber = tableNum?.toIntOrNull(),
+                        statusMessage = "CALLBACK_WITHOUT_CORRELATION"
+                    ),
+                    tableNum = tableNum
+                )
             }
         }
     }

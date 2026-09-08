@@ -221,4 +221,6 @@
     <string name="mesa_comandas_refresh_failed">Could not refresh the tabs for this table</string>
     <string name="try_again">Try again</string>
     <string name="mesa_multiple_comandas_transfer_blocked">This table has multiple tabs. Select a tab to continue.</string>
+    <string name="payment_cancelled_retry">Payment canceled. You can try again.</string>
+    <string name="start_payment_error_generic">Could not start payment. Try again.</string>
 </resources>

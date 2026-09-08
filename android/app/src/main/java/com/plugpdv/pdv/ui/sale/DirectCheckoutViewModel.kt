@@ -255,6 +255,16 @@ class DirectCheckoutViewModel @Inject constructor(
         }
     }
 
+    /** Releases only explicit terminal non-payment results; UNKNOWN/PENDING remain blocked. */
+    fun releaseExplicitTerminalPayment(status: String) {
+        if (status.uppercase() !in setOf("CANCELLED", "CANCELED", "REJECTED", "DECLINED", "FAILED_TO_START")) return
+        _isPaymentBlocked.value = false
+        _canResumeSameOperation.value = false
+        _requiresReconciliation.value = false
+        _blockReason.value = null
+        _unresolvedPaymentState.value = null
+    }
+
     suspend fun prepareDirectSaleOperation(
         quote: SelectedPaymentQuote,
         method: String,

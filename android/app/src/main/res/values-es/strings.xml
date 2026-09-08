@@ -312,4 +312,6 @@
     <string name="mesa_comandas_refresh_failed">No se pudieron actualizar las comandas de esta mesa</string>
     <string name="try_again">Intentar de nuevo</string>
     <string name="mesa_multiple_comandas_transfer_blocked">Esta mesa tiene varias comandas. Seleccione una comanda para continuar.</string>
+    <string name="payment_cancelled_retry">Pago cancelado. Puedes intentarlo de nuevo.</string>
+    <string name="start_payment_error_generic">No se pudo iniciar el pago. Inténtalo de nuevo.</string>
 </resources>

@@ -100,8 +100,8 @@ class CheckoutActivity : BaseActivity() {
      */
     internal fun checkPendingPaymentResult() {
         if (paymentProcessed) return
-        val result = PaymentResultStore.consume()
-        if (result != null && result.status.equals("APPROVED", ignoreCase = true)) {
+        val result = PaymentResultStore.consume() ?: return
+        if (result.status.equals("APPROVED", ignoreCase = true)) {
             Log.d("CheckoutActivity", "Pagamento aprovado recebido via PaymentResultStore. method=${result.method}, requestId=${result.requestId}")
             val operationId = result.requestId ?: pendingDirectSaleOperationId
             if (!operationId.isNullOrEmpty()) {
@@ -118,6 +118,32 @@ class CheckoutActivity : BaseActivity() {
                 )
                 updatePayButtonState()
                 Toast.makeText(this, R.string.payment_requires_reconciliation, Toast.LENGTH_LONG).show()
+            }
+        } else {
+            when (result.status.uppercase()) {
+                "CANCELLED", "CANCELED" -> {
+                    paymentProcessed = false
+                    viewModel.releaseExplicitTerminalPayment(result.status)
+                    Toast.makeText(this, R.string.payment_cancelled_retry, Toast.LENGTH_LONG).show()
+                    updatePayButtonState()
+                }
+                "REJECTED", "DECLINED" -> {
+                    paymentProcessed = false
+                    viewModel.releaseExplicitTerminalPayment(result.status)
+                    Toast.makeText(this, getString(R.string.payment_not_approved, result.message ?: result.status), Toast.LENGTH_LONG).show()
+                    updatePayButtonState()
+                }
+                "FAILED_TO_START" -> {
+                    paymentProcessed = false
+                    viewModel.releaseExplicitTerminalPayment(result.status)
+                    Toast.makeText(this, R.string.start_payment_error_generic, Toast.LENGTH_LONG).show()
+                    updatePayButtonState()
+                }
+                else -> {
+                    // UNKNOWN/PENDING and malformed statuses remain governed by durable recovery.
+                    viewModel.restoreDurableRecovery()
+                    updatePayButtonState()
+                }
             }
         }
     }

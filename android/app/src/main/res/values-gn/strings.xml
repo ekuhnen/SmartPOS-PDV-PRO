@@ -140,4 +140,6 @@
     <string name="mesa_comandas_refresh_failed">Ndaikatúi oñembopyahu ko mesa comanda</string>
     <string name="try_again">Eha jey</string>
     <string name="mesa_multiple_comandas_transfer_blocked">Ko mesa oguereko heta comanda. Eiporavo peteĩ comanda.</string>
+    <string name="payment_cancelled_retry">Jehepyme’ẽ jejoko. Ikatu eñeha’ã jey.</string>
+    <string name="start_payment_error_generic">Ndaikatúi oñepyrũ jehepyme’ẽ. Eñeha’ã jey.</string>
 </resources>
