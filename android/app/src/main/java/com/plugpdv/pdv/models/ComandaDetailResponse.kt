@@ -9,7 +9,7 @@ data class ComandaDetailResponse(
     @SerializedName("mesa_id") val mesaId: String?,
     @SerializedName("status") val status: String,
     @SerializedName("numero") val numero: Int? = null,
-    @SerializedName("nome_cliente") val nomeCliente: String? = null,
+    @SerializedName(value = "display_name", alternate = ["nome_cliente", "nome", "apelido"]) val nomeCliente: String? = null,
     @SerializedName(value = "total_comanda", alternate = ["total"]) val total: Double,
     @SerializedName(value = "total_pago", alternate = ["total_paid", "paid_amount"]) val totalPago: Double = 0.0,
     @SerializedName("total_pago_base") val totalPagoBase: Double? = null,

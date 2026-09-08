@@ -11,7 +11,7 @@ data class ComandasListResponse(
         @SerializedName("mesa_id") val mesaId: String?,
         val status: String,
         val numero: Int?,
-        @SerializedName("nome_cliente") val nomeCliente: String?,
+        @SerializedName(value = "display_name", alternate = ["nome_cliente", "nome", "apelido"]) val nomeCliente: String?,
         val observacao: String?
     )
 }

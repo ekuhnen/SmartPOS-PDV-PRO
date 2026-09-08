@@ -7,6 +7,15 @@ import org.junit.Test
 
 class ComandaDetailResponseSerializationTest {
     @Test
+    fun detailDisplayNameMapsToCustomerName() {
+        val detail = Gson().fromJson(
+            """{"id":"comanda-name","status":"EM_CONSUMO","display_name":"Evandro teste 2","total_comanda":0}""",
+            ComandaDetailResponse::class.java
+        )
+        assertEquals("Evandro teste 2", detail.nomeCliente)
+    }
+
+    @Test
     fun deployedDetailShapeMapsAuthoritativePygMoney() {
         val json = """
             {
