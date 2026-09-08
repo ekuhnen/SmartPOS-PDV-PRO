@@ -12,7 +12,7 @@ import com.plugpdv.pdv.R
 import com.plugpdv.pdv.databinding.ActivityCommandOrderBinding
 import com.plugpdv.pdv.models.TableItem
 import com.plugpdv.pdv.ui.BaseActivity
-import com.plugpdv.pdv.utils.CurrencyManager
+import com.plugpdv.pdv.utils.CurrencyRulesProvider
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -24,6 +24,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class CommandOrderActivity : BaseActivity() {
     @Inject lateinit var restaurantFreshness: RestaurantFreshness
+    @Inject lateinit var currencyRulesProvider: CurrencyRulesProvider
     private lateinit var binding: ActivityCommandOrderBinding
     private val saleViewModel: SaleViewModel by viewModels()
     private val commandViewModel: CommandViewModel by viewModels()
@@ -162,7 +163,6 @@ class CommandOrderActivity : BaseActivity() {
         
         commandViewModel.items.observe(this) { items ->
             orderAdapter.setItems(items)
-            updateTotal()
         }
         
         commandViewModel.isLoading.observe(this) { loading ->
@@ -174,6 +174,7 @@ class CommandOrderActivity : BaseActivity() {
         }
         
         commandViewModel.comanda.observe(this) { comanda ->
+            updateTotal()
             comanda?.let {
                 commandCode = it.id
                 val displayName = it.nomeCliente ?: it.numero?.toString() ?: it.id
@@ -183,8 +184,7 @@ class CommandOrderActivity : BaseActivity() {
     }
 
     private fun updateTotal() {
-        val total = commandViewModel.comanda.value?.total ?: 0.0
-        binding.tvTotal.text = CurrencyManager.getInstance().format(total)
+        binding.tvTotal.text = CommandTotalDisplay.format(commandViewModel.comanda.value, currencyRulesProvider)
     }
 
     private fun showItemOptions(item: TableItem) {
