@@ -102,19 +102,19 @@ class DirectSaleQrTest {
         return QRCodeReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(bitmap.width, bitmap.height, pixels))))
     }
 
-    @Test fun bitmapIs280BlackWhiteScannableWithFourModuleMarginAndCorrectionM() {
+    @Test fun bitmapIs320BlackWhiteScannableWithFourModuleMarginAndCorrectionM() {
         val encoded = DirectSaleQrPayloadCodec.encode(payload)
         val bitmap = DirectSaleTicketQr.bitmap(encoded)
-        assertEquals(280, bitmap.width)
-        assertEquals(280, bitmap.height)
+        assertEquals(320, bitmap.width)
+        assertEquals(320, bitmap.height)
         assertEquals(4, DirectSaleTicketQr.MARGIN)
         val minimal = QRCodeWriter().encode(encoded, BarcodeFormat.QR_CODE, 0, 0,
             mapOf(EncodeHintType.MARGIN to 4, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
-        val border = 4 * (280 / minimal.width)
-        for (y in 0 until 280) for (x in 0 until 280) {
+        val border = 4 * (320 / minimal.width)
+        for (y in 0 until 320) for (x in 0 until 320) {
             val color = bitmap.getPixel(x, y)
             assertTrue(color == Color.BLACK || color == Color.WHITE)
-            if (x < border || y < border || x >= 280 - border || y >= 280 - border) assertEquals(Color.WHITE, color)
+            if (x < border || y < border || x >= 320 - border || y >= 320 - border) assertEquals(Color.WHITE, color)
         }
         val result = read(bitmap)
         assertEquals(encoded, result.text)

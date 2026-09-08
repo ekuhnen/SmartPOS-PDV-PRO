@@ -12,7 +12,7 @@ TICKET_LAYOUT_UPDATED: YES.
 
 The ticket now prints merchant, `CUPOM DE RETIRADA`, counter instruction, timestamp, PDV, optional operator, full transaction ID, deterministic `XXXX-XXXX` pickup code, emphasized wrapped product name, QTD 1, explicit unit/subtotal, total purchase, payment method, one QR per unit, repeated pickup code and transaction ID, and a final thank-you line. No linear barcode or QR-damage warning is printed.
 
-Each quantity unit remains independent (`Via 1/3`, `Via 2/3`, `Via 3/3`) and receives a distinct code derived from SHA-256 of `PDV1|sale_id|product_id|copy`. QR remains PDV1, 280×280, margin 4, EC M.
+Each quantity unit remains independent (`Via 1/3`, `Via 2/3`, `Via 3/3`) and receives a distinct code derived from SHA-256 of `PDV1|sale_id|product_id|copy`. QR remains PDV1, 320×320, margin 4, EC M.
 
 Money continues to use the frozen transaction amount/currency and explicit formatting; PrinterHelper does not calculate sale totals. PYG, BRL, and USD semantics are preserved.
 

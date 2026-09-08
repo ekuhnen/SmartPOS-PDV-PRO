@@ -8,7 +8,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 object DirectSaleTicketQr {
-    const val SIZE = 280
+    const val SIZE = 320
     const val MARGIN = 4
     val ERROR_CORRECTION = ErrorCorrectionLevel.M
 
