@@ -12,6 +12,7 @@ import com.plugpdv.pdv.database.PaymentAttemptDao
 import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.models.SaleRequest
 import com.plugpdv.pdv.utils.Constants
+import com.plugpdv.pdv.utils.DirectPaymentReconciliationStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import retrofit2.HttpException
 import java.io.IOException
@@ -237,6 +238,27 @@ class SaleOutboxRepository @Inject constructor(
                     localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_PENDING, null, now)
                     recovered++
                     Log.i(TAG, "Recuperada venda direta órfã [${sale.localId}] WAITING_PAYMENT com PaymentAttempt APPROVED -> PENDING")
+                }
+            }
+            recovered
+        }
+    }
+
+    /** Repairs pre-DIRECT-PAY-03 residue without changing the payment audit row. */
+    suspend fun recoverTerminalNonPaidDirectSalesAtomic(): Int {
+        return appDatabase.withTransaction {
+            val candidates = localSaleDao.getWaitingPaymentSales()
+            var recovered = 0
+            for (sale in candidates) {
+                val attempt = paymentAttemptDao.getByReference(sale.localId)
+                val status = attempt?.status?.uppercase()
+                if (status in setOf(PaymentAttemptEntity.STATUS_CANCELLED, PaymentAttemptEntity.STATUS_REJECTED, "FAILED_TO_START")) {
+                    localSaleDao.markAsStatus(sale.localId, LocalSaleEntity.STATUS_FAILED_PERMANENT, "${status}_PAYMENT")
+                    DirectPaymentReconciliationStore.clearIfCorrelatedSafeTerminal(context, sale.localId, status!!)
+                    Log.i(TAG, "DIRECT_PAYMENT_RECOVERY: operation=${sale.localId} sale_state=${sale.syncStatus} attempt_state=$status decision=RELEASE_${status}")
+                    recovered++
+                } else {
+                    Log.d(TAG, "DIRECT_PAYMENT_RECOVERY: operation=${sale.localId} sale_state=${sale.syncStatus} attempt_state=${status ?: "MISSING"} decision=KEEP_BLOCKED")
                 }
             }
             recovered

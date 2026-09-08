@@ -9,22 +9,25 @@ object DirectPaymentReconciliationStore {
     private const val KEY_PAYMENT_ID = "payment_id"
     private const val KEY_METHOD = "method"
     private const val KEY_TIMESTAMP = "timestamp"
+    private const val KEY_OPERATION_ID = "operation_id"
 
     data class ReconciliationMarker(
         val isRequired: Boolean,
         val reason: String?,
         val paymentId: String?,
         val method: String?,
+        val operationId: String?,
         val timestamp: Long
     )
 
-    fun setMarker(context: Context, reason: String, paymentId: String?, method: String?) {
+    fun setMarker(context: Context, reason: String, paymentId: String?, method: String?, operationId: String? = null) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(KEY_REQUIRED, true)
             .putString(KEY_REASON, reason)
             .putString(KEY_PAYMENT_ID, paymentId)
             .putString(KEY_METHOD, method)
+            .putString(KEY_OPERATION_ID, operationId)
             .putLong(KEY_TIMESTAMP, System.currentTimeMillis())
             .commit()
     }
@@ -35,8 +38,9 @@ object DirectPaymentReconciliationStore {
         val reason = prefs.getString(KEY_REASON, null)
         val paymentId = prefs.getString(KEY_PAYMENT_ID, null)
         val method = prefs.getString(KEY_METHOD, null)
+        val operationId = prefs.getString(KEY_OPERATION_ID, null)
         val timestamp = prefs.getLong(KEY_TIMESTAMP, 0L)
-        return ReconciliationMarker(isRequired, reason, paymentId, method, timestamp)
+        return ReconciliationMarker(isRequired, reason, paymentId, method, operationId, timestamp)
     }
 
     fun isReconciliationRequired(context: Context): Boolean {
@@ -47,5 +51,14 @@ object DirectPaymentReconciliationStore {
     fun clearMarker(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
+    }
+
+    fun clearIfCorrelatedSafeTerminal(context: Context, operationId: String, attemptStatus: String) {
+        if (attemptStatus.uppercase() !in setOf("CANCELLED", "CANCELED", "REJECTED", "DECLINED", "FAILED_TO_START")) return
+        val marker = getMarker(context)
+        if (marker.isRequired && marker.operationId == operationId &&
+            marker.reason !in setOf("APPROVED_WITHOUT_CORRELATION", "LATE_APPROVED_AFTER_TERMINAL")) {
+            clearMarker(context)
+        }
     }
 }

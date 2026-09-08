@@ -241,13 +241,25 @@ class DirectCheckoutViewModel @Inject constructor(
 
     fun restoreDurableRecovery() {
         viewModelScope.launch {
+            val released = saleOutboxRepository.recoverTerminalNonPaidDirectSalesAtomic()
             val recovered = saleOutboxRepository.recoverApprovedWaitingSalesAtomic()
             val unresolved = saleOutboxRepository.getUnresolvedDirectPaymentState()
             _unresolvedPaymentState.value = unresolved
             _isPaymentBlocked.value = unresolved?.isBlocked ?: false
             _canResumeSameOperation.value = unresolved?.canResumeSameOperation ?: false
             _requiresReconciliation.value = unresolved?.requiresReconciliation ?: false
-            _blockReason.value = unresolved?.blockReason
+            _blockReason.value = unresolved?.let { state ->
+                when (state.attemptStatus?.uppercase()) {
+                    "PENDING" -> "PAYMENT_PENDING"
+                    "UNKNOWN" -> "PAYMENT_UNKNOWN"
+                    "APPROVED" -> "APPROVED_REQUIRES_RECONCILIATION"
+                    null -> "MISSING_PAYMENT_ATTEMPT"
+                    else -> state.blockReason
+                }
+            }
+            if (released > 0) {
+                Log.i("DirectCheckoutVM", "DIRECT_PAYMENT_RECOVERY: liberadas $released operacoes terminais sem pagamento")
+            }
             if (recovered > 0) {
                 Log.d("DirectCheckoutVM", "Recuperadas $recovered vendas diretas aprovadas do Room")
                 saleSyncScheduler.scheduleSync(context)
