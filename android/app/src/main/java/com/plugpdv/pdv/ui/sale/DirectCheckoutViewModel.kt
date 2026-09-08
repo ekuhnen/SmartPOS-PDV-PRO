@@ -191,6 +191,9 @@ class DirectCheckoutViewModel @Inject constructor(
         _finalTotal.value = base + tax + sfAmount
     }
 
+    /** The amount in finalTotal is in the normalized catalog currency, not selectedCurrency. */
+    fun catalogBaseCurrency(): String? = DirectSaleMoneyBoundary.catalogCurrency(_cartItems.value.orEmpty())
+
     data class PreparedDirectSaleResult(
         val localId: String,
         val saleRequest: SaleRequest,
@@ -385,6 +388,17 @@ class DirectCheckoutViewModel @Inject constructor(
 
         val localId = UUID.randomUUID().toString()
 
+        _latestReceiptSnapshot.value = ReceiptMoneySnapshot(
+            operationId = localId,
+            transactionAmount = quote.transactionAmount,
+            transactionCurrency = quote.transactionCurrency,
+            baseAmount = quote.baseAmount,
+            baseCurrency = quote.baseCurrency,
+            paymentMethod = "DINHEIRO",
+            items = saleRequest.items,
+            customerName = saleRequest.customerName
+        )
+
         viewModelScope.launch {
             try {
                 _isLoading.value = true
@@ -412,7 +426,11 @@ class DirectCheckoutViewModel @Inject constructor(
         manualAmount: Double? = null
     ) {
         val cm = CurrencyManager.getInstance()
-        val baseCurrency = cm.getBaseCurrency()
+        val baseCurrency = catalogBaseCurrency() ?: run {
+            _saleResult.value = SaleResult.Error("MONEY_CURRENCY_UNAVAILABLE")
+            _isLoading.value = false
+            return
+        }
         val txCurrency = cm.selectedCurrency
         val baseTotalAmount = manualAmount ?: (_finalTotal.value ?: 0.0)
 

@@ -197,10 +197,15 @@ class CheckoutActivity : BaseActivity() {
             when (result) {
                 is SaleResult.Success -> {
                     val items = viewModel.cartItems.value ?: emptyList()
-                    val snapshot = viewModel.latestReceiptSnapshot.value
-                    val printTotal = snapshot?.transactionAmount?.toDouble() ?: (viewModel.finalTotal.value ?: 0.0)
-                    val printCurrency = snapshot?.transactionCurrency ?: com.plugpdv.pdv.utils.CurrencyManager.getInstance().selectedCurrency
-                    val printMethod = snapshot?.paymentMethod ?: (result.response.status ?: "PIX")
+                    val snapshot = viewModel.latestReceiptSnapshot.value ?: run {
+                        // A successful sale without its frozen money snapshot must not
+                        // reinterpret the UI/base total as transaction currency.
+                        Toast.makeText(this, R.string.financial_data_unavailable, Toast.LENGTH_LONG).show()
+                        return@observe
+                    }
+                    val printTotal = snapshot.transactionAmount.toDouble()
+                    val printCurrency = snapshot.transactionCurrency
+                    val printMethod = snapshot.paymentMethod
                     val saleId = result.response.id ?: ""
 
                     if (saleId.startsWith("LOCAL-")) {
@@ -360,7 +365,10 @@ class CheckoutActivity : BaseActivity() {
         }
 
         val total = viewModel.finalTotal.value ?: 0.0
-        val baseCurrency = CurrencyManager.getInstance().getBaseCurrency()
+        val baseCurrency = viewModel.catalogBaseCurrency() ?: run {
+            Toast.makeText(this, R.string.financial_data_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
 
         PaymentMethodSelectorBottomSheet.newInstance(total, baseCurrency) { method, quote ->
             Log.d("CheckoutActivity", "Método selecionado: $method, Quote: $quote")

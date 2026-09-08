@@ -179,13 +179,25 @@ object PrinterHelper {
                         // Preserve explicit product money. Legacy products without a currency
                         // reuse the already prepared numeric ticket price; the codec does no FX.
                         val productCurrency = item.product.price_currency?.takeIf { it.isNotBlank() }
+                        val qrUnitPrice = if (productCurrency.equals(currency, ignoreCase = true)) {
+                            unitPrice
+                        } else {
+                            // CatalogRepository's normalized product prices are BRL. The
+                            // conversion is explicit and affects only QR presentation data.
+                            val brl = if (productCurrency.isNullOrBlank() || productCurrency.equals("BRL", true)) {
+                                unitPrice
+                            } else {
+                                cm.toBrl(unitPrice, productCurrency)
+                            }
+                            cm.fromBrl(brl, currency)
+                        }
                         val qrData = DirectSaleQrPayloadCodec.encode(DirectSaleQrPayload(
                             saleId = saleId,
                             productId = productId,
                             productName = productName,
                             quantity = ticketQty,
-                            unitPrice = java.math.BigDecimal.valueOf(if (productCurrency != null) unitPrice else txUnitPrice),
-                            currency = productCurrency ?: currency,
+                            unitPrice = java.math.BigDecimal.valueOf(qrUnitPrice),
+                            currency = currency,
                             issuedAt = qrIssuedAt,
                             copy = i,
                             operatorName = operatorName
