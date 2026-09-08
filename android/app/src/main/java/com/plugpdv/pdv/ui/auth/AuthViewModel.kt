@@ -220,6 +220,12 @@ class AuthViewModel @Inject constructor(
                     }
 
                     Log.d("AuthViewModel", "Login finalizado com sucesso para o usuário: $userId")
+                    // Capabilities authorize currencies; api-cambio supplies rates only.
+                    // Synchronize authorization before navigation so Cashier cannot start with BRL
+                    // merely because CurrencyManager's legacy initial value is BRL.
+                    CurrencyManager.getInstance().prepareForTenant(context, ownerId)
+                    runCatching { fetchExchangeRates(token) }
+                    runCatching { fetchCurrencyCapabilities(token, ownerId) }
                     Log.d("PERF_LOGIN", "success_emit_ms=${SystemClock.elapsedRealtime() - authStart} blocking=BLOCKING")
                     _loginResult.postValue(LoginResult.Success(userId, token, isOpen, sessionId, hasMesa, hasVendaDireta, hasComanda))
                     viewModelScope.launch(Dispatchers.IO) {
@@ -302,6 +308,11 @@ class AuthViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e("AuthViewModel", "Failed to fetch exchange rates", e)
         }
+    }
+
+    private suspend fun fetchCurrencyCapabilities(token: String, ownerId: String) {
+        val response = apiService.getCapabilities("Bearer $token")
+        CurrencyManager.getInstance().applyCapabilities(context, ownerId, response)
     }
 
     private suspend fun registerDevice(token: String) {

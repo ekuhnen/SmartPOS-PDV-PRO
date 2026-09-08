@@ -3,16 +3,34 @@ package com.plugpdv.pdv.utils
 import android.content.Context
 import com.google.gson.Gson
 import com.plugpdv.pdv.models.ExchangeResponse
+import com.plugpdv.pdv.models.CapabilitiesResponse
 import java.text.NumberFormat
 import java.util.*
 
 class CurrencyManager private constructor() {
     private var rates: ExchangeResponse? = null
+    private var ratesOwnerId: String? = null
+    private var authorizedCurrencyCodes: List<String>? = null
+    private var capabilitiesBaseCurrency: String? = null
+    private var capabilitiesOwnerId: String? = null
+    private var capabilitiesRequired: Boolean = false
     var selectedCurrency: String = "BRL"
 
     fun init(context: Context) {
         if (rates == null) {
             val prefs = context.getSharedPreferences("currency_prefs", Context.MODE_PRIVATE)
+            val activeTenant = TenantBindingStore.getActiveTenantId(context)
+            val cachedTenant = prefs.getString("currency_owner_id", null)
+            if (activeTenant.isNullOrBlank() || cachedTenant != activeTenant) return
+            ratesOwnerId = cachedTenant
+            val cachedAllowed = prefs.getStringSet("authorized_currency_codes", null)
+            authorizedCurrencyCodes = cachedAllowed?.map { it.uppercase() }?.sorted()
+            capabilitiesRequired = true
+            capabilitiesBaseCurrency = prefs.getString("authorized_base_currency", null)
+            capabilitiesOwnerId = cachedTenant
+            if (authorizedCurrencyCodes != null && capabilitiesBaseCurrency != null) {
+                selectedCurrency = capabilitiesBaseCurrency!!
+            }
             val json = prefs.getString("exchange_rates", null)
             if (!json.isNullOrEmpty()) {
                 try {
@@ -25,6 +43,67 @@ class CurrencyManager private constructor() {
         }
     }
 
+    /** Selects a tenant-scoped currency cache and drops another tenant's state. */
+    fun prepareForTenant(context: Context, ownerId: String) {
+        require(ownerId.isNotBlank())
+        capabilitiesRequired = true
+        if ((ratesOwnerId != null && ratesOwnerId != ownerId) ||
+            (capabilitiesOwnerId != null && capabilitiesOwnerId != ownerId)) {
+            rates = null
+            ratesOwnerId = null
+            authorizedCurrencyCodes = null
+            capabilitiesBaseCurrency = null
+            capabilitiesOwnerId = null
+            capabilitiesRequired = true
+            selectedCurrency = "BRL"
+        }
+        val prefs = context.getSharedPreferences("currency_prefs", Context.MODE_PRIVATE)
+        val cachedOwner = prefs.getString("currency_owner_id", null)
+        if (cachedOwner != ownerId) return
+        ratesOwnerId = ownerId
+        authorizedCurrencyCodes = prefs.getStringSet("authorized_currency_codes", null)
+            ?.map { it.uppercase() }?.sorted()
+        capabilitiesBaseCurrency = prefs.getString("authorized_base_currency", null)
+        capabilitiesOwnerId = ownerId
+        capabilitiesBaseCurrency?.let { selectedCurrency = it }
+    }
+
+    /** Capabilities are the authorization boundary; rates remain FX data only. */
+    fun applyCapabilities(context: Context, ownerId: String, capabilities: CapabilitiesResponse) {
+        require(ownerId.isNotBlank())
+        val codes = capabilities.currencies.keys.map { it.uppercase() }.distinct()
+        require(codes.isNotEmpty()) { "CURRENCY_CAPABILITIES_EMPTY" }
+        prepareForTenant(context, ownerId)
+        authorizedCurrencyCodes = codes
+        capabilitiesOwnerId = ownerId
+        capabilitiesBaseCurrency = capabilities.baseCurrency?.uppercase()?.takeIf { it in codes }
+            ?: codes.firstOrNull { it.equals(getBaseCurrency(), true) }
+            ?: codes.firstOrNull()
+        val prefs = context.getSharedPreferences("currency_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("currency_owner_id", ownerId)
+            .putStringSet("authorized_currency_codes", codes.toSet())
+            .putString("authorized_base_currency", capabilitiesBaseCurrency)
+            .commit()
+        if (capabilitiesBaseCurrency != null) selectedCurrency = capabilitiesBaseCurrency!!
+    }
+
+    fun getAuthorizedCurrencyCodes(): List<String> = authorizedCurrencyCodes.orEmpty()
+
+    fun hasCapabilitiesAuthority(): Boolean = capabilitiesRequired
+
+    fun isAuthorized(code: String): Boolean = authorizedCurrencyCodes?.contains(code.uppercase()) ?: false
+
+    fun selectAuthorizedCurrency(code: String): Boolean {
+        val normalized = code.trim().uppercase()
+        if (capabilitiesRequired && normalized !in authorizedCurrencyCodes.orEmpty()) return false
+        selectedCurrency = normalized
+        return true
+    }
+
+    fun isOperational(code: String): Boolean = isAuthorized(code) &&
+        (code.equals("BRL", true) || getRateForCurrencyExact(code) != null)
+
     fun setRates(context: Context, rates: ExchangeResponse?) {
         setRatesInMemory(rates, context, save = true)
     }
@@ -35,9 +114,12 @@ class CurrencyManager private constructor() {
 
     private fun setRatesInMemory(rates: ExchangeResponse?, context: Context?, save: Boolean) {
         this.rates = rates
-        if (rates != null && !rates.moeda_principal.isNullOrEmpty()) {
+        if (rates != null) {
+            if (ratesOwnerId == null) ratesOwnerId = context?.let { TenantBindingStore.getActiveTenantId(it) }
+            if (!rates.moeda_principal.isNullOrEmpty()) {
             if (selectedCurrency == "BRL" && rates.moeda_principal != "BRL") {
                 selectedCurrency = rates.moeda_principal
+            }
             }
         }
         if (save && context != null && rates != null) {
@@ -46,6 +128,7 @@ class CurrencyManager private constructor() {
                 context.getSharedPreferences("currency_prefs", Context.MODE_PRIVATE)
                     .edit()
                     .putString("exchange_rates", json)
+                    .putString("currency_owner_id", ratesOwnerId)
                     .apply()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -54,11 +137,14 @@ class CurrencyManager private constructor() {
     }
 
     fun getBaseCurrency(): String {
-        return rates?.moeda_principal ?: "BRL"
+        return capabilitiesBaseCurrency ?: rates?.moeda_principal ?: "BRL"
     }
 
     fun getAvailableCurrencies(): List<ExchangeResponse.CurrencyRate> {
-        return rates?.moedas ?: emptyList()
+        val current = rates?.moedas.orEmpty()
+        val allowed = authorizedCurrencyCodes ?: return if (capabilitiesRequired) emptyList() else current
+        return allowed.map { code -> current.firstOrNull { it.codigo.equals(code, true) }
+            ?: ExchangeResponse.CurrencyRate(code, 0.0) }
     }
 
     /**

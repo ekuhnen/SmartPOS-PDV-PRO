@@ -4,6 +4,7 @@ import com.google.gson.annotations.SerializedName
 
 data class CapabilitiesResponse(
     @SerializedName("currencies") val currencies: Map<String, CurrencyCapability> = emptyMap(),
+    @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("payment_methods") val paymentMethods: List<PaymentMethodCapability> = emptyList(),
     @SerializedName("offline_policies") val offlinePolicies: Map<String, OfflinePolicyCapability> = emptyMap(),
     @SerializedName("taxes") val taxes: List<TaxRate> = emptyList()

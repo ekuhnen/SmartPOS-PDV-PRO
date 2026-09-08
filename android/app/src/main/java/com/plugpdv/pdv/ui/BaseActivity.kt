@@ -147,16 +147,18 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     fun showCurrencySelector(onCurrencyChanged: Runnable?) {
-        val currencies = CurrencyManager.getInstance().getAvailableCurrencies()
-        if (currencies.isEmpty()) return
-
-        val items = currencies.map { it.codigo }.toTypedArray()
+        val manager = CurrencyManager.getInstance()
+        val items = if (manager.hasCapabilitiesAuthority()) {
+            manager.getAuthorizedCurrencyCodes().toTypedArray()
+        } else {
+            manager.getAvailableCurrencies().map { it.codigo }.toTypedArray()
+        }
+        if (items.isEmpty()) return
 
         AlertDialog.Builder(this)
             .setTitle(R.string.currency_selector_title)
             .setItems(items) { _, which ->
-                CurrencyManager.getInstance().selectedCurrency = items[which]
-                onCurrencyChanged?.run()
+                if (manager.selectAuthorizedCurrency(items[which])) onCurrencyChanged?.run()
             }
             .show()
     }
