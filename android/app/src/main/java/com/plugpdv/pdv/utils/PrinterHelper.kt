@@ -24,9 +24,6 @@ import com.plugpdv.pdv.ui.sale.SaleViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
 
 object PrinterHelper {
 
@@ -124,7 +121,11 @@ object PrinterHelper {
         val ctx = getLocalizedContext(context)
         val printer = HardwareFactory.getPrinter(context)
         val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context)
-        val dateStr = SimpleDateFormat("dd/MM/yyyy  HH:mm", Locale(lang)).format(Date())
+        val issuedAt = Date()
+        val dateStr = SimpleDateFormat("dd/MM/yyyy  HH:mm", Locale(lang)).format(issuedAt)
+        val qrIssuedAt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.format(issuedAt)
         val cm = CurrencyManager.getInstance()
 
         if (printer != null) {
@@ -175,17 +176,25 @@ object PrinterHelper {
                         printer.printText("${ctx.getString(R.string.print_subtotal_label)} $subtotalFormatted\n")
 
                         // --- QR Code Detalhado ---
-                        val safeOpName = (operatorName ?: "N/A").replace("-", " ")
-                        val safeProdName = productName.replace("-", " ")
-                        val qrData = "$saleId-$dateStr-$safeOpName-$productId-$safeProdName-${ticketQty}-${unitFormatted}-${subtotalFormatted}-via$i"
-                        
+                        // Preserve explicit product money. Legacy products without a currency
+                        // reuse the already prepared numeric ticket price; the codec does no FX.
+                        val productCurrency = item.product.price_currency?.takeIf { it.isNotBlank() }
+                        val qrData = DirectSaleQrPayloadCodec.encode(DirectSaleQrPayload(
+                            saleId = saleId,
+                            productId = productId,
+                            productName = productName,
+                            quantity = ticketQty,
+                            unitPrice = java.math.BigDecimal.valueOf(if (productCurrency != null) unitPrice else txUnitPrice),
+                            currency = productCurrency ?: currency,
+                            issuedAt = qrIssuedAt,
+                            copy = i,
+                            operatorName = operatorName
+                        ))
+                        // Generate before dispatch. Failure reaches the existing visible print
+                        // error path instead of a native fallback with ambiguous size units.
+                        val qrBitmap = DirectSaleTicketQr.bitmap(qrData)
                         printer.setAlignment(1)
-                        val qrBitmap = generateQRCodeBitmap(qrData, 160)
-                        if (qrBitmap != null) {
-                            printer.printImage(qrBitmap)
-                        } else {
-                            printer.printQRCode(qrData, 5)
-                        }
+                        printer.printImage(qrBitmap)
 
                         // --- Rodapé do Item ---
                         printer.setAlignment(0)
@@ -400,24 +409,6 @@ object PrinterHelper {
             outBitmap
         } catch (e: Exception) {
             null // Fallback para texto
-        }
-    }
-
-    private fun generateQRCodeBitmap(data: String, size: Int): Bitmap? {
-        return try {
-            val hints = mapOf(EncodeHintType.MARGIN to 1)
-            val bitMatrix = QRCodeWriter().encode(data, BarcodeFormat.QR_CODE, size, size, hints)
-            val width = bitMatrix.width
-            val height = bitMatrix.height
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-            for (x in 0 until width) {
-                for (y in 0 until height) {
-                    bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
-                }
-            }
-            bmp
-        } catch (e: Exception) {
-            null
         }
     }
 }
