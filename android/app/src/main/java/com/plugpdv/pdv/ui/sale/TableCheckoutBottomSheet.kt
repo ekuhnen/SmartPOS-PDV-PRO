@@ -268,44 +268,31 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
 
         populatePaymentsHistory(state.paymentsHistory)
 
-        if (state.paymentSuccess) {
+        if (state.paymentSuccess && viewModel.uiState.value.paymentSuccess &&
+            !state.isPendingSync && !state.isAwaitingProvider && !state.isLoading) {
+            val allocations = viewModel.currentReceiptAllocations()
+            val receiptTable = viewModel.currentTableForReceipt()?.let { it.copy(items = it.items.toMutableList()) }
+            // Consume before any side effect/suspension, including observer-triggered refreshes.
+            viewModel.acknowledgePaymentSuccess()
             onUpdateNotify()
-            
-            // Print the transaction receipt automatically
-            state.lastPaymentMethod?.let { method ->
-                state.lastPaymentCurrency?.let { currency ->
-                    printPaymentReceipt(method, state.lastPaymentAmount, currency, viewModel.currentReceiptAllocations())
-                }
-            }
-            
-            // A closed commit is authoritative even when the pre-commit balance
-            // snapshot has not refreshed yet.
-            val isFullyPaid = state.isComandaClosed ||
-                (state.balanceBaseMinor != null && state.balanceBaseMinor <= 0L)
-
-            if (isFullyPaid) {
-                printClosingReceipt()
-                viewModel.acknowledgePaymentSuccess()
-                val totalFactura = state.fullTableTotalPaid
-                
-                FacturaElectronicaDialog(requireContext()) { emitir ->
-                    if (emitir) {
-                        val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-                        val operatorName = prefs.getString(Constants.OPERATOR_NAME, "Operador")
-                        PrinterHelper.printMockFactura(
-                            context = requireContext(),
-                            total = totalFactura,
-                            currency = cm.selectedCurrency,
-                            operatorName = operatorName
-                        )
-                    }
-                    dismiss()
-                    activity?.finish()
-                }.show()
-                
-            } else {
-                Toast.makeText(context, getString(R.string.partial_payment_approved), Toast.LENGTH_SHORT).show()
-                viewModel.acknowledgePaymentSuccess()
+            val isFullyPaid = state.balanceBaseMinor == 0L
+            isCancelable = false
+            lifecycleScope.launch {
+                try {
+                    CheckoutReceiptSequence.deliver(
+                        state = state,
+                        transaction = {
+                            state.lastPaymentMethod?.let { method ->
+                                state.lastPaymentCurrency?.let { currency ->
+                                    printPaymentReceipt(method, state.lastPaymentAmount, currency, allocations)
+                                }
+                            }
+                        },
+                        closing = { awaitClosingReceipt(receiptTable, state, false) },
+                        printError = { showReceiptError() },
+                        finish = { finishReceiptFlow(state, isFullyPaid) }
+                    )
+                } finally { isCancelable = true }
             }
         }
 
@@ -572,6 +559,27 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
         }.show(childFragmentManager, "payment_selector")
     }
 
+    private fun finishReceiptFlow(state: CheckoutUiState, isFullyPaid: Boolean) {
+        if (!isAdded) return
+        if (!isFullyPaid) {
+            Toast.makeText(context, getString(R.string.partial_payment_approved), Toast.LENGTH_SHORT).show()
+            return
+        }
+        FacturaElectronicaDialog(requireContext()) { emitir ->
+            if (emitir) {
+                val prefs = requireContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                PrinterHelper.printMockFactura(
+                    context = requireContext(),
+                    total = state.fullTableTotalPaid,
+                    currency = CurrencyManager.getInstance().selectedCurrency,
+                    operatorName = prefs.getString(Constants.OPERATOR_NAME, "Operador")
+                )
+            }
+            dismiss()
+            activity?.finish()
+        }.show()
+    }
+
     private fun printTableReceipt() {
         val ctx = context?.let { LanguageManager.updateResources(it, LanguageManager.getLanguage(it)) } ?: return
         val state = viewModel.uiState.value
@@ -611,21 +619,29 @@ class TableCheckoutBottomSheet : BottomSheetDialogFragment() {
     }
 
     private fun printClosingReceipt(reprint: Boolean = false) {
-        val ctx = context ?: return
-        val currentTable = viewModel.currentTableForReceipt() ?: return
         val state = viewModel.uiState.value
-        val key = "CLOSING_RECEIPT_PRINTED_${currentTable.comandaId.orEmpty()}"
-        val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-        if (!reprint && prefs.getBoolean(key, false)) return
         lifecycleScope.launch {
-            // Issuer identity is a finalized receipt snapshot from the
-            // backend; local profile/preferences are never used here.
-            val receipt = viewModel.fetchClosingReceipt()
-            val content = ComandaClosingReceiptRenderer.render(ctx, currentTable, state, reprint, receipt)
-            runCatching { PrinterHelper.printReceipt(ctx, content) }
-                .onSuccess { if (!reprint) prefs.edit().putBoolean(key, true).apply() }
-                .onFailure { Toast.makeText(ctx, getString(R.string.print_failed_retry), Toast.LENGTH_SHORT).show() }
+            try { awaitClosingReceipt(viewModel.currentTableForReceipt(), state, reprint) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { showReceiptError() }
         }
+    }
+
+    private suspend fun awaitClosingReceipt(currentTable: Table?, state: CheckoutUiState, reprint: Boolean) {
+        val ctx = requireContext()
+        val receiptTable = requireNotNull(currentTable)
+        val comandaId = requireNotNull(receiptTable.comandaId).also { require(it.isNotBlank()) }
+        require(!state.baseCurrency.isNullOrBlank() && state.baseMinorUnitDigits != null)
+        val prefs = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+        CheckoutReceiptSequence.printFinal(prefs, comandaId, reprint) {
+            val receipt = requireNotNull(viewModel.fetchClosingReceipt())
+            val content = ComandaClosingReceiptRenderer.render(ctx, receiptTable, state, reprint, receipt)
+            PrinterHelper.printReceiptWithResult(ctx, content)
+        }
+    }
+
+    private fun showReceiptError() {
+        context?.let { Toast.makeText(it, R.string.print_failed_retry, Toast.LENGTH_LONG).show() }
     }
 
     private fun paidDecimal(state: CheckoutUiState, digits: Int): Double =

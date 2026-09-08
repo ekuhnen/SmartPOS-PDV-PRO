@@ -52,6 +52,12 @@ object PrinterHelper {
 
     @JvmStatic
     fun printReceipt(context: Context, content: String) {
+        printReceiptWithResult(context, content)
+    }
+
+    /** Reports dispatch failure without changing payment state. Hardware acknowledgement
+     * is limited to the existing synchronous printer interface. */
+    fun printReceiptWithResult(context: Context, content: String): Boolean {
         val ctx = getLocalizedContext(context)
         val printer = HardwareFactory.getPrinter(context)
 
@@ -91,12 +97,14 @@ object PrinterHelper {
                 }
 
                 showToast(context, ctx.getString(R.string.print_printing))
+                return true
             } catch (e: Exception) {
                 showToast(context, String.format(ctx.getString(R.string.print_error), e.message))
             }
         } else {
             showToast(context, ctx.getString(R.string.print_not_detected))
         }
+        return false
     }
 
     /**

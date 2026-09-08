@@ -17,8 +17,8 @@ import java.util.Locale
 object ComandaClosingReceiptRenderer {
     fun render(context: Context, table: Table, state: CheckoutUiState, reprint: Boolean = false, receipt: ComandaReceiptResponse? = null): String {
         val cm = CurrencyManager.getInstance()
-        val currency = state.baseCurrency ?: cm.selectedCurrency
-        val digits = state.baseMinorUnitDigits ?: 0
+        val currency = requireNotNull(state.baseCurrency).also { require(it.isNotBlank()) }
+        val digits = requireNotNull(state.baseMinorUnitDigits)
         fun minor(v: Long?): Double = v?.let { BigDecimal.valueOf(it).movePointLeft(digits).toDouble() } ?: 0.0
         fun money(v: Double?) = cm.formatExplicit(v ?: 0.0, currency)
         val lang = com.plugpdv.pdv.utils.LanguageManager.getLanguage(context).lowercase()
@@ -29,6 +29,12 @@ object ComandaClosingReceiptRenderer {
         val sb = StringBuilder()
         sb.append("================================\n")
         appendIssuer(sb, receipt, ::t)
+        receipt?.customer?.takeIf { it.isJsonObject }?.asJsonObject?.let { customer ->
+            // Identity is copied only from the canonical receipt response.
+            customer.string("name", "nome", "legal_name")?.let { appendWrapped(sb, it) }
+            customer.string("document_number", "document", "ruc")?.let { appendWrapped(sb, it) }
+            customer.string("email")?.let { appendWrapped(sb, it) }
+        }
         if (receipt?.issuer == null && receipt?.empresa == null) sb.append("           PlugPDV\n")
         sb.append("================================\n")
         if (reprint) sb.append(t("REIMPRESSÃO", "REIMPRESIÓN", "REPRINT")).append("\n")
