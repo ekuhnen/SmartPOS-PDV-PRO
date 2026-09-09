@@ -145,8 +145,14 @@ interface PosApiService {
         @Body request: SyncBatchRequest
     ): Response<SyncBatchResponse>
 
-    @GET("api/v2/terminal/capabilities")
+    /**
+     * Deployed capabilities transport. `terminal-sync` resolves tenant from the
+     * authenticated token and dispatches action=capabilities to the authoritative
+     * terminal_capabilities RPC. AppHeadersInterceptor supplies terminal headers.
+     */
+    @POST("terminal-sync")
     suspend fun getCapabilities(
-        @Header("Authorization") token: String
+        @Header("Authorization") token: String,
+        @Body request: CapabilitiesRequest = CapabilitiesRequest()
     ): CapabilitiesResponse
 }

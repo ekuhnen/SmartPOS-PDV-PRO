@@ -2,6 +2,11 @@ package com.plugpdv.pdv.models
 
 import com.google.gson.annotations.SerializedName
 
+/** Request envelope used by the deployed terminal-sync capabilities action. */
+data class CapabilitiesRequest(
+    @SerializedName("action") val action: String = "capabilities"
+)
+
 data class CapabilitiesResponse(
     @SerializedName("currencies") val currencies: Map<String, CurrencyCapability> = emptyMap(),
     @SerializedName("base_currency") val baseCurrency: String? = null,
