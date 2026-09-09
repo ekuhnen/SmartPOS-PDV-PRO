@@ -86,6 +86,11 @@ class CurrencyManager private constructor() {
             .putString("authorized_base_currency", capabilitiesBaseCurrency)
             .commit()
         if (capabilitiesBaseCurrency != null) selectedCurrency = capabilitiesBaseCurrency!!
+
+        // The login flow currently applies the terminal capabilities response
+        // through CurrencyManager. Keep payment policy in its own tenant-scoped
+        // store while preserving that single network fetch/call site.
+        PaymentProviderCapabilitiesStore.getInstance().applyCapabilities(context, ownerId, capabilities)
     }
 
     fun getAuthorizedCurrencyCodes(): List<String> = authorizedCurrencyCodes.orEmpty()

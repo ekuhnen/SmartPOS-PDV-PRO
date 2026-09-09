@@ -6,6 +6,9 @@ data class CapabilitiesResponse(
     @SerializedName("currencies") val currencies: Map<String, CurrencyCapability> = emptyMap(),
     @SerializedName("base_currency") val baseCurrency: String? = null,
     @SerializedName("payment_methods") val paymentMethods: List<PaymentMethodCapability> = emptyList(),
+    @SerializedName("payment_providers") val paymentProviders: List<PaymentProviderCapability>? = null,
+    @SerializedName("default_payment_provider") val defaultPaymentProvider: String? = null,
+    @SerializedName("allow_payment_provider_selection") val allowPaymentProviderSelection: Boolean? = null,
     @SerializedName("offline_policies") val offlinePolicies: Map<String, OfflinePolicyCapability> = emptyMap(),
     @SerializedName("taxes") val taxes: List<TaxRate> = emptyList()
 )
@@ -27,6 +30,20 @@ data class PaymentMethodCapability(
     @SerializedName("icon_url") val iconUrl: String? = null,
     @SerializedName("allowed_offline") val allowedOffline: Boolean = true,
     @SerializedName("requires_customer_tax_id") val requiresCustomerTaxId: Boolean = false
+)
+
+/**
+ * Non-secret company policy for a concrete payment integration.
+ * Credentials never belong in terminal capabilities or in the local cache.
+ *
+ * `supported_currencies == null` means that the capabilities payload did not
+ * publish an additional provider-level currency restriction. An explicit empty
+ * list means the provider is not authorized for any transaction currency.
+ */
+data class PaymentProviderCapability(
+    @SerializedName("provider") val provider: String,
+    @SerializedName("enabled") val enabled: Boolean = false,
+    @SerializedName("supported_currencies") val supportedCurrencies: List<String>? = null
 )
 
 data class OfflinePolicyCapability(

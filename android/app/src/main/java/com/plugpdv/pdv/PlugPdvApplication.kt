@@ -9,6 +9,7 @@ import com.plugpdv.pdv.outbox.SaleSyncScheduler
 import com.plugpdv.pdv.service.DeviceGuardService
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.DeviceIdProvider
+import com.plugpdv.pdv.utils.PaymentProviderCapabilitiesStore
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -37,6 +38,7 @@ class PlugPdvApplication : Application(), Configuration.Provider {
         super.onCreate()
         com.plugpdv.pdv.utils.GlobalCrashHandler.init(this)
         com.plugpdv.pdv.utils.CurrencyManager.getInstance().init(this)
+        PaymentProviderCapabilitiesStore.getInstance().init(this)
         
         // Inicializa o Firebase Analytics
         firebaseAnalytics = FirebaseAnalytics.getInstance(this)
