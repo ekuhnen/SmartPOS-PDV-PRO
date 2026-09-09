@@ -15,10 +15,14 @@ import com.plugpdv.pdv.database.PaymentAttemptEntity
 import com.plugpdv.pdv.database.AppDatabase
 import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.google.gson.Gson
+import com.plugpdv.pdv.payment.PaymentCoordinator
+import com.plugpdv.pdv.payment.PaymentProviderRequest
+import com.plugpdv.pdv.payment.PaymentProviderStartResult
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.Constants
 import com.plugpdv.pdv.utils.CurrencyManager
 import com.plugpdv.pdv.utils.DirectPaymentReconciliationStore
+import com.plugpdv.pdv.utils.PaymentProviderType
 import com.plugpdv.pdv.utils.PaymentResultStore
 import com.plugpdv.pdv.utils.OutboxSyncManager
 import com.plugpdv.pdv.outbox.SaleSyncScheduler
@@ -46,8 +50,6 @@ class PaymentHandlerActivity : BaseActivity() {
         const val EXTRA_AMOUNTS_JSON = "extra_amounts_json"
         const val EXTRA_CURRENCY = "extra_currency"
 
-        private const val PAYMENT_APP_SCHEME = "plugpay"
-        private const val PAYMENT_APP_HOST = "pay"
         private const val CALLBACK_SCHEME = "plugpdv"
         private const val CALLBACK_HOST = "payment_callback"
         private const val TAG = "PaymentHandlerActivity"
@@ -67,6 +69,9 @@ class PaymentHandlerActivity : BaseActivity() {
 
     @Inject
     lateinit var saleSyncScheduler: SaleSyncScheduler
+
+    @Inject
+    lateinit var paymentCoordinator: PaymentCoordinator
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -173,9 +178,6 @@ class PaymentHandlerActivity : BaseActivity() {
             return
         }
 
-        val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, existingAttempt.currency)
-        val formattedAmount = com.plugpdv.pdv.utils.MoneyDecimal.toProtocolAmount(roundedAmount, existingAttempt.currency)
-
         val prefs = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         val email = prefs.getString(Constants.EMAIL, "") ?: ""
 
@@ -190,25 +192,16 @@ class PaymentHandlerActivity : BaseActivity() {
         callbackUri += "request_id=${Uri.encode(existingAttempt.reference)}"
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
-
-        val uriBuilder = Uri.Builder()
-            .scheme(PAYMENT_APP_SCHEME)
-            .authority(PAYMENT_APP_HOST)
-            .appendQueryParameter("amount", formattedAmount)
-            .appendQueryParameter("selected_currency", existingAttempt.currency)
-            .appendQueryParameter("amounts", amountsJsonStr)
-            .appendQueryParameter("request_id", existingAttempt.reference)
-            .appendQueryParameter("callback_uri", callbackUri)
-
-        if (email.isNotEmpty()) {
-            uriBuilder.appendQueryParameter("email", email)
-        }
-
-        val paymentUri = uriBuilder.build()
-        val paymentIntent = Intent(Intent.ACTION_VIEW, paymentUri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            setPackage("com.br.plugpay")
-        }
+        val providerRequest = PaymentProviderRequest(
+            reference = existingAttempt.reference,
+            amountMinor = existingAttempt.amount,
+            currency = existingAttempt.currency,
+            description = existingAttempt.description,
+            orderId = existingAttempt.orderId,
+            callbackUri = callbackUri,
+            customerEmail = email.takeIf { it.isNotEmpty() },
+            quoteAmountsJson = amountsJsonStr
+        )
 
         lifecycleScope.launch {
             val now = System.currentTimeMillis()
@@ -221,25 +214,27 @@ class PaymentHandlerActivity : BaseActivity() {
             }
             Log.i(TAG, "Attempt K=${existingAttempt.reference} promovida PREPARED -> PENDING no Room antes de abrir PlugPay")
 
-            try {
-                startActivity(paymentIntent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Falha ao abrir app de pagamento para PREPARED attempt: ", e)
-                withContext(Dispatchers.IO) {
-                    paymentAttemptDao.update(
-                        updatedAttempt.copy(
-                            status = "FAILED_TO_START",
-                            statusMessage = e.message
+            when (val startResult = paymentCoordinator.start(PaymentProviderType.PLUGPAY, this@PaymentHandlerActivity, providerRequest)) {
+                PaymentProviderStartResult.Started -> Unit
+                is PaymentProviderStartResult.Failed -> {
+                    val errorDetail = startResult.message ?: startResult.code
+                    Log.e(TAG, "Falha ao abrir app de pagamento para PREPARED attempt: $errorDetail", startResult.cause)
+                    withContext(Dispatchers.IO) {
+                        paymentAttemptDao.update(
+                            updatedAttempt.copy(
+                                status = "FAILED_TO_START",
+                                statusMessage = errorDetail
+                            )
                         )
-                    )
-                    outboxDao.markAsFailedWithKey(
-                        id = existingAttempt.reference,
-                        error = "FAILED_TO_START",
-                        messageKey = "FAILED_TO_START",
-                        isRetriable = false
-                    )
+                        outboxDao.markAsFailedWithKey(
+                            id = existingAttempt.reference,
+                            error = "FAILED_TO_START",
+                            messageKey = "FAILED_TO_START",
+                            isRetriable = false
+                        )
+                    }
+                    appNotFoundResult(errorDetail, existingAttempt.reference)
                 }
-                appNotFoundResult(e.message ?: "Erro desconhecido", existingAttempt.reference)
             }
         }
     }
@@ -260,7 +255,6 @@ class PaymentHandlerActivity : BaseActivity() {
             ?: "BRL"
         val amountBigDecimal = amountStr?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() } ?: java.math.BigDecimal.ZERO
         val roundedAmount = com.plugpdv.pdv.utils.MoneyDecimal.roundToCurrency(amountBigDecimal, currencyCode)
-        val formattedAmount = com.plugpdv.pdv.utils.MoneyDecimal.toProtocolAmount(roundedAmount, currencyCode)
 
         // Converte para unidade mínima da moeda (Long) para invariante de dinheiro
         val minimalUnitAmount = com.plugpdv.pdv.utils.MoneyDecimal.toMinorUnits(roundedAmount, currencyCode)
@@ -279,29 +273,19 @@ class PaymentHandlerActivity : BaseActivity() {
         callbackUri += "request_id=${Uri.encode(requestId)}"
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
-
-        val uriBuilder = Uri.Builder()
-            .scheme(PAYMENT_APP_SCHEME)
-            .authority(PAYMENT_APP_HOST)
-            .appendQueryParameter("amount", formattedAmount)
-            .appendQueryParameter("selected_currency", currencyCode)
-            .appendQueryParameter("amounts", amountsJsonStr)
-            .appendQueryParameter("request_id", requestId)
-            .appendQueryParameter("callback_uri", callbackUri)
-
-        if (email.isNotEmpty()) {
-            uriBuilder.appendQueryParameter("email", email)
-        }
-
-        val paymentUri = uriBuilder.build()
-
-        val paymentIntent = Intent(Intent.ACTION_VIEW, paymentUri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            setPackage("com.br.plugpay")
-        }
+        val providerRequest = PaymentProviderRequest(
+            reference = requestId,
+            amountMinor = minimalUnitAmount,
+            currency = currencyCode,
+            description = description,
+            orderId = orderId,
+            callbackUri = callbackUri,
+            customerEmail = email.takeIf { it.isNotEmpty() },
+            quoteAmountsJson = amountsJsonStr
+        )
 
         lifecycleScope.launch {
-            // INVARIANTE 9: PERSISTA EM ROOM ANTES DE DISPARAR O DEEPLINK
+            // INVARIANTE 9: PERSISTA EM ROOM ANTES DE DISPARAR O PROVIDER
             val attemptEntity = PaymentAttemptEntity(
                 reference = requestId,
                 idempotencyKey = idempotencyKey,
@@ -317,27 +301,29 @@ class PaymentHandlerActivity : BaseActivity() {
             withContext(Dispatchers.IO) {
                 paymentAttemptDao.insert(attemptEntity)
             }
-            Log.d(TAG, "Tentativa de pagamento persistida no Room antes do deeplink. Ref: $requestId")
+            Log.d(TAG, "Tentativa de pagamento persistida no Room antes do provider. Ref: $requestId")
 
-            try {
-                startActivity(paymentIntent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Falha ao abrir app de pagamento: ", e)
-                withContext(Dispatchers.IO) {
-                    paymentAttemptDao.update(
-                        attemptEntity.copy(
-                            status = "FAILED_TO_START",
-                            statusMessage = e.message
+            when (val startResult = paymentCoordinator.start(PaymentProviderType.PLUGPAY, this@PaymentHandlerActivity, providerRequest)) {
+                PaymentProviderStartResult.Started -> Unit
+                is PaymentProviderStartResult.Failed -> {
+                    val errorDetail = startResult.message ?: startResult.code
+                    Log.e(TAG, "Falha ao abrir app de pagamento: $errorDetail", startResult.cause)
+                    withContext(Dispatchers.IO) {
+                        paymentAttemptDao.update(
+                            attemptEntity.copy(
+                                status = "FAILED_TO_START",
+                                statusMessage = errorDetail
+                            )
                         )
-                    )
-                    outboxDao.markAsFailedWithKey(
-                        id = requestId,
-                        error = "FAILED_TO_START",
-                        messageKey = "FAILED_TO_START",
-                        isRetriable = false
-                    )
+                        outboxDao.markAsFailedWithKey(
+                            id = requestId,
+                            error = "FAILED_TO_START",
+                            messageKey = "FAILED_TO_START",
+                            isRetriable = false
+                        )
+                    }
+                    appNotFoundResult(errorDetail, requestId)
                 }
-                appNotFoundResult(e.message ?: "Erro desconhecido", requestId)
             }
         }
     }
