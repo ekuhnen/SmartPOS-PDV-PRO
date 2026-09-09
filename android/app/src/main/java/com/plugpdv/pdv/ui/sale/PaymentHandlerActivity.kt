@@ -397,7 +397,7 @@ class PaymentHandlerActivity : BaseActivity() {
                         statusMessage = "LATE_APPROVED_AFTER_${terminalAttempt.status}"
                     ))
                 }
-                DirectPaymentReconciliationStore.setMarker(this@PaymentHandlerActivity, "LATE_APPROVED_AFTER_TERMINAL", paymentId, method)
+                DirectPaymentReconciliationStore.setMarker(this@PaymentHandlerActivity, "LATE_APPROVED_AFTER_TERMINAL", paymentId, method, requestId)
                 PaymentResultStore.setResult(PaymentResultStore.PaymentResult("UNKNOWN", paymentId, method, "LATE_APPROVED_AFTER_TERMINAL", requestId))
                 deliverFailedResult("UNKNOWN", "LATE_APPROVED_AFTER_TERMINAL", tableNum, tableId)
                 return@launch

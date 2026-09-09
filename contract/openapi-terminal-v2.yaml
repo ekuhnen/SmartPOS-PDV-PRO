@@ -27,7 +27,7 @@ openapi: 3.0.3
 
 info:
   title: PlugPDV Terminal API — Cash Session + Pay-by-Items (deployed contract)
-  version: "2.3.3-04N1"
+  version: "2.4.0-01A2"
   description: |
     Terminal-facing contract for the cash session (caixa).
 
@@ -805,6 +805,85 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ComandaCodedError" }
 
+  /api-restaurant-ops:
+    get:
+      operationId: restaurantOpsRead
+      summary: Salon discovery (read-only). Exact-mesa multi-comanda discovery and interactive search.
+      description: |
+        WAITER-01A2 — canonical DISCOVERY surface. Read-only, no money authority.
+
+        Two views:
+
+        * `view=tables` (default). With `mesa_id=<uuid>` this is the **exact mesa
+          discovery** operation: it returns that single mesa plus the COMPLETE set
+          of operationally open comandas on it. The underlying database read
+          (`restaurant_ops_tables`) applies no LIMIT and no OFFSET to the comanda
+          list, so the set is unbounded-complete by construction. The response
+          carries the explicit completeness invariant:
+          `discovery_complete = true`, `truncated = false` and, in exact-mesa
+          mode, `count_matches = (open_comanda_count == returned_comanda_count)`.
+          There is therefore no ambiguity between "one comanda returned" and
+          "one comanda exists".
+        * `view=search`. Interactive discovery by comanda name, mesa number,
+          setor or 8-char control code. `result_count` is the true number of
+          matches; `results` may legitimately be bounded by `limit`
+          (default 20, max 100). Search MUST NOT be used to decide how many
+          comandas a mesa has — after picking a mesa, call exact-mesa discovery.
+
+        Operationally open status set: `ABERTA`, `EM_CONSUMO`,
+        `AGUARDANDO_PAGAMENTO`. `FECHADA` and `CANCELADA` never appear.
+
+        Tenant scope comes only from the staff JWT (`resolveTenantContext`);
+        `mesa_id` from another tenant returns an empty `tables` array.
+        Money values are echoed as produced by the database, per currency
+        (`totals_by_currency`), and are never summed across currencies. They are
+        display-only: checkout authority stays with the comanda payment actions.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema: { type: string, enum: [tables, search], default: tables }
+        - name: mesa_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Exact mesa. Enables the complete multi-comanda discovery mode.
+        - name: setor
+          in: query
+          required: false
+          schema: { type: string, maxLength: 60 }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 60 }
+          description: Required when `view=search`. Name prefix, mesa number, setor or control code.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Search only. Bounds `results`, never `result_count`.
+      responses:
+        "200":
+          description: Discovery payload.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RestaurantOpsTablesResponse"
+                  - $ref: "#/components/schemas/RestaurantOpsSearchResponse"
+        "400":
+          description: "`SEARCH_QUERY_REQUIRED`, `SEARCH_QUERY_INVALID`, `SEARCH_LIMIT_INVALID`, `MESA_ID_INVALID`, `SETOR_INVALID`, `VIEW_INVALID`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "405":
+          description: "`METHOD_NOT_ALLOWED` — this surface is GET only."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComandaCodedError" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -842,6 +921,113 @@ components:
           schema: { $ref: "#/components/schemas/PlainError" }
 
   schemas:
+    OpsComandaShape:
+      type: object
+      description: |
+        One operationally open comanda, as produced by
+        `restaurant_ops_comanda_shape`. Money fields are display-only, already
+        rounded in the currency of the record; never re-sum or convert them.
+      properties:
+        comanda_id: { type: string, format: uuid }
+        control_code:
+          type: string
+          description: First 8 hex chars of the comanda id, uppercase.
+        display_name: { type: string, nullable: true, description: Operational guest name (not a fiscal customer). }
+        label: { type: string }
+        status: { type: string, enum: [ABERTA, EM_CONSUMO, AGUARDANDO_PAGAMENTO] }
+        origin: { type: string, description: "`TERMINAL` | `DIGITAL_MENU`." }
+        currency: { type: string, nullable: true }
+        total: { type: number }
+        paid: { type: number }
+        remaining: { type: number }
+        requires_reconciliation: { type: boolean }
+        subtotal: { type: number }
+        tax_amount: { type: number }
+        service_fee: { type: number }
+        total_descontos: { type: number }
+        versao: { type: integer, description: Concurrency token for later mutations. }
+        opened_at: { type: string, format: date-time }
+        pessoas_qtd: { type: integer }
+        garcom_id: { type: string, nullable: true }
+        order_count: { type: integer }
+        kitchen_pending_count: { type: integer }
+        kitchen_preparing_count: { type: integer }
+        kitchen_ready_count: { type: integer }
+        kitchen_delivered_count: { type: integer }
+        kitchen_needs_attention: { type: boolean }
+    OpsCurrencyTotals:
+      type: object
+      properties:
+        total: { type: number }
+        paid: { type: number }
+        remaining: { type: number }
+        comandas: { type: integer }
+    OpsTable:
+      type: object
+      properties:
+        mesa_id: { type: string, format: uuid }
+        numero: { type: integer }
+        setor: { type: string, nullable: true, description: Physical mesa location — NOT a KDS production station. }
+        capacidade: { type: integer }
+        status: { type: string }
+        admin_status: { type: string }
+        operational_status: { type: string, enum: [BLOCKED, IN_USE, FREE] }
+        open_comanda_count:
+          type: integer
+          description: Complete number of operationally open comandas on this mesa.
+        open_comandas:
+          type: array
+          description: Complete list, never truncated. Length equals `open_comanda_count`.
+          items: { $ref: "#/components/schemas/OpsComandaShape" }
+        totals_by_currency:
+          type: object
+          description: One block per currency. Never summed across currencies.
+          additionalProperties: { $ref: "#/components/schemas/OpsCurrencyTotals" }
+    RestaurantOpsTablesResponse:
+      type: object
+      properties:
+        outcome: { type: string, enum: [ok] }
+        generated_at: { type: string, format: date-time }
+        table_count: { type: integer }
+        tables:
+          type: array
+          items: { $ref: "#/components/schemas/OpsTable" }
+        exact_mesa: { type: boolean, description: True when `mesa_id` was supplied. }
+        discovery_complete:
+          type: boolean
+          description: Always true — the comanda list is unbounded-complete.
+        truncated: { type: boolean, description: Always false for this surface. }
+        open_status_set:
+          type: array
+          items: { type: string }
+          description: "[ABERTA, EM_CONSUMO, AGUARDANDO_PAGAMENTO]."
+        mesa_found: { type: boolean, description: Exact-mesa mode only. False for unknown or foreign mesa. }
+        open_comanda_count: { type: integer, description: Exact-mesa mode only. }
+        returned_comanda_count: { type: integer, description: Exact-mesa mode only. }
+        count_matches:
+          type: boolean
+          description: |
+            Exact-mesa mode only. `open_comanda_count == returned_comanda_count`.
+            This is the completeness invariant the terminal must assert.
+    RestaurantOpsSearchHit:
+      allOf:
+        - $ref: "#/components/schemas/OpsComandaShape"
+        - type: object
+          properties:
+            mesa_id: { type: string, format: uuid }
+            mesa_numero: { type: integer, nullable: true }
+            setor: { type: string, nullable: true }
+            match_type: { type: string, enum: [control_code, display_name, table] }
+    RestaurantOpsSearchResponse:
+      type: object
+      properties:
+        outcome: { type: string, enum: [ok] }
+        query: { type: string }
+        result_count: { type: integer, description: True match count, independent of `limit`. }
+        results:
+          type: array
+          description: Bounded by `limit`. Not a mesa cardinality source.
+          items: { $ref: "#/components/schemas/RestaurantOpsSearchHit" }
     FiscalAddress:
       type: object
       description: Address as frozen/resolved by the database. All fields nullable.
