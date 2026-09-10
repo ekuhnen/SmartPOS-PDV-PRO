@@ -1,8 +1,10 @@
 # PAYMENT-03B — Persist provider before execution
 
-Status: **CANDIDATE — requires local Room migration/build regression**  
+Status: **APPROVED — local tests, Room schema and PlugPay regression validated**  
 Branch: `feature/payment-providers-cielo`  
-Depends on: PAYMENT-03A (`3fc6fb9`)
+Depends on: PAYMENT-03A (`3fc6fb9`)  
+Implementation: `c873768`  
+Room schema 13 export: `cfcad50`
 
 ## Objective
 
@@ -29,6 +31,8 @@ The migration adds nullable `payment_attempts.provider TEXT` and an index on it.
 
 New `PREPARED` rows may temporarily have `provider = NULL` until their first execution boundary is reached.
 
+The exported Room schema `13.json` was reviewed and matches this design: database version 13, nullable TEXT `provider`, and `index_payment_attempts_provider`, with no unexpected schema changes.
+
 ## Fail-closed rules
 
 - no authorized/executable provider -> `FAILED_TO_START` before provider execution;
@@ -46,13 +50,13 @@ New `PREPARED` rows may temporarily have `provider = NULL` until their first exe
 - PlugPay transport is unchanged;
 - no Cielo SDK, credentials or provider-selection UI is introduced.
 
-## Gate
-
-Before the next stage:
+## Validation completed
 
 1. `PaymentProviderMigrationTest` PASS;
 2. `PaymentProviderResolverTest` PASS;
 3. full `testDebugUnitTest` PASS;
 4. `assembleDebug` PASS;
-5. Room schema `13.json` generated and reviewed;
-6. one low-value PlugPay direct-sale payment PASS, including resume/callback back into the PDV.
+5. Room schema `13.json` generated, committed and reviewed;
+6. PlugPay regression validated successfully, including return/callback into the PDV.
+
+PAYMENT-03B is closed. The next stage must not change this provider-freezing rule.
