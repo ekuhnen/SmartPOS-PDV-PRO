@@ -17,6 +17,7 @@ import com.plugpdv.pdv.models.CommandCheckoutCommitRequest
 import com.google.gson.Gson
 import com.plugpdv.pdv.payment.PaymentCoordinator
 import com.plugpdv.pdv.payment.PaymentProviderRequest
+import com.plugpdv.pdv.payment.PaymentProviderResolution
 import com.plugpdv.pdv.payment.PaymentProviderStartResult
 import com.plugpdv.pdv.ui.BaseActivity
 import com.plugpdv.pdv.utils.Constants
@@ -116,7 +117,7 @@ class PaymentHandlerActivity : BaseActivity() {
                             handlePreparedAttempt(intent, existingAttempt, tableNum, tableId)
                         }
                         PaymentAttemptEntity.STATUS_APPROVED -> {
-                            Log.d(TAG, "Tentativa K=$requestId já APROVADA no Room. Recuperando resultado sem reabrir PlugPay.")
+                            Log.d(TAG, "Tentativa K=$requestId já APROVADA no Room. Recuperando resultado sem reabrir provider.")
                             deliverApprovedResult(
                                 requestId = existingAttempt.reference,
                                 paymentId = existingAttempt.paymentAppPaymentId,
@@ -204,25 +205,63 @@ class PaymentHandlerActivity : BaseActivity() {
         )
 
         lifecycleScope.launch {
+            val persistedProviderRaw = existingAttempt.provider?.trim()?.takeIf { it.isNotEmpty() }
+            val resolution = if (persistedProviderRaw != null) {
+                PaymentProviderType.fromWire(persistedProviderRaw)?.let {
+                    PaymentProviderResolution.Selected(it)
+                } ?: PaymentProviderResolution.Blocked(
+                    code = "PAYMENT_PROVIDER_UNKNOWN",
+                    message = "Persisted provider $persistedProviderRaw is unknown to this APK"
+                )
+            } else {
+                paymentCoordinator.resolveForCurrency(existingAttempt.currency)
+            }
+
+            val selectedProvider = when (resolution) {
+                is PaymentProviderResolution.Selected -> resolution.provider
+                is PaymentProviderResolution.SelectionRequired -> {
+                    failProviderResolutionBeforeStart(
+                        requestId = existingAttempt.reference,
+                        code = "PAYMENT_PROVIDER_SELECTION_REQUIRED",
+                        tableNum = if (tableNumber != -1) tableNumber.toString() else null,
+                        tableId = tableId,
+                        existingAttempt = existingAttempt
+                    )
+                    return@launch
+                }
+                is PaymentProviderResolution.Blocked -> {
+                    failProviderResolutionBeforeStart(
+                        requestId = existingAttempt.reference,
+                        code = resolution.code,
+                        tableNum = if (tableNumber != -1) tableNumber.toString() else null,
+                        tableId = tableId,
+                        existingAttempt = existingAttempt
+                    )
+                    return@launch
+                }
+            }
+
             val now = System.currentTimeMillis()
             val updatedAttempt = existingAttempt.copy(
+                provider = selectedProvider.name,
                 status = PaymentAttemptEntity.STATUS_PENDING,
                 startedAt = now
             )
             withContext(Dispatchers.IO) {
                 paymentAttemptDao.update(updatedAttempt)
             }
-            Log.i(TAG, "Attempt K=${existingAttempt.reference} promovida PREPARED -> PENDING no Room antes de abrir PlugPay")
+            Log.i(TAG, "Attempt K=${existingAttempt.reference} provider=${selectedProvider.name} persistida PREPARED -> PENDING antes da execução")
 
-            when (val startResult = paymentCoordinator.start(PaymentProviderType.PLUGPAY, this@PaymentHandlerActivity, providerRequest)) {
+            when (val startResult = paymentCoordinator.start(selectedProvider, this@PaymentHandlerActivity, providerRequest)) {
                 PaymentProviderStartResult.Started -> Unit
                 is PaymentProviderStartResult.Failed -> {
                     val errorDetail = startResult.message ?: startResult.code
-                    Log.e(TAG, "Falha ao abrir app de pagamento para PREPARED attempt: $errorDetail", startResult.cause)
+                    Log.e(TAG, "Falha ao iniciar provider ${selectedProvider.name} para PREPARED attempt: $errorDetail", startResult.cause)
                     withContext(Dispatchers.IO) {
                         paymentAttemptDao.update(
                             updatedAttempt.copy(
                                 status = "FAILED_TO_START",
+                                completedAt = System.currentTimeMillis(),
                                 statusMessage = errorDetail
                             )
                         )
@@ -247,7 +286,6 @@ class PaymentHandlerActivity : BaseActivity() {
         val amountStr = intent.getStringExtra(EXTRA_AMOUNT)
         val description = intent.getStringExtra(EXTRA_DESCRIPTION) ?: "Payment"
         val tableNumber = intent.getIntExtra(EXTRA_TABLE_NUMBER, -1)
-
         val tableId = intent.getStringExtra(EXTRA_TABLE_ID)
 
         val currencyCode = intent.getStringExtra(EXTRA_CURRENCY)
@@ -273,18 +311,41 @@ class PaymentHandlerActivity : BaseActivity() {
         callbackUri += "request_id=${Uri.encode(requestId)}"
 
         val amountsJsonStr = intent.getStringExtra(EXTRA_AMOUNTS_JSON) ?: "{}"
-        val providerRequest = PaymentProviderRequest(
-            reference = requestId,
-            amountMinor = minimalUnitAmount,
-            currency = currencyCode,
-            description = description,
-            orderId = orderId,
-            callbackUri = callbackUri,
-            customerEmail = email.takeIf { it.isNotEmpty() },
-            quoteAmountsJson = amountsJsonStr
-        )
 
         lifecycleScope.launch {
+            val selectedProvider = when (val resolution = paymentCoordinator.resolveForCurrency(currencyCode)) {
+                is PaymentProviderResolution.Selected -> resolution.provider
+                is PaymentProviderResolution.SelectionRequired -> {
+                    failProviderResolutionBeforeStart(
+                        requestId = requestId,
+                        code = "PAYMENT_PROVIDER_SELECTION_REQUIRED",
+                        tableNum = if (tableNumber != -1) tableNumber.toString() else null,
+                        tableId = tableId
+                    )
+                    return@launch
+                }
+                is PaymentProviderResolution.Blocked -> {
+                    failProviderResolutionBeforeStart(
+                        requestId = requestId,
+                        code = resolution.code,
+                        tableNum = if (tableNumber != -1) tableNumber.toString() else null,
+                        tableId = tableId
+                    )
+                    return@launch
+                }
+            }
+
+            val providerRequest = PaymentProviderRequest(
+                reference = requestId,
+                amountMinor = minimalUnitAmount,
+                currency = currencyCode,
+                description = description,
+                orderId = orderId,
+                callbackUri = callbackUri,
+                customerEmail = email.takeIf { it.isNotEmpty() },
+                quoteAmountsJson = amountsJsonStr
+            )
+
             // INVARIANTE 9: PERSISTA EM ROOM ANTES DE DISPARAR O PROVIDER
             val attemptEntity = PaymentAttemptEntity(
                 reference = requestId,
@@ -292,6 +353,7 @@ class PaymentHandlerActivity : BaseActivity() {
                 nonce = nonce,
                 amount = minimalUnitAmount,
                 currency = currencyCode,
+                provider = selectedProvider.name,
                 status = PaymentAttemptEntity.STATUS_PENDING,
                 startedAt = System.currentTimeMillis(),
                 tableNumber = if (tableNumber != -1) tableNumber else null,
@@ -301,17 +363,18 @@ class PaymentHandlerActivity : BaseActivity() {
             withContext(Dispatchers.IO) {
                 paymentAttemptDao.insert(attemptEntity)
             }
-            Log.d(TAG, "Tentativa de pagamento persistida no Room antes do provider. Ref: $requestId")
+            Log.d(TAG, "Tentativa K=$requestId provider=${selectedProvider.name} persistida no Room antes da execução")
 
-            when (val startResult = paymentCoordinator.start(PaymentProviderType.PLUGPAY, this@PaymentHandlerActivity, providerRequest)) {
+            when (val startResult = paymentCoordinator.start(selectedProvider, this@PaymentHandlerActivity, providerRequest)) {
                 PaymentProviderStartResult.Started -> Unit
                 is PaymentProviderStartResult.Failed -> {
                     val errorDetail = startResult.message ?: startResult.code
-                    Log.e(TAG, "Falha ao abrir app de pagamento: $errorDetail", startResult.cause)
+                    Log.e(TAG, "Falha ao iniciar provider ${selectedProvider.name}: $errorDetail", startResult.cause)
                     withContext(Dispatchers.IO) {
                         paymentAttemptDao.update(
                             attemptEntity.copy(
                                 status = "FAILED_TO_START",
+                                completedAt = System.currentTimeMillis(),
                                 statusMessage = errorDetail
                             )
                         )
@@ -326,6 +389,43 @@ class PaymentHandlerActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    private suspend fun failProviderResolutionBeforeStart(
+        requestId: String,
+        code: String,
+        tableNum: String?,
+        tableId: String?,
+        existingAttempt: PaymentAttemptEntity? = null
+    ) {
+        Log.w(TAG, "Provider bloqueado antes da execução: requestId=$requestId code=$code")
+        withContext(Dispatchers.IO) {
+            if (existingAttempt != null) {
+                paymentAttemptDao.update(
+                    existingAttempt.copy(
+                        status = "FAILED_TO_START",
+                        completedAt = System.currentTimeMillis(),
+                        statusMessage = code
+                    )
+                )
+            }
+            outboxDao.markAsFailedWithKey(
+                id = requestId,
+                error = "FAILED_TO_START",
+                messageKey = code,
+                isRetriable = false
+            )
+        }
+        PaymentResultStore.setResult(
+            PaymentResultStore.PaymentResult(
+                status = "FAILED_TO_START",
+                paymentId = null,
+                method = null,
+                message = code,
+                requestId = requestId
+            )
+        )
+        deliverFailedResult("FAILED_TO_START", code, tableNum, tableId)
     }
 
     private fun appNotFoundResult(errorDetail: String = "", requestId: String? = null) {
@@ -490,7 +590,7 @@ class PaymentHandlerActivity : BaseActivity() {
                         paymentId = paymentId,
                         method = method,
                         message = message,
-                        requestId = existingAttempt?.reference ?: requestId
+                        requestId = existingAttempt.reference
                     )
                 )
                 deliverFailedResult(rawStatus, message, tableNum, tableId)

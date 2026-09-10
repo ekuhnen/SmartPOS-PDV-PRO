@@ -21,7 +21,7 @@ import com.plugpdv.pdv.models.Product
         ComandaLocalItemEntity::class,
         ComandaReconciliationLogEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -188,7 +188,7 @@ abstract class AppDatabase : RoomDatabase() {
                         idempotencyKey, serverSeq, attemptCount, lastAttemptAt,
                         nextRetryAt, status, lastError, messageKey, isRetriable
                     )
-                    SELECT 
+                    SELECT
                         id, operationType, targetGroupKey, payloadJson, createdAt,
                         id AS idempotencyKey, NULL AS serverSeq, attemptCount, lastAttemptAt,
                         nextRetryAt, status, lastError, NULL AS messageKey, isRetriable
@@ -268,7 +268,7 @@ abstract class AppDatabase : RoomDatabase() {
                         serviceFeeAmount, serviceFeeKind, convertedTotal, payloadJson, attemptCount,
                         lastError, lastAttemptAt, syncStatus, syncedToApi
                     )
-                    SELECT 
+                    SELECT
                         localId,
                         apiId,
                         timestamp,
@@ -477,6 +477,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Provider was implicitly PlugPay before schema 13. Keep the new
+                // column nullable so a newly-created PREPARED attempt can remain
+                // unresolved until immediately before its first provider execution.
+                db.execSQL("ALTER TABLE `payment_attempts` ADD COLUMN `provider` TEXT")
+                db.execSQL("UPDATE `payment_attempts` SET `provider` = 'PLUGPAY' WHERE `provider` IS NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_attempts_provider` ON `payment_attempts` (`provider`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -493,7 +504,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .build()
                 INSTANCE = instance

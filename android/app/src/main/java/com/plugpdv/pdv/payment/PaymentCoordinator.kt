@@ -1,6 +1,7 @@
 package com.plugpdv.pdv.payment
 
 import android.app.Activity
+import com.plugpdv.pdv.utils.PaymentProviderCapabilitiesStore
 import com.plugpdv.pdv.utils.PaymentProviderPolicy
 import com.plugpdv.pdv.utils.PaymentProviderType
 import javax.inject.Inject
@@ -24,6 +25,15 @@ class PaymentCoordinator @Inject constructor(
             implementedProviders = implementedProviders(),
             requestedProvider = requestedProvider
         )
+    }
+
+    /** Resolves the tenant-scoped policy cached from terminal capabilities. */
+    fun resolveForCurrency(
+        currency: String,
+        requestedProvider: PaymentProviderType? = null
+    ): PaymentProviderResolution {
+        val policy = PaymentProviderCapabilitiesStore.getInstance().resolvePolicy(currency)
+        return resolve(policy, requestedProvider)
     }
 
     fun start(

@@ -10,7 +10,8 @@ import androidx.room.PrimaryKey
         Index(value = ["idempotencyKey"], unique = true),
         Index(value = ["tableNumber"]),
         Index(value = ["status"]),
-        Index(value = ["startedAt"])
+        Index(value = ["startedAt"]),
+        Index(value = ["provider"])
     ]
 )
 data class PaymentAttemptEntity(
@@ -20,6 +21,7 @@ data class PaymentAttemptEntity(
     val nonce: String,                      // Nonce de segurança gerado para eco
     val amount: Long,                       // Em unidade mínima da moeda (ex: centavos BRL = 1500; PYG = 150000)
     val currency: String,                   // Código da moeda (BRL, PYG, ARS, USD, etc.)
+    val provider: String? = null,            // Provider congelado antes da primeira execução; nullable apenas em PREPARED ainda não executado
     val status: String = "PENDING",         // "PENDING", "APPROVED", "REJECTED", "UNKNOWN", "CANCELLED"
     val startedAt: Long,                    // Timestamp de início (quando operador tocou em pagar)
     val completedAt: Long? = null,
@@ -32,6 +34,7 @@ data class PaymentAttemptEntity(
     val statusMessage: String? = null
 ) {
     companion object {
+        const val LEGACY_PROVIDER = "PLUGPAY"
         const val STATUS_PREPARED = "PREPARED"
         const val STATUS_PENDING = "PENDING"
         const val STATUS_APPROVED = "APPROVED"
