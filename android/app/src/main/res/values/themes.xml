@@ -6,10 +6,12 @@
         <item name="colorSecondary">@color/secondary</item>
         <item name="colorOnSecondary">@color/white</item>
         <item name="android:windowBackground">@color/bg_light</item>
-        <item name="android:statusBarColor">@color/bg_light</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:fitsSystemWindows">true</item>
-        
+
+        <!-- Edge-to-edge is configured in BaseActivity. Avoid legacy system-bar
+             color/fitsSystemWindows theme attributes that are deprecated or ignored
+             on Android 15+ when targeting API 35+. -->
+
         <!-- Component Styles -->
         <item name="materialCardViewStyle">@style/Widget.SmartPos.Card</item>
         <item name="materialButtonStyle">@style/Widget.SmartPos.Button</item>

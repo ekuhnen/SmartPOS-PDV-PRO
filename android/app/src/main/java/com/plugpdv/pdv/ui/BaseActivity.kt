@@ -4,8 +4,11 @@ import com.plugpdv.pdv.R
 import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
 import com.plugpdv.pdv.utils.CurrencyManager
@@ -15,8 +18,6 @@ import com.plugpdv.pdv.utils.KillSwitchManager
 import com.plugpdv.pdv.utils.LanguageManager
 import com.plugpdv.pdv.utils.OutboxSyncManager
 import com.plugpdv.pdv.utils.ServerStateEvent
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -40,6 +41,10 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Keep one windowing model on pre-Android 15 and Android 15+.
+        // Android 15 enforces edge-to-edge for targetSdk >= 35; explicitly enabling
+        // it here prevents the UI contract from changing only on newer OS versions.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         observeServerEvents()
         observeOutboxQueue()
@@ -52,22 +57,30 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     private fun applyWindowInsets() {
-        val rootView = findViewById<android.view.View>(android.R.id.content)
-        rootView?.let { view ->
-            ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
-                val systemBars = insets.getInsets(
-                    WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
-                )
-                v.setPadding(
-                    v.paddingLeft,
-                    systemBars.top,
-                    v.paddingRight,
-                    v.paddingBottom
-                )
-                insets
-            }
-            ViewCompat.requestApplyInsets(view)
+        val rootView = findViewById<android.view.View>(android.R.id.content) ?: return
+
+        // Capture the layout's authored padding once for this content view. Insets
+        // are always added to that baseline, avoiding cumulative padding when the
+        // platform dispatches them more than once.
+        val initialLeft = rootView.paddingLeft
+        val initialTop = rootView.paddingTop
+        val initialRight = rootView.paddingRight
+        val initialBottom = rootView.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
+            val safeArea = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(
+                initialLeft + safeArea.left,
+                initialTop + safeArea.top,
+                initialRight + safeArea.right,
+                initialBottom + safeArea.bottom
+            )
+            insets
         }
+        ViewCompat.requestApplyInsets(rootView)
     }
 
     override fun onResume() {
