@@ -42,5 +42,10 @@
 -keep interface com.sunmi.** { *; }
 -dontwarn com.sunmi.**
 
+# SLF4J 1.x probes this optional implementation class at runtime and falls
+# back when no logging binding is packaged. Do not add a logging backend just
+# to satisfy R8; suppress only this known optional binding reference.
+-dontwarn org.slf4j.impl.StaticLoggerBinder
+
 # Do not add broad -ignorewarnings here. If R8 reports another optional vendor
 # dependency, add the narrowest rule only after reviewing missing_rules.txt.
