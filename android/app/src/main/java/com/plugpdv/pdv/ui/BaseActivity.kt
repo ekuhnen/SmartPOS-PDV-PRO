@@ -4,6 +4,7 @@ import com.plugpdv.pdv.R
 import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -40,6 +41,10 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Make edge-to-edge explicit on every supported Android version. Android 15+
+        // enforces it for targetSdk 35+, so older versions should exercise the same
+        // inset path instead of having a different layout model.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         observeServerEvents()
         observeOutboxQueue()
@@ -55,14 +60,19 @@ open class BaseActivity : AppCompatActivity() {
         val rootView = findViewById<android.view.View>(android.R.id.content)
         rootView?.let { view ->
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
-                val systemBars = insets.getInsets(
-                    WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
+                val safeInsets = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                        WindowInsetsCompat.Type.displayCutout()
                 )
+
+                // android.R.id.content is the decor content container. Apply the
+                // complete system-bar/cutout safe area here so existing XML screens
+                // stay usable without each layout duplicating inset handling.
                 v.setPadding(
-                    v.paddingLeft,
-                    systemBars.top,
-                    v.paddingRight,
-                    v.paddingBottom
+                    safeInsets.left,
+                    safeInsets.top,
+                    safeInsets.right,
+                    safeInsets.bottom
                 )
                 insets
             }
