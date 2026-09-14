@@ -1,8 +1,10 @@
 # STAB-01 — Release R8 / obfuscation baseline
 
-Status: **CANDIDATE — requires local release build and real-device smoke test**  
+Status: **APPROVED — release build, AAB and real-device smoke validated**  
 Branch: `stabilize/play-console-2026`  
-Baseline: `3a35af2`
+Baseline: `3a35af2`  
+Implementation: `531cfc3`  
+SLF4J R8 adjustment: `d6c46cf`
 
 ## Objective
 
@@ -16,7 +18,8 @@ Raise the Google Play release optimization/obfuscation baseline without changing
 - preserve runtime annotations/signatures needed by Retrofit/Gson/Kotlin;
 - preserve application model field names used by Gson while still allowing application classes and executable code to be obfuscated;
 - do not use blanket `-keep class com.plugpdv.pdv.**`;
-- do not use broad `-ignorewarnings`.
+- do not use broad `-ignorewarnings`;
+- suppress only the known optional SLF4J 1.x `StaticLoggerBinder` reference instead of introducing a logging backend solely for R8.
 
 ## Explicitly out of scope
 
@@ -28,19 +31,17 @@ Raise the Google Play release optimization/obfuscation baseline without changing
 - `shrinkResources`;
 - release-signing secret rotation (separate stabilization gate).
 
-## Validation gate
+## Validation completed
 
-Run:
+1. `testDebugUnitTest` PASS;
+2. `assembleRelease` PASS with R8 enabled;
+3. `bundleRelease` PASS;
+4. release APK installed and opened successfully on real supported hardware;
+5. login/capabilities PASS;
+6. catalog/direct-sale/comanda navigation PASS;
+7. barcode scanner PASS;
+8. printer PASS;
+9. offline/outbox recovery PASS;
+10. low-value real PlugPay payment PASS, including callback/return into the PDV and no duplicate or spurious pending transaction.
 
-```bat
-cd android
-gradlew.bat testDebugUnitTest
-gradlew.bat assembleRelease
-gradlew.bat bundleRelease
-```
-
-If R8 fails, review the generated `missing_rules.txt` and add only the narrowest justified vendor rule. Do not suppress all warnings.
-
-After release build succeeds, perform a release-build smoke test on real supported hardware covering login/capabilities, catalog, direct sale, comanda, barcode scanner, printer, offline/outbox recovery and one low-value real PlugPay payment with callback back into the PDV.
-
-STAB-01 is approved only after both the release build and runtime smoke pass.
+STAB-01 is closed. Subsequent stabilization gates must preserve this release/R8 baseline.
